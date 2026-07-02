@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Clip Editor</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Clip Editor</h1>
+    <p class="subtitle">Turn horizontal Twitch clips into vertical TikTok/Reels/Shorts edits.</p>
+  </header>
+
+  <main class="card">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="url">Clip URL</button>
+      <button class="tab-btn" data-tab="upload">Upload file</button>
+    </div>
+
+    <div class="tab-panel active" data-panel="url">
+      <label class="field-label" for="clip-url">Twitch clip URL</label>
+      <input id="clip-url" type="text" placeholder="https://clips.twitch.tv/..." />
+    </div>
+
+    <div class="tab-panel" data-panel="upload">
+      <label class="field-label" for="clip-file">Video file</label>
+      <input id="clip-file" type="file" accept="video/*" />
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="zoom-slider">
+        Zoom <span id="zoom-value">135%</span>
+      </label>
+      <input id="zoom-slider" type="range" min="100" max="200" value="135" step="1" />
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="blur-slider">
+        Blur <span id="blur-value">20%</span>
+      </label>
+      <input id="blur-slider" type="range" min="0" max="100" value="20" step="1" />
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="speed-slider">
+        Speed <span id="speed-value">1.00x</span>
+      </label>
+      <input id="speed-slider" type="range" min="0.5" max="2" value="1" step="0.05" />
+    </div>
+
+    <div class="field-group">
+      <label class="switch-row" for="mirror-toggle">
+        <span class="field-label switch-label">Mirror</span>
+        <span class="switch">
+          <input type="checkbox" id="mirror-toggle" />
+          <span class="switch-track"></span>
+        </span>
+      </label>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="caption-text">Caption text (optional)</label>
+      <textarea id="caption-text" rows="3" placeholder="Type a caption to burn into the video..."></textarea>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label">Caption style</label>
+      <div class="toggle-group">
+        <button type="button" class="toggle-btn active" data-caption-style="outline">Outline</button>
+        <button type="button" class="toggle-btn" data-caption-style="box">Box</button>
+      </div>
+    </div>
+
+    <button id="generate-btn" class="primary-btn">Generate edit</button>
+
+    <div id="status-area" class="status-area hidden">
+      <div id="status-text" class="status-text"></div>
+      <div id="status-bar" class="status-bar"><div class="status-bar-fill"></div></div>
+    </div>
+
+    <div id="result-area" class="result-area hidden">
+      <video id="result-video" controls></video>
+      <a id="download-link" class="primary-btn download-btn" download>Download edited clip</a>
+    </div>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
