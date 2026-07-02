@@ -5,3 +5,5 @@ outputs/*
 captions/*
 .DS_Store
 *.log
+dist/
+resources/bin/*

@@ -24,7 +24,7 @@ yt-dlp --version
 
 On macOS with Homebrew: `brew install node ffmpeg yt-dlp`
 
-## Setup
+## Setup (run from source)
 
 ```bash
 npm install
@@ -32,6 +32,29 @@ npm start
 ```
 
 Then open **http://localhost:3000**.
+
+## Desktop app (no separate installs needed)
+
+For friends who don't want to install Node/ffmpeg/yt-dlp themselves,
+`npm run dist:mac` packages the whole thing — Node, ffmpeg, and yt-dlp
+included — into a real double-clickable `.app`/`.dmg`. Currently macOS
+arm64 only.
+
+```bash
+npm install
+npm run dist:mac
+```
+
+This produces `dist/Clip Editor-<version>-arm64.dmg`. `dist:mac` runs
+`scripts/fetch-binaries.sh` first, which downloads fresh `ffmpeg` and
+`yt-dlp` binaries into `resources/bin/` (not committed to the repo, since
+yt-dlp especially needs frequent updates to keep working against site
+changes).
+
+The app isn't code-signed (no Apple Developer certificate), so macOS
+Gatekeeper will flag it as being from an unidentified developer the first
+time it's opened — right-click the app → **Open** → confirm, instead of a
+plain double-click, to get past that one-time warning.
 
 ## Usage
 

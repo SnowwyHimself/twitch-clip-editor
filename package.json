@@ -2,9 +2,13 @@
   "name": "clip-vertical-editor",
   "version": "1.0.0",
   "description": "Convert horizontal Twitch clips into vertical videos with a blurred background fill.",
-  "main": "server.js",
+  "main": "electron/main.js",
+  "author": "SnowwyHimself",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "electron": "electron .",
+    "fetch-binaries": "bash scripts/fetch-binaries.sh",
+    "dist:mac": "npm run fetch-binaries && electron-builder --mac --arm64"
   },
   "engines": {
     "node": ">=18"
@@ -15,5 +19,46 @@
     "express": "^4.19.2",
     "multer": "^1.4.5-lts.1",
     "opentype.js": "^2.0.0"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.clipeditor.app",
+    "productName": "Clip Editor",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "server.js",
+      "caption.js",
+      "public/**/*",
+      "fonts/**/*",
+      "node_modules/**/*",
+      "!node_modules/electron/**",
+      "!node_modules/electron-builder/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.video"
+    }
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true
   }
 }
