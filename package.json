@@ -46,6 +46,7 @@
         "to": "bin"
       }
     ],
+    "afterSign": "scripts/afterSign.js",
     "mac": {
       "target": [
         {
