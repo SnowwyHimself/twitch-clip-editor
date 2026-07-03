@@ -61,7 +61,8 @@
       ],
       "files": [
         "!node_modules/@resvg/resvg-js-win32-x64-msvc/**"
-      ]
+      ],
+      "artifactName": "Clip-Editor-Mac.${ext}"
     },
     "win": {
       "target": [
@@ -80,7 +81,8 @@
       ],
       "files": [
         "!node_modules/@resvg/resvg-js-darwin-arm64/**"
-      ]
+      ],
+      "artifactName": "Clip-Editor-Windows-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
