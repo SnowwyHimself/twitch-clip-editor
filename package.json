@@ -1,0 +1,19 @@
+{
+  "name": "clip-vertical-editor",
+  "version": "1.0.0",
+  "description": "Convert horizontal Twitch clips into vertical videos with a blurred background fill.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "opentype.js": "^2.0.0"
+  }
+}
