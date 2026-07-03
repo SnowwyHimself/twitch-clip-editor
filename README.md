@@ -35,26 +35,40 @@ Then open **http://localhost:3000**.
 
 ## Desktop app (no separate installs needed)
 
-For friends who don't want to install Node/ffmpeg/yt-dlp themselves,
-`npm run dist:mac` packages the whole thing — Node, ffmpeg, and yt-dlp
-included — into a real double-clickable `.app`/`.dmg`. Currently macOS
-arm64 only.
+For friends who don't want to install Node/ffmpeg/yt-dlp themselves, this
+packages the whole thing — Node, ffmpeg, and yt-dlp included — into a real
+double-clickable app. Pre-built downloads for both platforms are on the
+[Releases page](https://github.com/SnowwyHimself/twitch-clip-editor/releases).
+
+To build it yourself instead:
 
 ```bash
 npm install
-npm run dist:mac
+npm run dist:mac   # macOS (arm64) -> dist/Clip Editor-<version>-arm64.dmg
+npm run dist:win   # Windows (x64) -> dist/Clip Editor Setup <version>.exe
 ```
 
-This produces `dist/Clip Editor-<version>-arm64.dmg`. `dist:mac` runs
-`scripts/fetch-binaries.sh` first, which downloads fresh `ffmpeg` and
-`yt-dlp` binaries into `resources/bin/` (not committed to the repo, since
-yt-dlp especially needs frequent updates to keep working against site
-changes).
+Each fetches its own platform-specific `ffmpeg`/`yt-dlp` binaries first
+(`resources/bin-mac/` or `resources/bin-win/` — not committed to the repo,
+since yt-dlp especially needs frequent updates to keep working against
+site changes) via `scripts/fetch-binaries-mac.sh` / `-win.sh`.
 
-The app isn't code-signed (no Apple Developer certificate), so macOS
-Gatekeeper will flag it as being from an unidentified developer the first
-time it's opened — right-click the app → **Open** → confirm, instead of a
-plain double-click, to get past that one-time warning.
+Neither build is code-signed (no paid Apple Developer / Windows code-signing
+certificate), so:
+
+- **macOS**: right-click the app → **Open** → confirm, instead of a plain
+  double-click, to get past the one-time "unidentified developer"
+  warning. If you instead see a hard **"is damaged and can't be opened"**
+  error, that's a separate, fixable issue — the app's own signature has to
+  properly cover every bundled file (see `scripts/afterSign.js`), not just
+  Electron's own binary; a plain unsigned build without that fix triggers
+  the false "damaged" error instead of the milder warning.
+- **Windows**: SmartScreen will warn about an unrecognized publisher —
+  click **More info** → **Run anyway**.
+
+Building the Windows installer from macOS additionally requires
+**Rosetta 2** (`softwareupdate --install-rosetta`), since
+electron-builder's bundled NSIS installer tool is Intel-only.
 
 ## Usage
 
