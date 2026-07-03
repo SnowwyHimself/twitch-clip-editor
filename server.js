@@ -8,14 +8,38 @@ const { renderCaptionPng, resolveFontPath } = require('./caption');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
-const UPLOADS_DIR = path.join(ROOT, 'uploads');
-const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
-const OUTPUTS_DIR = path.join(ROOT, 'outputs');
-const CAPTIONS_DIR = path.join(ROOT, 'captions');
+
+// Inside a packaged Electron app, ROOT can point into a read-only app
+// bundle (an asar archive), so job data can't live there. Electron's main
+// process sets CLIP_EDITOR_DATA_DIR to a real writable folder (its
+// userData directory) before requiring this file; plain `node server.js`
+// leaves it unset and everything stays relative to this file, as before.
+const DATA_ROOT = process.env.CLIP_EDITOR_DATA_DIR || ROOT;
+const UPLOADS_DIR = path.join(DATA_ROOT, 'uploads');
+const DOWNLOADS_DIR = path.join(DATA_ROOT, 'downloads');
+const OUTPUTS_DIR = path.join(DATA_ROOT, 'outputs');
+const CAPTIONS_DIR = path.join(DATA_ROOT, 'captions');
 
 for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
 }
+
+// ffmpeg/yt-dlp need to be real executable files on disk to spawn — inside
+// a packaged app they ship as extraResources (Contents/Resources/bin/),
+// never inside the asar archive itself. Electron's main process sets
+// CLIP_EDITOR_RESOURCES to process.resourcesPath before requiring this
+// file; when unset (plain `node server.js`), this falls back to PATH.
+function resolveBinary(name) {
+  const resourcesDir = process.env.CLIP_EDITOR_RESOURCES;
+  if (resourcesDir) {
+    const candidate = path.join(resourcesDir, 'bin', name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return name;
+}
+
+const FFMPEG_BIN = resolveBinary('ffmpeg');
+const YTDLP_BIN = resolveBinary('yt-dlp');
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
@@ -101,7 +125,7 @@ function runCommand(cmd, args) {
 // stream info first.
 function probeSource(inputPath) {
   return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', ['-i', inputPath]);
+    const child = spawn(FFMPEG_BIN, ['-i', inputPath]);
     let stderr = '';
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
@@ -240,7 +264,7 @@ async function runFfmpeg(inputPath, outputPath, zoom, blur, captionOverlay, mirr
     '-movflags', '+faststart', // moves the moov atom to the front so <video> playback doesn't fail/stall before the file is fully downloaded
     outputPath,
   );
-  await runCommand('ffmpeg', args);
+  await runCommand(FFMPEG_BIN, args);
 }
 
 // Renders the caption to a temp PNG and computes its overlay position so
@@ -265,7 +289,7 @@ function buildCaptionOverlay(jobId, mediaInfo, captionText, captionStyle, zoom) 
 
 async function downloadWithYtDlp(url, jobId) {
   const outputTemplate = path.join(DOWNLOADS_DIR, `${jobId}.%(ext)s`);
-  await runCommand('yt-dlp', ['-o', outputTemplate, '--no-playlist', url]);
+  await runCommand(YTDLP_BIN, ['-o', outputTemplate, '--no-playlist', url]);
   const match = fs
     .readdirSync(DOWNLOADS_DIR)
     .find((name) => name.startsWith(`${jobId}.`));
