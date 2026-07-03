@@ -7,8 +7,10 @@
   "scripts": {
     "start": "node server.js",
     "electron": "electron .",
-    "fetch-binaries": "bash scripts/fetch-binaries.sh",
-    "dist:mac": "npm run fetch-binaries && electron-builder --mac --arm64"
+    "fetch-binaries:mac": "bash scripts/fetch-binaries-mac.sh",
+    "fetch-binaries:win": "bash scripts/fetch-binaries-win.sh",
+    "dist:mac": "npm run fetch-binaries:mac && electron-builder --mac --arm64",
+    "dist:win": "npm run fetch-binaries:win && electron-builder --win --x64"
   },
   "engines": {
     "node": ">=18"
@@ -40,12 +42,6 @@
       "!node_modules/electron/**",
       "!node_modules/electron-builder/**"
     ],
-    "extraResources": [
-      {
-        "from": "resources/bin",
-        "to": "bin"
-      }
-    ],
     "afterSign": "scripts/afterSign.js",
     "mac": {
       "target": [
@@ -56,7 +52,39 @@
           ]
         }
       ],
-      "category": "public.app-category.video"
+      "category": "public.app-category.video",
+      "extraResources": [
+        {
+          "from": "resources/bin-mac",
+          "to": "bin"
+        }
+      ],
+      "files": [
+        "!node_modules/@resvg/resvg-js-win32-x64-msvc/**"
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/bin-win",
+          "to": "bin"
+        }
+      ],
+      "files": [
+        "!node_modules/@resvg/resvg-js-darwin-arm64/**"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "allowScripts": {

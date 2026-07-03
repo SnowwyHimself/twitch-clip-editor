@@ -25,14 +25,17 @@ for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR]) {
 }
 
 // ffmpeg/yt-dlp need to be real executable files on disk to spawn — inside
-// a packaged app they ship as extraResources (Contents/Resources/bin/),
-// never inside the asar archive itself. Electron's main process sets
-// CLIP_EDITOR_RESOURCES to process.resourcesPath before requiring this
-// file; when unset (plain `node server.js`), this falls back to PATH.
+// a packaged app they ship as extraResources (Contents/Resources/bin/ on
+// mac, resources/bin/ on Windows), never inside the asar archive itself.
+// Electron's main process sets CLIP_EDITOR_RESOURCES to process.resourcesPath
+// before requiring this file; when unset (plain `node server.js`), this
+// falls back to PATH. Windows binaries carry a .exe extension; mac/linux
+// ones don't.
 function resolveBinary(name) {
   const resourcesDir = process.env.CLIP_EDITOR_RESOURCES;
+  const binaryName = process.platform === 'win32' ? `${name}.exe` : name;
   if (resourcesDir) {
-    const candidate = path.join(resourcesDir, 'bin', name);
+    const candidate = path.join(resourcesDir, 'bin', binaryName);
     if (fs.existsSync(candidate)) return candidate;
   }
   return name;
