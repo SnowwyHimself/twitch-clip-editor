@@ -72,25 +72,33 @@ function resolveWhisperBinary(resourcesDir) {
 
 // The models dir is scanned for any ggml *.bin rather than hardcoding one
 // filename, so swapping base.en for small.en (or a multilingual model) is
-// just a matter of dropping a different file in — no config change.
-function resolveModelPath(modelsDir) {
+// just a matter of dropping a different file in — no config change. The
+// user's models dir is checked first (a model they dropped there wins),
+// then the app's bundled resources/models (the packaged desktop app ships
+// ggml-base.en.bin there, so auto-captions works with no extra install).
+function resolveModelPath({ modelsDir, resourcesDir }) {
   const fromEnv = process.env[MODEL_ENV];
   if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
-  let entries;
-  try {
-    entries = fs.readdirSync(modelsDir);
-  } catch {
-    return null;
+  const dirs = [modelsDir];
+  if (resourcesDir) dirs.push(path.join(resourcesDir, 'models'));
+  for (const dir of dirs) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    const model = entries.find((name) => /^ggml-.*\.bin$/.test(name));
+    if (model) return path.join(dir, model);
   }
-  const model = entries.find((name) => /^ggml-.*\.bin$/.test(name));
-  return model ? path.join(modelsDir, model) : null;
+  return null;
 }
 
 // Reports what's missing (binary/model) so the frontend can show setup
 // instructions instead of a raw spawn error.
 function checkWhisperSetup({ resourcesDir, modelsDir }) {
   const binary = resolveWhisperBinary(resourcesDir);
-  const model = resolveModelPath(modelsDir);
+  const model = resolveModelPath({ modelsDir, resourcesDir });
   return { binary, model, ready: !!(binary && model) };
 }
 

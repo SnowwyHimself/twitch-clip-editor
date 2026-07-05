@@ -34,7 +34,24 @@ swiftc -O "$ROOT/native/emoji-render-mac/main.swift" -o "$BIN_DIR/emoji-render"
 chmod +x "$BIN_DIR/emoji-render"
 xattr -d com.apple.quarantine "$BIN_DIR/emoji-render" 2>/dev/null || true
 
+# whisper.cpp powers Auto-captions. It's built from source (statically
+# linked, so the single binary is self-contained) and bundled alongside
+# ffmpeg/yt-dlp, and the ~148MB model is fetched into models/ (shipped via
+# package.json's build.mac.extraResources) — so the packaged app does
+# auto-captions with nothing extra to install.
+echo "Building + bundling whisper-cli (auto-captions)..."
+if [ ! -x "$HOME/.local/bin/whisper-cli" ]; then
+  bash "$ROOT/scripts/build-whisper-mac.sh"
+fi
+cp "$HOME/.local/bin/whisper-cli" "$BIN_DIR/whisper-cli"
+chmod +x "$BIN_DIR/whisper-cli"
+xattr -d com.apple.quarantine "$BIN_DIR/whisper-cli" 2>/dev/null || true
+
+echo "Fetching whisper model..."
+bash "$ROOT/scripts/fetch-whisper-model.sh"
+
 echo "Done. Binaries are in resources/bin-mac/:"
 "$BIN_DIR/ffmpeg" -version | head -1
 "$BIN_DIR/yt-dlp" --version
 "$BIN_DIR/emoji-render" "🔥" /tmp/emoji-render-smoketest.png 64 && echo "emoji-render OK" && rm -f /tmp/emoji-render-smoketest.png
+"$BIN_DIR/whisper-cli" --help >/dev/null 2>&1 && echo "whisper-cli OK"

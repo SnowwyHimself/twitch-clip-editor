@@ -27,5 +27,22 @@ cp "$TMP_DIR/$FFMPEG_ZIP_ENTRY" "$BIN_DIR/ffmpeg.exe"
 echo "Fetching yt-dlp (Windows)..."
 curl -sL -o "$BIN_DIR/yt-dlp.exe" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 
+# whisper.cpp powers Auto-captions. The official prebuilt Windows x64 build
+# ships whisper-cli.exe plus its whisper/ggml DLLs (including CPU-variant
+# ggml-cpu-*.dll files it picks at runtime) — all copied next to the exe so
+# Windows loads them from the same dir. The ~148MB model is fetched into
+# models/ (shipped via package.json's build.win.extraResources).
+echo "Fetching whisper-cli (Windows, auto-captions)..."
+WHISPER_ZIP_URL="$(curl -sL https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest \
+  | grep -oE 'https://[^"]*whisper-bin-x64\.zip' | head -1)"
+curl -sL -o "$TMP_DIR/whisper-win.zip" "$WHISPER_ZIP_URL"
+unzip -q "$TMP_DIR/whisper-win.zip" -d "$TMP_DIR/whisper"
+cp "$TMP_DIR/whisper/Release/whisper-cli.exe" "$BIN_DIR/"
+cp "$TMP_DIR/whisper/Release/whisper.dll" "$BIN_DIR/"
+cp "$TMP_DIR"/whisper/Release/ggml*.dll "$BIN_DIR/"
+
+echo "Fetching whisper model..."
+bash "$ROOT/scripts/fetch-whisper-model.sh"
+
 echo "Done. Binaries are in resources/bin-win/:"
-file "$BIN_DIR/ffmpeg.exe" "$BIN_DIR/yt-dlp.exe"
+file "$BIN_DIR/ffmpeg.exe" "$BIN_DIR/yt-dlp.exe" "$BIN_DIR/whisper-cli.exe"
