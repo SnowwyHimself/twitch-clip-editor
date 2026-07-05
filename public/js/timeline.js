@@ -1,0 +1,654 @@
+// CapCut-style bottom timeline, one dedicated row per element type:
+//
+//   ruler      — click/drag to scrub
+//   Video      — the clip pieces (per-edge trim handles, move, split,
+//                delete, transition badges at boundaries)
+//   Captions   — all auto-caption blocks share one row
+//   Text       — all hand-made text layers share one row
+//   Sound      — the sound-effect clip
+//
+// The axis is OUTPUT time, but the pixel scale is pinned to the LONGER of
+// source/output duration — so trimming or deleting never rescales the
+// track under the cursor; content just gets shorter and leaves empty
+// track on the right. Every piece carries its own outStart:
+//   snap mode — pieces always close up (deletes ripple, moves snap back)
+//   free mode — pieces sit wherever they're dropped; gaps play as black
+// Trims are non-destructive in both modes: a piece's handles can always
+// be dragged back out over cut footage, because start/end are just
+// pointers into the untouched source.
+//
+// Drags never rebuild DOM mid-gesture (that would break pointer capture) —
+// they mutate state and call layout functions that restyle the existing
+// elements in place; the full rebuild runs once on release via the normal
+// 'segments'/'layers' events.
+
+import {
+  state,
+  on,
+  emit,
+  selectLayer,
+  selectSegment,
+  selectedLayer,
+  selectedSegment,
+  removeLayer,
+  removeSegment,
+  splitSegmentAt,
+  normalizeOutStarts,
+  removeTransition,
+  sourceDuration,
+  outputDuration,
+  sourceToOutput,
+  outputToSource,
+  MIN_SEGMENT_SECONDS,
+  MIN_LAYER_SECONDS,
+} from './state.js';
+import { seek, seekOutput, getCurrentTime, getCurrentOutputTime, setOverlayEditing } from './preview.js';
+
+const ruler = document.getElementById('tl-ruler');
+const videoTrack = document.getElementById('tl-video-track');
+const overlayRow = document.getElementById('tl-overlay-row');
+const captionsRow = document.getElementById('tl-captions-row');
+const textRow = document.getElementById('tl-text-row');
+const soundRow = document.getElementById('tl-sound-row');
+const playhead = document.getElementById('tl-playhead');
+const emptyMsg = document.getElementById('tl-empty');
+const splitBtn = document.getElementById('tl-split');
+const deleteBtn = document.getElementById('tl-delete');
+
+const MOVE_THRESHOLD_PX = 4; // press-and-hold under this = click/select, over = drag
+
+function trackWidth() {
+  return ruler.clientWidth || 1;
+}
+
+// Pinned scale: source duration normally, stretched only if free-mode
+// gaps push the output past it. Constant while trimming/deleting, so the
+// track never rescales mid-drag.
+function pxPerSecond() {
+  const span = Math.max(sourceDuration(), outputDuration());
+  return span > 0 ? trackWidth() / span : 0;
+}
+
+function outTimeToX(t) {
+  return t * pxPerSecond();
+}
+
+function xToOutTime(clientX) {
+  const rect = ruler.getBoundingClientRect();
+  const pps = pxPerSecond();
+  return pps > 0 ? Math.max(0, (clientX - rect.left) / pps) : 0;
+}
+
+function formatTick(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return mins > 0 ? `${mins}:${String(Math.floor(secs)).padStart(2, '0')}` : `${Math.round(secs * 10) / 10}s`;
+}
+
+// --- ruler -----------------------------------------------------------------
+
+function renderRuler() {
+  ruler.innerHTML = '';
+  const span = Math.max(sourceDuration(), outputDuration());
+  if (span <= 0) return;
+
+  const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
+  const step = steps.find((s) => span / s <= 12) || 600;
+
+  for (let t = 0; t <= span; t += step) {
+    const tick = document.createElement('div');
+    tick.className = 'tl-tick';
+    tick.style.left = `${outTimeToX(t)}px`;
+    tick.textContent = formatTick(t);
+    ruler.appendChild(tick);
+  }
+}
+
+// --- shared in-place layout ---------------------------------------------------
+
+const segmentEls = new Map(); // seg.id -> element
+const layerBarEls = new Map(); // layer.id -> element
+let soundBarEl = null;
+let overlayBarEl = null;
+
+function layoutVideoTrack() {
+  const pps = pxPerSecond();
+  for (const seg of state.segments) {
+    const el = segmentEls.get(seg.id);
+    if (!el) continue;
+    el.style.left = `${seg.outStart * pps}px`;
+    el.style.width = `${Math.max(6, (seg.end - seg.start) * pps)}px`;
+  }
+  layoutTransitionBadges();
+}
+
+function layoutTransitionBadges() {
+  const pps = pxPerSecond();
+  videoTrack.querySelectorAll('.tl-transition-badge').forEach((badge) => {
+    const seg = state.segments.find((s) => s.id === badge.dataset.after);
+    if (seg) badge.style.left = `${(seg.outStart + (seg.end - seg.start)) * pps}px`;
+  });
+}
+
+function layoutLayerBars() {
+  for (const layer of state.layers) {
+    const el = layerBarEls.get(layer.id);
+    if (!el) continue;
+    const dispStart = sourceToOutput(layer.start);
+    const dispEnd = sourceToOutput(layer.end);
+    el.style.left = `${outTimeToX(dispStart)}px`;
+    el.style.width = `${Math.max(4, outTimeToX(dispEnd) - outTimeToX(dispStart))}px`;
+    // A layer whose footage is entirely cut collapses to a sliver — mark
+    // it so the user can see it won't be in the export.
+    el.classList.toggle('ghost', dispEnd - dispStart < 0.05);
+  }
+}
+
+function layoutSoundBar() {
+  if (!soundBarEl || !state.sfx) return;
+  soundBarEl.style.left = `${outTimeToX(sourceToOutput(state.sfx.start))}px`;
+  soundBarEl.style.width = `${Math.max(10, (state.sfx.duration || 1) * pxPerSecond())}px`;
+}
+
+function layoutOverlayBar() {
+  if (!overlayBarEl || !state.overlay) return;
+  const dispStart = sourceToOutput(state.overlay.start);
+  const dispEnd = sourceToOutput(state.overlay.end);
+  overlayBarEl.style.left = `${outTimeToX(dispStart)}px`;
+  overlayBarEl.style.width = `${Math.max(6, outTimeToX(dispEnd) - outTimeToX(dispStart))}px`;
+}
+
+function layoutAll() {
+  layoutVideoTrack();
+  layoutLayerBars();
+  layoutSoundBar();
+  layoutOverlayBar();
+  updatePlayhead();
+}
+
+// --- video track -------------------------------------------------------------
+
+function renderVideoTrack() {
+  const duration = sourceDuration();
+  videoTrack.innerHTML = '';
+  segmentEls.clear();
+  if (duration <= 0) return;
+
+  state.segments.forEach((seg, i) => {
+    const prev = state.segments[i - 1] || null;
+    const next = state.segments[i + 1] || null;
+
+    const el = document.createElement('div');
+    el.className = 'tl-segment';
+    el.classList.toggle('selected', seg.id === state.selectedSegmentId);
+
+    const leftEdge = document.createElement('div');
+    leftEdge.className = 'tl-seg-edge tl-seg-edge-left';
+    const rightEdge = document.createElement('div');
+    rightEdge.className = 'tl-seg-edge tl-seg-edge-right';
+    el.appendChild(leftEdge);
+    el.appendChild(rightEdge);
+
+    attachSegmentMoveDrag(el, seg, prev, next);
+    attachSegmentEdgeDrag(leftEdge, seg, prev, next, true);
+    attachSegmentEdgeDrag(rightEdge, seg, prev, next, false);
+
+    segmentEls.set(seg.id, el);
+    videoTrack.appendChild(el);
+  });
+
+  // Transition badges at boundaries that have one.
+  for (const tr of state.transitions) {
+    const seg = state.segments.find((s) => s.id === tr.afterSegmentId);
+    if (!seg) continue;
+    const badge = document.createElement('button');
+    badge.type = 'button';
+    badge.className = 'tl-transition-badge';
+    badge.dataset.after = seg.id;
+    badge.textContent = '✦';
+    badge.title = `White flash (${tr.duration.toFixed(1)}s) — click to remove`;
+    badge.addEventListener('pointerdown', (e) => e.stopPropagation());
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeTransition(tr.id);
+    });
+    videoTrack.appendChild(badge);
+  }
+
+  layoutVideoTrack();
+}
+
+// Press = select; press-and-drag past the threshold = move the piece.
+// Free mode commits the new outStart (clamped so neighbors never overlap
+// in output time). Snap mode lets the piece float while held, then snaps
+// it home on release — CapCut's exact feel.
+function attachSegmentMoveDrag(el, seg, prev, next) {
+  el.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    selectSegment(seg.id);
+    el.setPointerCapture(e.pointerId);
+
+    const pps = pxPerSecond();
+    const grabX = e.clientX;
+    const outStartAtGrab = seg.outStart;
+    const len = seg.end - seg.start;
+    const minOut = prev ? prev.outStart + (prev.end - prev.start) : 0;
+    const maxOut = next ? next.outStart - len : Math.max(outStartAtGrab, sourceDuration() - len + 10);
+    let moving = false;
+
+    const onMove = (moveEvent) => {
+      const dx = moveEvent.clientX - grabX;
+      if (!moving && Math.abs(dx) < MOVE_THRESHOLD_PX) return;
+      moving = true;
+      const deltaT = pps > 0 ? dx / pps : 0;
+      if (state.timelineMode === 'free') {
+        seg.outStart = Math.max(minOut, Math.min(outStartAtGrab + deltaT, Math.max(minOut, maxOut)));
+        layoutAll();
+      } else {
+        // Snap mode: float visually while held, home position unchanged.
+        el.style.left = `${(outStartAtGrab + deltaT) * pps}px`;
+        el.classList.add('floating');
+      }
+    };
+    const onUp = (upEvent) => {
+      el.releasePointerCapture(upEvent.pointerId);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.classList.remove('floating');
+      if (moving) {
+        if (state.timelineMode === 'snap') normalizeOutStarts();
+        emit('segments');
+      }
+    };
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+  });
+}
+
+// Per-piece trim handles, in SOURCE time. Bounds reach over cut footage —
+// the left edge back to the previous piece's source end (or 0), the right
+// edge forward to the next piece's source start (or the clip end) — which
+// is what makes trims non-destructive: deleted/trimmed footage is always
+// there to pull back out. Pointer movement converts to a time DELTA
+// (pixels / pxPerSecond) rather than an absolute position, since ripple
+// re-flow moves the track under the cursor.
+function attachSegmentEdgeDrag(edgeEl, seg, prev, next, isLeft) {
+  edgeEl.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    selectSegment(seg.id);
+    edgeEl.setPointerCapture(e.pointerId);
+
+    const srcMin = prev ? prev.end : 0;
+    const srcMax = next ? next.start : sourceDuration();
+    const startAtGrab = seg.start;
+    const endAtGrab = seg.end;
+    const outEndAtGrab = seg.outStart + (seg.end - seg.start);
+    const grabX = e.clientX;
+    const pps = pxPerSecond();
+
+    const onMove = (moveEvent) => {
+      const deltaT = pps > 0 ? (moveEvent.clientX - grabX) / pps : 0;
+      if (isLeft) {
+        seg.start = Math.max(srcMin, Math.min(startAtGrab + deltaT, seg.end - MIN_SEGMENT_SECONDS));
+        if (state.timelineMode === 'free') {
+          // Anchor the piece's output END, so the left edge visibly moves
+          // while the rest of the piece stays put (standard non-ripple trim).
+          const minOut = prev ? prev.outStart + (prev.end - prev.start) : 0;
+          seg.outStart = Math.max(minOut, outEndAtGrab - (seg.end - seg.start));
+          seg.start = seg.end - (outEndAtGrab - seg.outStart);
+        }
+      } else {
+        let maxEnd = srcMax;
+        if (state.timelineMode === 'free' && next) {
+          // Can't grow into the next piece's output space.
+          maxEnd = Math.min(maxEnd, seg.start + (next.outStart - seg.outStart));
+        }
+        seg.end = Math.min(maxEnd, Math.max(endAtGrab + deltaT, seg.start + MIN_SEGMENT_SECONDS));
+      }
+      if (state.timelineMode === 'snap') normalizeOutStarts();
+      layoutAll();
+      // Scrub to the dragged edge so the exact cut frame is visible.
+      seek(isLeft ? seg.start : Math.max(seg.start, seg.end - 0.02));
+    };
+    const onUp = (upEvent) => {
+      edgeEl.releasePointerCapture(upEvent.pointerId);
+      edgeEl.removeEventListener('pointermove', onMove);
+      edgeEl.removeEventListener('pointerup', onUp);
+      emit('segments');
+    };
+    edgeEl.addEventListener('pointermove', onMove);
+    edgeEl.addEventListener('pointerup', onUp);
+  });
+}
+
+// --- toolbar actions -----------------------------------------------------------
+
+function splitAtPlayhead() {
+  const piece = splitSegmentAt(getCurrentTime());
+  if (piece) selectSegment(piece.id);
+}
+
+function deleteSelection() {
+  const seg = selectedSegment();
+  if (seg) {
+    removeSegment(seg.id);
+    return;
+  }
+  const layer = selectedLayer();
+  if (layer) removeLayer(layer.id);
+}
+
+function refreshToolbar() {
+  const seg = selectedSegment();
+  const canDeleteSegment = seg && state.segments.length > 1;
+  deleteBtn.disabled = !(canDeleteSegment || selectedLayer());
+}
+
+// --- text / caption / sound rows --------------------------------------------------
+
+function setRowVisible(rowEl, visible) {
+  rowEl.classList.toggle('hidden', !visible);
+  const label = rowEl.previousElementSibling;
+  if (label && label.classList.contains('tl-label')) label.classList.toggle('hidden', !visible);
+}
+
+function buildLayerBar(layer) {
+  const bar = document.createElement('div');
+  bar.className = 'tl-text-bar';
+  bar.classList.toggle('selected', layer.id === state.selectedId);
+  bar.classList.toggle('caption', layer.group === 'caption');
+
+  const label = document.createElement('span');
+  label.className = 'tl-text-label';
+  label.textContent = layer.text.replace(/\s+/g, ' ').trim() || 'Text';
+  bar.appendChild(label);
+
+  const leftEdge = document.createElement('div');
+  leftEdge.className = 'tl-text-edge tl-text-edge-left';
+  const rightEdge = document.createElement('div');
+  rightEdge.className = 'tl-text-edge tl-text-edge-right';
+  bar.appendChild(leftEdge);
+  bar.appendChild(rightEdge);
+
+  attachBarDrag(bar, leftEdge, rightEdge, layer);
+  return bar;
+}
+
+function renderLayerRows() {
+  captionsRow.innerHTML = '';
+  textRow.innerHTML = '';
+  layerBarEls.clear();
+  const hasSource = sourceDuration() > 0;
+
+  let captionCount = 0;
+  let textCount = 0;
+  if (hasSource) {
+    for (const layer of state.layers) {
+      const bar = buildLayerBar(layer);
+      layerBarEls.set(layer.id, bar);
+      if (layer.group === 'caption') {
+        captionsRow.appendChild(bar);
+        captionCount += 1;
+      } else {
+        textRow.appendChild(bar);
+        textCount += 1;
+      }
+    }
+  }
+  setRowVisible(captionsRow, captionCount > 0);
+  setRowVisible(textRow, textCount > 0);
+  layoutLayerBars();
+}
+
+function renderSoundRow() {
+  soundRow.innerHTML = '';
+  soundBarEl = null;
+  const show = sourceDuration() > 0 && !!state.sfx;
+  setRowVisible(soundRow, show);
+  if (!show) return;
+
+  const bar = document.createElement('div');
+  bar.className = 'tl-sound-bar';
+  const label = document.createElement('span');
+  label.className = 'tl-text-label';
+  label.textContent = `🔊 ${state.sfx.label || 'Sound'}`;
+  bar.appendChild(label);
+  attachSoundDrag(bar);
+  soundBarEl = bar;
+  soundRow.appendChild(bar);
+  layoutSoundBar();
+}
+
+// Layer bars are dragged in OUTPUT coordinates (what's on screen) and the
+// result converted back to source time — so a bar dragged up against a
+// cut lands exactly at the cut's edge footage.
+function attachBarDrag(bar, leftEdge, rightEdge, layer) {
+  function startDrag(e, mode) {
+    e.stopPropagation();
+    e.preventDefault();
+    selectLayer(layer.id);
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    const outDuration = outputDuration();
+    const grabOut = xToOutTime(e.clientX);
+    const dispStartAtGrab = sourceToOutput(layer.start);
+    const dispEndAtGrab = sourceToOutput(layer.end);
+
+    const clampToFootage = (outT) => {
+      const src = outputToSource(Math.min(outDuration, Math.max(0, outT)));
+      return src !== null ? src : null;
+    };
+
+    const onMove = (moveEvent) => {
+      const t = xToOutTime(moveEvent.clientX);
+      if (mode === 'move') {
+        const span = dispEndAtGrab - dispStartAtGrab;
+        let newDispStart = dispStartAtGrab + (t - grabOut);
+        newDispStart = Math.max(0, Math.min(newDispStart, outDuration - span));
+        const s = clampToFootage(newDispStart);
+        const en = clampToFootage(newDispStart + span);
+        if (s !== null) layer.start = s;
+        if (en !== null) layer.end = Math.max(en, layer.start + MIN_LAYER_SECONDS / 2);
+      } else if (mode === 'left') {
+        const newDisp = Math.max(0, Math.min(t, sourceToOutput(layer.end) - MIN_LAYER_SECONDS));
+        const s = clampToFootage(newDisp);
+        if (s !== null) layer.start = Math.min(s, layer.end - MIN_LAYER_SECONDS);
+      } else {
+        const newDisp = Math.min(outDuration, Math.max(t, sourceToOutput(layer.start) + MIN_LAYER_SECONDS));
+        const en = clampToFootage(newDisp);
+        if (en !== null) layer.end = Math.max(en, layer.start + MIN_LAYER_SECONDS);
+      }
+      layoutLayerBars();
+    };
+    const onUp = (upEvent) => {
+      target.releasePointerCapture(upEvent.pointerId);
+      target.removeEventListener('pointermove', onMove);
+      target.removeEventListener('pointerup', onUp);
+      emit('layers');
+    };
+    target.addEventListener('pointermove', onMove);
+    target.addEventListener('pointerup', onUp);
+  }
+
+  bar.addEventListener('pointerdown', (e) => startDrag(e, 'move'));
+  leftEdge.addEventListener('pointerdown', (e) => startDrag(e, 'left'));
+  rightEdge.addEventListener('pointerdown', (e) => startDrag(e, 'right'));
+}
+
+function attachSoundDrag(bar) {
+  bar.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    selectLayer(null);
+    bar.setPointerCapture(e.pointerId);
+    const grabOut = xToOutTime(e.clientX);
+    const dispAtGrab = sourceToOutput(state.sfx.start);
+
+    const onMove = (moveEvent) => {
+      if (!state.sfx) return;
+      const t = xToOutTime(moveEvent.clientX);
+      let newDisp = Math.max(0, Math.min(dispAtGrab + (t - grabOut), Math.max(0, outputDuration() - 0.1)));
+      const src = outputToSource(newDisp);
+      if (src !== null) state.sfx.start = src;
+      layoutSoundBar();
+    };
+    const onUp = (upEvent) => {
+      bar.releasePointerCapture(upEvent.pointerId);
+      bar.removeEventListener('pointermove', onMove);
+      bar.removeEventListener('pointerup', onUp);
+      emit('settings');
+    };
+    bar.addEventListener('pointermove', onMove);
+    bar.addEventListener('pointerup', onUp);
+  });
+}
+
+// --- overlay row ------------------------------------------------------------------
+
+function renderOverlayRow() {
+  overlayRow.innerHTML = '';
+  overlayBarEl = null;
+  const show = sourceDuration() > 0 && !!state.overlay;
+  setRowVisible(overlayRow, show);
+  if (!show) return;
+
+  const bar = document.createElement('div');
+  bar.className = 'tl-overlay-bar';
+  const label = document.createElement('span');
+  label.className = 'tl-text-label';
+  label.textContent = `🖼 ${state.overlay.isVideo ? 'Video' : 'Image'} overlay`;
+  bar.appendChild(label);
+
+  const leftEdge = document.createElement('div');
+  leftEdge.className = 'tl-text-edge tl-text-edge-left';
+  const rightEdge = document.createElement('div');
+  rightEdge.className = 'tl-text-edge tl-text-edge-right';
+  bar.appendChild(leftEdge);
+  bar.appendChild(rightEdge);
+
+  attachOverlayBarDrag(bar, leftEdge, rightEdge);
+  overlayBarEl = bar;
+  overlayRow.appendChild(bar);
+  layoutOverlayBar();
+}
+
+// Same move/resize gesture as a text bar, but on the single overlay clip.
+// Grabbing it keeps the overlay visible in the preview (setOverlayEditing)
+// so you can see what you're timing.
+function attachOverlayBarDrag(bar, leftEdge, rightEdge) {
+  function startDrag(e, mode) {
+    e.stopPropagation();
+    e.preventDefault();
+    setOverlayEditing(true);
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    const o = state.overlay;
+    const outDur = outputDuration();
+    const grabOut = xToOutTime(e.clientX);
+    const dispStartAtGrab = sourceToOutput(o.start);
+    const dispEndAtGrab = sourceToOutput(o.end);
+    const clampToFootage = (outT) => {
+      const src = outputToSource(Math.min(outDur, Math.max(0, outT)));
+      return src !== null ? src : null;
+    };
+
+    const onMove = (moveEvent) => {
+      if (!state.overlay) return;
+      const t = xToOutTime(moveEvent.clientX);
+      if (mode === 'move') {
+        const span = dispEndAtGrab - dispStartAtGrab;
+        let ns = Math.max(0, Math.min(dispStartAtGrab + (t - grabOut), outDur - span));
+        const s = clampToFootage(ns);
+        const en = clampToFootage(ns + span);
+        if (s !== null) o.start = s;
+        if (en !== null) o.end = Math.max(en, o.start + MIN_LAYER_SECONDS / 2);
+      } else if (mode === 'left') {
+        const nd = Math.max(0, Math.min(t, sourceToOutput(o.end) - MIN_LAYER_SECONDS));
+        const s = clampToFootage(nd);
+        if (s !== null) o.start = Math.min(s, o.end - MIN_LAYER_SECONDS);
+      } else {
+        const nd = Math.min(outDur, Math.max(t, sourceToOutput(o.start) + MIN_LAYER_SECONDS));
+        const en = clampToFootage(nd);
+        if (en !== null) o.end = Math.max(en, o.start + MIN_LAYER_SECONDS);
+      }
+      layoutOverlayBar();
+    };
+    const onUp = (upEvent) => {
+      target.releasePointerCapture(upEvent.pointerId);
+      target.removeEventListener('pointermove', onMove);
+      target.removeEventListener('pointerup', onUp);
+      emit('settings');
+    };
+    target.addEventListener('pointermove', onMove);
+    target.addEventListener('pointerup', onUp);
+  }
+
+  bar.addEventListener('pointerdown', (e) => startDrag(e, 'move'));
+  leftEdge.addEventListener('pointerdown', (e) => startDrag(e, 'left'));
+  rightEdge.addEventListener('pointerdown', (e) => startDrag(e, 'right'));
+}
+
+// --- playhead / scrubbing ---------------------------------------------------------
+
+function updatePlayhead() {
+  playhead.style.left = `${ruler.offsetLeft + outTimeToX(getCurrentOutputTime())}px`;
+  playhead.classList.toggle('hidden', sourceDuration() <= 0);
+}
+
+// Scrubbing lives on the ruler (and the playhead itself) — the tracks'
+// own gestures are select/move/trim.
+function attachScrub() {
+  for (const surface of [ruler, playhead]) {
+    surface.addEventListener('pointerdown', (e) => {
+      if (sourceDuration() <= 0) return;
+      surface.setPointerCapture(e.pointerId);
+      seekOutput(xToOutTime(e.clientX));
+
+      const onMove = (moveEvent) => seekOutput(xToOutTime(moveEvent.clientX));
+      const onUp = (upEvent) => {
+        surface.releasePointerCapture(upEvent.pointerId);
+        surface.removeEventListener('pointermove', onMove);
+        surface.removeEventListener('pointerup', onUp);
+      };
+      surface.addEventListener('pointermove', onMove);
+      surface.addEventListener('pointerup', onUp);
+    });
+  }
+}
+
+// --- init ----------------------------------------------------------------------
+
+function renderAll() {
+  const hasSource = sourceDuration() > 0;
+  emptyMsg.classList.toggle('hidden', hasSource);
+  setRowVisible(videoTrack, hasSource);
+  renderRuler();
+  renderVideoTrack();
+  renderOverlayRow();
+  renderLayerRows();
+  renderSoundRow();
+  refreshToolbar();
+  updatePlayhead();
+}
+
+export function initTimeline() {
+  attachScrub();
+  splitBtn.addEventListener('click', splitAtPlayhead);
+  deleteBtn.addEventListener('click', deleteSelection);
+
+  on('source', renderAll);
+  on('segments', renderAll);
+  on('layers', renderAll);
+  on('settings', () => {
+    renderSoundRow();
+    renderOverlayRow();
+  });
+  on('selection', () => {
+    renderVideoTrack();
+    renderLayerRows();
+    refreshToolbar();
+  });
+  on('time', updatePlayhead);
+  window.addEventListener('resize', renderAll);
+}

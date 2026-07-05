@@ -3,8 +3,19 @@ downloads/*
 uploads/*
 outputs/*
 captions/*
+emoji-cache/*
+preview-cache/*
 .DS_Store
 *.log
 dist/
 resources/bin-mac/*
 resources/bin-win/*
+.legacy-ui/
+# Whisper model (~148MB) — fetched by `npm run fetch-whisper-model`, not committed
+models/
+# Whisper transcription scratch (extracted wav + json), created at runtime
+transcribe-cache/*
+# Compiled emoji rasterizer — built by scripts/fetch-binaries-mac.sh; source (main.swift) is committed
+native/emoji-render-mac/emoji-render
+# Local editor/agent tooling config
+.claude/

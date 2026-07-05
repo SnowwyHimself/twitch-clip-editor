@@ -9,6 +9,8 @@
     "electron": "electron .",
     "fetch-binaries:mac": "bash scripts/fetch-binaries-mac.sh",
     "fetch-binaries:win": "bash scripts/fetch-binaries-win.sh",
+    "fetch-whisper-model": "bash scripts/fetch-whisper-model.sh",
+    "build-whisper": "bash scripts/build-whisper-mac.sh",
     "dist:mac": "npm run fetch-binaries:mac && electron-builder --mac --arm64",
     "dist:win": "npm run fetch-binaries:win && electron-builder --win --x64"
   },
@@ -38,6 +40,7 @@
       "caption.js",
       "public/**/*",
       "fonts/**/*",
+      "assets/**/*",
       "node_modules/**/*",
       "!node_modules/electron/**",
       "!node_modules/electron-builder/**"

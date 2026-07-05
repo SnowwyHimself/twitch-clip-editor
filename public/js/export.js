@@ -1,0 +1,213 @@
+// Export: turns the editor state into the render request and drives the
+// job lifecycle UI (progress bar -> result video + download).
+//
+// The one non-obvious step is time-domain mapping. The whole editor works
+// in SOURCE seconds; ffmpeg's overlay enable expressions run in OUTPUT
+// time — after deleted segments are cut out (concat) and speed is applied.
+// mapToOutput() collapses a source timestamp across the deleted gaps and
+// divides by speed, so a text layer sitting at 0:05-0:08 on the timeline
+// shows over exactly the same frames in the rendered file, whatever was
+// cut before it.
+
+import { state, on, keptSegments, sourceDuration, sourceToOutput } from './state.js';
+import { startExport, fetchJobStatus } from './api.js';
+
+const exportBtn = document.getElementById('export-btn');
+const modal = document.getElementById('export-modal');
+const modalStatus = document.getElementById('export-status');
+const modalBarFill = document.getElementById('export-bar-fill');
+const modalResult = document.getElementById('export-result');
+const resultVideo = document.getElementById('result-video');
+const downloadLink = document.getElementById('download-link');
+const closeModalBtn = document.getElementById('export-close-btn');
+
+let pollHandle = null;
+
+const STATUS_LABELS = {
+  queued: 'Queued...',
+  downloading: 'Downloading clip...',
+  processing: 'Rendering...',
+  done: 'Done!',
+};
+
+// state's sourceToOutput handles pieces, cuts, and free-mode gaps; the
+// division by speed converts concat-domain seconds into the final video's
+// seconds, which is what ffmpeg's enable/adelay run in (the setpts speed
+// change happens before overlays and audio mixing).
+function mapToOutput(sourceTime) {
+  return sourceToOutput(sourceTime) / state.speed;
+}
+
+function buildTextLayersPayload() {
+  const payload = [];
+  for (const layer of state.layers) {
+    if (!layer.text.trim()) continue;
+    const start = mapToOutput(layer.start);
+    const end = mapToOutput(layer.end);
+    // A layer that fell entirely inside deleted footage maps to a
+    // zero-length range — nothing of it survives the cut, so skip it.
+    if (end - start < 0.05) continue;
+    payload.push({
+      text: layer.text,
+      style: layer.style,
+      fontId: layer.fontId,
+      fontSize: layer.fontSize,
+      color: layer.color,
+      dropShadow: layer.dropShadow,
+      xPercent: layer.xPercent,
+      yPercent: layer.yPercent,
+      start,
+      end,
+    });
+  }
+  return payload;
+}
+
+function buildFormData() {
+  const formData = new FormData();
+  formData.append('aspectRatio', state.aspect.id);
+  formData.append('zoom', state.zoom);
+  formData.append('blur', state.blur);
+  formData.append('mirror', state.mirror);
+  formData.append('speed', state.speed);
+  formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));
+
+  const kept = keptSegments();
+  if (sourceDuration() > 0 && kept.length > 0) {
+    // outStart carries the free-mode placement — the server inserts black
+    // filler for any output gap between consecutive pieces.
+    formData.append(
+      'segments',
+      JSON.stringify(kept.map((s) => ({ start: s.start, end: s.end, outStart: s.outStart })))
+    );
+    // Transitions as piece indexes (order matches the segments payload).
+    const transitions = state.transitions
+      .map((tr) => ({
+        afterIndex: kept.findIndex((s) => s.id === tr.afterSegmentId),
+        duration: tr.duration,
+      }))
+      .filter((tr) => tr.afterIndex >= 0 && tr.afterIndex < kept.length - 1);
+    if (transitions.length > 0) {
+      formData.append('transitions', JSON.stringify(transitions));
+    }
+  }
+  if (state.overlay) {
+    const o = state.overlay;
+    formData.append('overlay', o.file);
+    formData.append('overlaySize', o.sizePercent);
+    formData.append('overlayX', o.xPercent);
+    formData.append('overlayY', o.yPercent);
+    formData.append('overlayCropTop', o.cropTop);
+    formData.append('overlayCropBottom', o.cropBottom);
+    formData.append('overlayCropLeft', o.cropLeft);
+    formData.append('overlayCropRight', o.cropRight);
+    // Overlay's on-screen window in the FINAL video's seconds (mapped
+    // across cuts and speed, same as text layers).
+    formData.append('overlayStart', mapToOutput(o.start).toFixed(3));
+    formData.append('overlayEnd', mapToOutput(o.end).toFixed(3));
+  }
+  if (state.sfx) {
+    formData.append('audioTrack', state.sfx.file);
+    formData.append('audioVolume', state.sfx.volumePercent);
+    // Where the effect starts in the FINAL video's seconds.
+    formData.append('audioDelay', mapToOutput(state.sfx.start).toFixed(3));
+  }
+
+  let endpoint;
+  if (state.source.kind === 'url') {
+    endpoint = '/api/process-url';
+    formData.append('url', state.source.url);
+    if (state.source.section) {
+      formData.append('sectionStart', state.source.section.start);
+      formData.append('sectionEnd', state.source.section.end);
+    }
+  } else {
+    endpoint = '/api/process-upload';
+    formData.append('video', state.source.file);
+  }
+  return { endpoint, formData };
+}
+
+function showModal() {
+  modal.classList.remove('hidden');
+  modalResult.classList.add('hidden');
+  modalBarFill.style.width = '0%';
+  modalBarFill.classList.remove('error');
+  modalStatus.classList.remove('error');
+}
+
+function stopPolling() {
+  if (pollHandle) {
+    clearInterval(pollHandle);
+    pollHandle = null;
+  }
+}
+
+function setExporting(isExporting) {
+  exportBtn.disabled = isExporting;
+  exportBtn.textContent = isExporting ? 'Exporting...' : 'Export';
+}
+
+function showError(message) {
+  modalStatus.textContent = message || 'Something went wrong.';
+  modalStatus.classList.add('error');
+  modalBarFill.classList.add('error');
+  setExporting(false);
+}
+
+function pollStatus(jobId) {
+  pollHandle = setInterval(async () => {
+    try {
+      const job = await fetchJobStatus(jobId);
+      if (job.status === 'error') {
+        stopPolling();
+        showError(job.error);
+        return;
+      }
+      modalStatus.textContent = STATUS_LABELS[job.status] || 'Working...';
+      if (Number.isFinite(job.progress)) {
+        modalBarFill.style.width = `${Math.round(job.progress * 100)}%`;
+      }
+      if (job.status === 'done') {
+        stopPolling();
+        setExporting(false);
+        modalBarFill.style.width = '100%';
+        modalResult.classList.remove('hidden');
+        resultVideo.src = job.outputUrl;
+        downloadLink.href = job.outputUrl;
+      }
+    } catch (err) {
+      stopPolling();
+      showError(err.message);
+    }
+  }, 700);
+}
+
+async function beginExport() {
+  if (!state.source) return;
+  stopPolling();
+  showModal();
+  setExporting(true);
+  modalStatus.textContent = 'Starting...';
+  try {
+    const { endpoint, formData } = buildFormData();
+    const { jobId } = await startExport(endpoint, formData);
+    pollStatus(jobId);
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+export function initExport() {
+  exportBtn.addEventListener('click', beginExport);
+  closeModalBtn.addEventListener('click', () => {
+    stopPolling();
+    setExporting(false);
+    resultVideo.pause();
+    modal.classList.add('hidden');
+  });
+  on('source', () => {
+    exportBtn.disabled = !state.source;
+  });
+  exportBtn.disabled = true;
+}

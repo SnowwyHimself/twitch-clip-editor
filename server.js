@@ -4,7 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { renderCaptionPng, resolveFontPath } = require('./caption');
+const { renderCaptionPng, resolveFontPath, getFontOptions } = require('./caption');
+const { transcribeSource, checkWhisperSetup } = require('./transcribe');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
@@ -19,8 +20,18 @@ const UPLOADS_DIR = path.join(DATA_ROOT, 'uploads');
 const DOWNLOADS_DIR = path.join(DATA_ROOT, 'downloads');
 const OUTPUTS_DIR = path.join(DATA_ROOT, 'outputs');
 const CAPTIONS_DIR = path.join(DATA_ROOT, 'captions');
+// Clips fetched purely to populate the live preview for the Clip URL tab —
+// keyed by a hash of the URL (see previewCacheKey) so previewing the same
+// URL twice, or clicking Generate right after previewing it, reuses the
+// already-downloaded file instead of running yt-dlp again.
+const PREVIEW_CACHE_DIR = path.join(DATA_ROOT, 'preview-cache');
+// Whisper ggml model file(s) for auto-captions live here (fetched once by
+// scripts/fetch-whisper-model.sh); transcribe-cache holds the short-lived
+// extracted-wav + whisper-JSON intermediates per transcription run.
+const MODELS_DIR = path.join(DATA_ROOT, 'models');
+const TRANSCRIBE_DIR = path.join(DATA_ROOT, 'transcribe-cache');
 
-for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR]) {
+for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -44,14 +55,41 @@ function resolveBinary(name) {
 const FFMPEG_BIN = resolveBinary('ffmpeg');
 const YTDLP_BIN = resolveBinary('yt-dlp');
 
-const CANVAS_W = 1080;
-const CANVAS_H = 1920;
+// Every ratio's pixel dimensions follow the same convention every major
+// editor uses: width:height literally matches the ratio's own numbers, so
+// 4:3 and 16:9 render landscape, never flipped into a portrait crop.
+const ASPECT_RATIOS = {
+  '9:16': { label: 'TikTok / Reels / Shorts (9:16)', width: 1080, height: 1920 },
+  '1:1': { label: 'Square (1:1)', width: 1080, height: 1080 },
+  '4:5': { label: 'Instagram Portrait (4:5)', width: 1080, height: 1350 },
+  '4:3': { label: 'Classic (4:3)', width: 1440, height: 1080 },
+  '16:9': { label: 'Widescreen (16:9)', width: 1920, height: 1080 },
+};
+const DEFAULT_ASPECT_RATIO = '9:16';
+
+function normalizeAspectRatio(value) {
+  return ASPECT_RATIOS[value] ? value : DEFAULT_ASPECT_RATIO;
+}
+
+function getAspectRatioOptions() {
+  return Object.entries(ASPECT_RATIOS).map(([id, entry]) => ({
+    id,
+    label: entry.label,
+    width: entry.width,
+    height: entry.height,
+    isDefault: id === DEFAULT_ASPECT_RATIO,
+  }));
+}
+
 const MIN_ZOOM = 1.0;
 const MAX_ZOOM = 2.0;
 const MIN_BLUR = 0;
 const MAX_BLUR = 100;
 const MIN_SPEED = 0.5;
 const MAX_SPEED = 2.0;
+const MIN_FONT_SIZE = 32;
+const MAX_FONT_SIZE = 120;
+const DEFAULT_FONT_SIZE = 64;
 
 // jobId -> { status, outputUrl, error }
 const jobs = new Map();
@@ -94,11 +132,119 @@ function isValidHttpUrl(value) {
 }
 
 function clampCaptionStyle(value) {
-  return value === 'box' ? 'box' : 'outline';
+  return value === 'box' || value === 'plain' ? value : 'outline';
 }
 
 function normalizeMirror(value) {
   return value === true || value === 'true';
+}
+
+// `segments` arrives as the KEPT pieces from the frontend's timeline — a
+// JSON string when it came through multer's multipart form parsing, or
+// already a real array on the JSON-body route. Each is
+// { start, end, outStart }: source in/out points plus the piece's
+// position on the OUTPUT timeline (free-form mode can leave gaps between
+// pieces, which render as black — see buildSegmentFilter). Returns null
+// when there's nothing usable — meaning "no trim at all," so runFfmpeg
+// skips every trim/concat step entirely. Source ranges are never clamped
+// against the real duration here — ffmpeg itself simply stops at EOF if a
+// range asks for more than exists.
+function buildSegments(body) {
+  let raw = body.segments;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+
+  const cleaned = raw
+    .map((s) => ({
+      start: parseFloat(s && s.start),
+      end: parseFloat(s && s.end),
+      outStart: Number.isFinite(parseFloat(s && s.outStart)) ? parseFloat(s.outStart) : null,
+    }))
+    .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.start >= 0 && s.end > s.start)
+    .sort((a, b) => (a.outStart !== null ? a.outStart : a.start) - (b.outStart !== null ? b.outStart : b.start));
+
+  // Fill in / repair outStart so downstream code can rely on it: missing
+  // values pack cumulatively (the classic snap layout), and overlapping
+  // placements clamp forward rather than producing negative gaps.
+  let cursor = 0;
+  for (const s of cleaned) {
+    if (s.outStart === null || s.outStart < cursor - 0.001) s.outStart = cursor;
+    cursor = s.outStart + (s.end - s.start);
+  }
+
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+// Transitions between consecutive pieces: { afterIndex, duration } —
+// afterIndex refers to the (outStart-ordered) segments array above.
+// Currently the only type is the white flash (dip to white).
+function buildTransitions(body) {
+  let raw = body.transitions;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((t) => ({
+      afterIndex: parseInt(t && t.afterIndex, 10),
+      duration: Math.min(2, Math.max(0.1, parseFloat(t && t.duration) || 0.5)),
+    }))
+    .filter((t) => Number.isInteger(t.afterIndex) && t.afterIndex >= 0);
+}
+
+function normalizeDropShadow(value) {
+  return value === true || value === 'true';
+}
+
+// Unknown/missing font ids fall back to the default bundled font — handled
+// inside caption.js's resolveFontEntry, not here, so this only needs to
+// guard against non-string garbage reaching it.
+function normalizeFontId(value) {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function clampFontSize(value) {
+  const size = parseFloat(value);
+  if (Number.isNaN(size)) return DEFAULT_FONT_SIZE;
+  return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size));
+}
+
+// Caption horizontal/vertical position, as a 0-100 "where does the
+// caption's own center sit between the two edges" percentage — 50 is
+// centered. Kept generic (not zoom/seam-aware) since horizontal position
+// has no "auto" concept to preserve, and manual vertical position
+// intentionally doesn't track the seam once a user sets it (see
+// normalizeAutoPosition below).
+// Default matches the frontend's vertical position slider default (25%,
+// roughly TikTok's usual caption placement) — used only when a manual
+// positionY is expected but wasn't actually provided.
+function clampPositionPercent(value, fallback = 25) {
+  const pct = parseFloat(value);
+  if (Number.isNaN(pct)) return fallback;
+  return Math.min(100, Math.max(0, pct));
+}
+
+// Converts a 0-100 "center position" percentage into a top-left pixel
+// coordinate, clamped so the full contentSize always stays within
+// [0, canvasSize] regardless of how large/small the caption or how far
+// toward an edge it's positioned — this is what keeps captions on-screen
+// at any font size or position setting instead of the boundary shrinking
+// or content clipping off the canvas.
+function resolvePositionCoordinate(percent, contentSize, canvasSize) {
+  const minCenter = contentSize / 2;
+  const maxCenter = canvasSize - contentSize / 2;
+  const center = maxCenter >= minCenter ? minCenter + (percent / 100) * (maxCenter - minCenter) : canvasSize / 2;
+  return Math.round(center - contentSize / 2);
 }
 
 function runCommand(cmd, args) {
@@ -141,17 +287,16 @@ function probeSource(inputPath) {
         return;
       }
       const hasAudio = /Stream #\d+:\d+.*?: Audio:/.test(stderr);
-      resolve({ width: parseInt(videoMatch[1], 10), height: parseInt(videoMatch[2], 10), hasAudio });
+      // Container duration — used to compute an expected output length for
+      // the render progress percentage. null (rare, e.g. a stream with no
+      // duration metadata) just means no percentage, not a failure.
+      const durationMatch = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      const duration = durationMatch
+        ? parseInt(durationMatch[1], 10) * 3600 + parseInt(durationMatch[2], 10) * 60 + parseFloat(durationMatch[3])
+        : null;
+      resolve({ width: parseInt(videoMatch[1], 10), height: parseInt(videoMatch[2], 10), hasAudio, duration });
     });
   });
-}
-
-// Mirrors the fgWidth/fgHeight math the ffmpeg filter graph itself performs
-// (scale to fgWidth, preserve aspect ratio, round to even), so the caption
-// overlay can be positioned before ffmpeg ever runs.
-function computeForegroundHeight(fgWidth, srcWidth, srcHeight) {
-  const rawHeight = fgWidth * (srcHeight / srcWidth);
-  return Math.round(rawHeight / 2) * 2;
 }
 
 // Builds the ffmpeg filter_complex graph for the zoom + blurred-background
@@ -163,7 +308,7 @@ function computeForegroundHeight(fgWidth, srcWidth, srcHeight) {
 //
 // When captionOverlay is present, the zoom+blur composite is labeled [comp]
 // instead of the final [outv], and one more overlay stage burns the caption
-// PNG on top at the precomputed y position (horizontally centered).
+// PNG on top at the precomputed x/y position.
 //
 // The bg layer's force_original_aspect_ratio=increase step computes a
 // fractional intermediate size (e.g. 1920*1.7778=3413.33) that has to round
@@ -192,7 +337,11 @@ function computeForegroundHeight(fgWidth, srcWidth, srcHeight) {
 // path only has one consumer and never needs it, and if neither speed nor
 // mirror is active, no prefix is added at all (plain [0:v] straight
 // through, matching the original unmodified behavior exactly).
-function buildSourcePrefix(speed, mirror, consumerCount) {
+// sourceLabel defaults to the raw input ([0:v]) but is overridden to
+// [segv] when buildSegmentFilter (below) has already concatenated
+// multiple kept segments — either way this is the single point every
+// downstream chain reads its starting video from.
+function buildSourcePrefix(sourceLabel, speed, mirror, consumerCount) {
   const steps = [];
   if (speed !== 1) {
     steps.push(`setpts=(1/${speed})*PTS`);
@@ -201,64 +350,288 @@ function buildSourcePrefix(speed, mirror, consumerCount) {
     steps.push('hflip');
   }
 
+  // [0:v] is the one label ffmpeg treats specially: a raw demuxed stream,
+  // safe for any number of filters to read independently. Every other
+  // label here (e.g. [segv], the segment-concat step's output) is a
+  // regular filter-graph output pad, which — like any filter output — can
+  // only be consumed once unless explicitly duplicated with split. So
+  // when there are two downstream consumers (the blur>0 path's bg/fg
+  // chains) and speed/mirror don't already produce a split, a filter
+  // output source still needs one of its own.
+  const isRawInput = sourceLabel === '[0:v]';
+
   if (steps.length === 0) {
-    return consumerCount === 2 ? { stage: '', labels: ['[0:v]', '[0:v]'] } : { stage: '', labels: ['[0:v]'] };
+    if (consumerCount !== 2) return { stage: '', labels: [sourceLabel] };
+    if (isRawInput) return { stage: '', labels: [sourceLabel, sourceLabel] };
+    return { stage: `${sourceLabel}split=2[src1][src2];`, labels: ['[src1]', '[src2]'] };
   }
 
   const chain = steps.join(',');
   if (consumerCount === 2) {
-    return { stage: `[0:v]${chain},split=2[src1][src2];`, labels: ['[src1]', '[src2]'] };
+    return { stage: `${sourceLabel}${chain},split=2[src1][src2];`, labels: ['[src1]', '[src2]'] };
   }
-  return { stage: `[0:v]${chain}[src];`, labels: ['[src]'] };
+  return { stage: `${sourceLabel}${chain}[src];`, labels: ['[src]'] };
 }
 
-function buildFilterComplex(zoom, blur, captionOverlay, mirror, speed) {
-  const fgWidth = Math.round((CANVAS_W * zoom) / 2) * 2;
-  const fgChain = `scale=${fgWidth}:-2,crop=${CANVAS_W}:ih:(iw-${CANVAS_W})/2:0`;
-  const compositeLabel = captionOverlay ? '[comp]' : '[precap]';
+// overlayStages: an ordered list of things composited on top of the base
+// zoom/blur frame — the media overlay (if any) first, then every text layer
+// in order, so text always stays above the media overlay, matching how
+// CapCut stacks by default. Each stage is { pre, inputLabel, x, y, enable }:
+// `pre` is an optional preparatory chain (the media overlay's
+// scale-to-percent step — its x/y use ffmpeg's own overlay_w/overlay_h
+// runtime expressions so the server never needs to know that file's aspect
+// ratio ahead of time, while text-layer x/y are precomputed pixels since
+// the server rendered the PNG and knows its exact size), and `enable` an
+// optional ffmpeg timeline expression (between(t,start,end)) that shows a
+// text layer only during its own time range. `t` there is OUTPUT time —
+// after segment trims and speed changes — which is exactly the domain the
+// frontend maps layer times into before submitting (see export payload
+// notes in public/js/export.js).
+function buildFilterComplex(canvasW, canvasH, zoom, blur, overlayStages, mirror, speed, sourceLabel) {
+  const fgWidth = Math.round((canvasW * zoom) / 2) * 2;
+  const fgChain = `scale=${fgWidth}:-2,crop=${canvasW}:ih:(iw-${canvasW})/2:0`;
 
   let graph;
   if (blur <= 0) {
-    const { stage, labels } = buildSourcePrefix(speed, mirror, 1);
-    graph = `${stage}${labels[0]}${fgChain},pad=${CANVAS_W}:${CANVAS_H}:0:(${CANVAS_H}-ih)/2:color=black${compositeLabel}`;
+    const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 1);
+    graph = `${stage}${labels[0]}${fgChain},pad=${canvasW}:${canvasH}:0:(${canvasH}-ih)/2:color=black[c0]`;
   } else {
-    const { stage, labels } = buildSourcePrefix(speed, mirror, 2);
+    const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 2);
     const [bgSource, fgSource] = labels;
-    const bg = `${bgSource}scale=${CANVAS_W}:${CANVAS_H}:force_original_aspect_ratio=increase,crop=${CANVAS_W}:${CANVAS_H},gblur=sigma=${blur}[bg]`;
+    const bg = `${bgSource}scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase,crop=${canvasW}:${canvasH},gblur=sigma=${blur}[bg]`;
     const fg = `${fgSource}${fgChain}[fg]`;
-    const overlay = `[bg][fg]overlay=(W-w)/2:(H-h)/2${compositeLabel}`;
+    const overlay = `[bg][fg]overlay=(W-w)/2:(H-h)/2[c0]`;
     graph = `${stage}${bg};${fg};${overlay}`;
   }
 
-  if (captionOverlay) {
-    graph += `;[comp][1:v]overlay=(W-w)/2:${captionOverlay.y}[precap]`;
-  }
+  let current = '[c0]';
+  overlayStages.forEach((stage, i) => {
+    const next = `[c${i + 1}]`;
+    if (stage.pre) graph += `;${stage.pre}`;
+    const enable = stage.enable ? `:enable='${stage.enable}'` : '';
+    graph += `;${current}${stage.inputLabel}overlay=${stage.x}:${stage.y}${enable}${next}`;
+    current = next;
+  });
 
-  graph += `;[precap]setsar=1[outv]`;
+  graph += `;${current}setsar=1[outv]`;
 
   return graph;
 }
 
-async function runFfmpeg(inputPath, outputPath, zoom, blur, captionOverlay, mirror, speed, hasAudio) {
-  let filterComplex = buildFilterComplex(zoom, blur, captionOverlay, mirror, speed);
-  const args = ['-y', '-i', inputPath];
-  if (captionOverlay) {
-    args.push('-i', captionOverlay.pngPath);
+// Cutting out a middle piece (rather than just trimming the two ends)
+// can't be done with input-side -ss/-t (that only ever keeps one
+// contiguous range) — instead each kept [start,end] range is trimmed from
+// the raw input independently, timestamps reset to 0 (setpts=PTS-STARTPTS
+// — otherwise concat would leave gaps matching the ORIGINAL gaps between
+// pieces), then concat stitches them together. Three extras ride the same
+// chain:
+//   - Output gaps (a piece's outStart later than the previous piece's
+//     end — free-form timeline mode) become BLACK filler pieces. These
+//     are derived from the source itself (trim + drawbox blackout + muted
+//     audio) rather than color/anullsrc filter sources: synthetic sources
+//     carry a different frame rate/timebase than the demuxed stream, and
+//     concat-ing the mix made the encoder mass-duplicate frames chasing
+//     the timestamp mismatch (verified: "More than 1000 frames
+//     duplicated" and a render ~60x slower than realtime). Reusing real
+//     frames guarantees identical link parameters. One limit: a single
+//     gap can't be longer than the whole source clip.
+//   - White-flash transitions become a white fade-out on the last
+//     duration/2 of the piece before the boundary and a white fade-in on
+//     the first duration/2 of the piece after — the classic dip-to-white
+//     construction.
+//   - Every video piece gets setsar=1 and every audio piece a fixed
+//     44.1kHz stereo fltp aformat: concat requires identical link
+//     parameters, and the synthetic fillers wouldn't otherwise match an
+//     arbitrary source's SAR/sample-rate.
+// concat's v=1:a=1 form expects the pieces interleaved as
+// [v0][a0][v1][a1]... — one video+audio pair per piece.
+function buildSegmentFilter(segments, hasAudio, transitions) {
+  const AFMT = 'aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo';
+  let chain = '';
+  const pairLabels = [];
+  let n = 0;
+  let cursor = 0;
+
+  const addBlackFiller = (gapSeconds) => {
+    const d = gapSeconds.toFixed(3);
+    chain += `[0:v]trim=start=0:end=${d},setpts=PTS-STARTPTS,drawbox=color=black:t=fill,setsar=1[v${n}];`;
+    if (hasAudio) {
+      chain += `[0:a]atrim=start=0:end=${d},asetpts=PTS-STARTPTS,volume=0,${AFMT}[a${n}];`;
+      pairLabels.push(`[v${n}][a${n}]`);
+    } else {
+      pairLabels.push(`[v${n}]`);
+    }
+    n += 1;
+  };
+
+  segments.forEach((seg, i) => {
+    const gap = seg.outStart - cursor;
+    if (gap > 0.01) addBlackFiller(gap);
+
+    const len = seg.end - seg.start;
+    const fades = [];
+    const trAfter = transitions.find((t) => t.afterIndex === i);
+    if (trAfter && i < segments.length - 1) {
+      const half = Math.min(trAfter.duration / 2, len / 2);
+      fades.push(`fade=t=out:st=${(len - half).toFixed(3)}:d=${half.toFixed(3)}:color=white`);
+    }
+    const trBefore = transitions.find((t) => t.afterIndex === i - 1);
+    if (trBefore) {
+      const half = Math.min(trBefore.duration / 2, len / 2);
+      fades.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=white`);
+    }
+    const fadeChain = fades.length > 0 ? `,${fades.join(',')}` : '';
+
+    chain += `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS,setsar=1${fadeChain}[v${n}];`;
+    if (hasAudio) {
+      chain += `[0:a]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
+      pairLabels.push(`[v${n}][a${n}]`);
+    } else {
+      pairLabels.push(`[v${n}]`);
+    }
+    n += 1;
+    cursor = seg.outStart + len;
+  });
+
+  const outLabels = hasAudio ? '[segv][sega]' : '[segv]';
+  chain += `${pairLabels.join('')}concat=n=${n}:v=1:a=${hasAudio ? 1 : 0}${outLabels};`;
+  return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
+}
+
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, captionOverlays, mediaOverlay, audioOverlay, mirror, speed, hasAudio, segments, transitions, mediaInfo, onProgress) {
+  // No trim info at all (null — no preview was ever loaded, so nothing
+  // was sent) behaves exactly like this feature never existed: no -ss/-t,
+  // straight [0:v]/[0:a]. A single kept range starting at output 0 (the
+  // common case — just trimming the two ends) still uses fast,
+  // frame-accurate input-side -ss/-t. Everything else — middle cuts,
+  // free-form gaps (a lone piece placed after black counts), transitions
+  // — goes through the trim/filler/concat filter chain below.
+  const noTrim = !segments || segments.length === 0;
+  const singleRange =
+    !noTrim && segments.length === 1 && segments[0].outStart <= 0.01 && (!transitions || transitions.length === 0);
+  // -progress pipe:1 streams machine-readable key=value progress lines to
+  // stdout (stderr keeps the normal log for error reporting) — parsed by
+  // runFfmpegWithProgress so the job status can expose a real percentage.
+  const args = ['-y', '-progress', 'pipe:1', '-nostats'];
+  if (singleRange) {
+    if (segments[0].start > 0) args.push('-ss', segments[0].start.toFixed(3));
+    args.push('-t', (segments[0].end - segments[0].start).toFixed(3));
   }
+  args.push('-i', inputPath);
+
+  // Input order: main video is always 0; the media overlay (if any) comes
+  // next so it renders underneath the text layers, which are always added
+  // after it so they stay the topmost layers — matching how every
+  // overlay/text combination in CapCut and similar editors stacks by
+  // default.
+  const overlayStages = [];
+  let nextInputIndex = 1;
+  if (mediaOverlay) {
+    args.push('-i', mediaOverlay.path);
+    const overlayWidthPx = Math.round(canvasW * (mediaOverlay.sizePercent / 100));
+    // Crop the media's own edges before scaling to size — the ffmpeg
+    // equivalent of the preview's scale-inside-overflow-hidden crop.
+    const cl = mediaOverlay.cropLeft / 100;
+    const cr = mediaOverlay.cropRight / 100;
+    const ct = mediaOverlay.cropTop / 100;
+    const cb = mediaOverlay.cropBottom / 100;
+    const cropChain =
+      cl + cr + ct + cb > 0.001
+        ? `crop=iw*${(1 - cl - cr).toFixed(4)}:ih*${(1 - ct - cb).toFixed(4)}:iw*${cl.toFixed(4)}:ih*${ct.toFixed(4)},`
+        : '';
+    // Only shown during its own window (in final-video seconds). A video
+    // overlay shorter than its window holds its last frame (ffmpeg
+    // overlay's default eof_action) rather than disappearing.
+    const enable =
+      Number.isFinite(mediaOverlay.start) && Number.isFinite(mediaOverlay.end) && mediaOverlay.end > mediaOverlay.start
+        ? `between(t,${mediaOverlay.start.toFixed(3)},${mediaOverlay.end.toFixed(3)})`
+        : null;
+    overlayStages.push({
+      pre: `[${nextInputIndex}:v]${cropChain}scale=${overlayWidthPx}:-2[ovlm]`,
+      inputLabel: '[ovlm]',
+      x: `x=(main_w-overlay_w)*${(mediaOverlay.xPercent / 100).toFixed(4)}`,
+      y: `y=(main_h-overlay_h)*${(mediaOverlay.yPercent / 100).toFixed(4)}`,
+      enable,
+    });
+    nextInputIndex += 1;
+  }
+  for (const cap of captionOverlays) {
+    args.push('-i', cap.pngPath);
+    overlayStages.push({
+      inputLabel: `[${nextInputIndex}:v]`,
+      x: cap.x,
+      y: cap.y,
+      enable: cap.enable,
+    });
+    nextInputIndex += 1;
+  }
+  // The sound-effect track is audio-only, so its input order relative to
+  // the video-side inputs above doesn't matter — it never appears in the
+  // video filter graph at all, only in the audio-mixing stage below.
+  let audioOverlayInputIndex = null;
+  if (audioOverlay) {
+    args.push('-i', audioOverlay.path);
+    audioOverlayInputIndex = nextInputIndex;
+    nextInputIndex += 1;
+  }
+
+  let segmentPrefix = '';
+  let sourceVideoLabel = '[0:v]';
+  let sourceAudioLabel = hasAudio ? '[0:a]' : null;
+  if (!noTrim && !singleRange) {
+    const built = buildSegmentFilter(segments, hasAudio, transitions || []);
+    segmentPrefix = built.chain;
+    sourceVideoLabel = built.videoLabel;
+    sourceAudioLabel = built.audioLabel;
+  }
+
+  let filterComplex =
+    segmentPrefix +
+    buildFilterComplex(canvasW, canvasH, zoom, blur, overlayStages, mirror, speed, sourceVideoLabel);
 
   // atempo only accepts 0.5-2.0 per instance, which matches the slider's
   // own range exactly, so a single atempo call always suffices — no need
   // to chain multiple instances for extreme speed values.
-  let audioMap = '0:a?';
+  // '0:a?' (optional-stream map) only makes sense for a literal input
+  // stream reference, not a filter output label — the concat path always
+  // resolves sourceAudioLabel to either a real [sega] filter label or
+  // null (source had no audio at all), so it's mapped directly rather
+  // than through the '?' suffix.
+  let audioMap = noTrim || singleRange ? '0:a?' : sourceAudioLabel;
   if (speed !== 1 && hasAudio) {
-    filterComplex += `;[0:a]atempo=${speed}[outa]`;
+    filterComplex += `;${sourceAudioLabel}atempo=${speed}[outa]`;
     audioMap = '[outa]';
   }
 
+  // Mixing a second audio source in (rather than just mapping it) always
+  // requires going through the filter graph — '0:a?' (the plain,
+  // un-filtered CLI map used above whenever nothing else needed the audio
+  // touched) isn't valid inside a filter chain, so it's swapped back out
+  // for the real [0:a] input reference the moment mixing is actually
+  // needed.
+  if (audioOverlay) {
+    const volume = (audioOverlay.volumePercent / 100).toFixed(3);
+    // delaySeconds places the effect at its timeline position (already in
+    // final-video seconds — the frontend maps across cuts and speed).
+    const delayMs = Math.round((audioOverlay.delaySeconds || 0) * 1000);
+    const delayChain = delayMs > 0 ? `adelay=${delayMs}:all=1,` : '';
+    filterComplex += `;[${audioOverlayInputIndex}:a]${delayChain}volume=${volume}[sfx]`;
+    if (hasAudio) {
+      const mainAudioLabel = audioMap === '0:a?' ? sourceAudioLabel : audioMap;
+      filterComplex += `;${mainAudioLabel}[sfx]amix=inputs=2:duration=first:dropout_transition=0[mixedaudio]`;
+      audioMap = '[mixedaudio]';
+    } else {
+      // No audio in the source video at all — the sound effect becomes
+      // the entire output audio track rather than being mixed with
+      // nothing.
+      audioMap = '[sfx]';
+    }
+  }
+
+  const outputArgs = ['-filter_complex', filterComplex, '-map', '[outv]'];
+  if (audioMap) outputArgs.push('-map', audioMap);
   args.push(
-    '-filter_complex', filterComplex,
-    '-map', '[outv]',
-    '-map', audioMap,
+    ...outputArgs,
     '-c:v', 'libx264',
     '-preset', 'fast',
     '-crf', '19',
@@ -267,108 +640,375 @@ async function runFfmpeg(inputPath, outputPath, zoom, blur, captionOverlay, mirr
     '-movflags', '+faststart', // moves the moov atom to the front so <video> playback doesn't fail/stall before the file is fully downloaded
     outputPath,
   );
-  await runCommand(FFMPEG_BIN, args);
+  await runFfmpegWithProgress(args, onProgress);
 }
 
-// Renders the caption to a temp PNG and computes its overlay position so
-// the image's exact vertical center lands on fgTopY — the seam where the
-// sharp foreground clip meets the blurred background above it. Takes
-// mediaInfo (source width/height) as already-probed data rather than
-// probing itself, since the caller may also need it for audio detection
-// when speed is adjusted — one probe covers both needs.
-function buildCaptionOverlay(jobId, mediaInfo, captionText, captionStyle, zoom) {
-  if (typeof captionText !== 'string' || !captionText.trim()) return null;
-
-  const { buffer, height } = renderCaptionPng({ text: captionText, style: captionStyle });
-  const fgWidth = Math.round((CANVAS_W * zoom) / 2) * 2;
-  const fgHeight = computeForegroundHeight(fgWidth, mediaInfo.width, mediaInfo.height);
-  const fgTopY = (CANVAS_H - fgHeight) / 2;
-  const y = Math.round(fgTopY - height / 2);
-
-  const pngPath = path.join(CAPTIONS_DIR, `${jobId}.png`);
-  fs.writeFileSync(pngPath, buffer);
-  return { pngPath, y };
+// Same contract as runCommand, but reads ffmpeg's -progress key=value
+// stream off stdout and reports out_time to the caller. out_time_ms is —
+// despite the name — in MICROseconds (a long-standing ffmpeg quirk), hence
+// the 1e6 divisor.
+function runFfmpegWithProgress(args, onProgress) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(FFMPEG_BIN, args);
+    let stderr = '';
+    let stdoutBuf = '';
+    child.stdout.on('data', (chunk) => {
+      stdoutBuf += chunk.toString();
+      let newlineIdx;
+      while ((newlineIdx = stdoutBuf.indexOf('\n')) !== -1) {
+        const line = stdoutBuf.slice(0, newlineIdx).trim();
+        stdoutBuf = stdoutBuf.slice(newlineIdx + 1);
+        if (onProgress && line.startsWith('out_time_ms=')) {
+          const micros = parseInt(line.slice('out_time_ms='.length), 10);
+          if (Number.isFinite(micros) && micros >= 0) onProgress(micros / 1e6);
+        }
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (err) => {
+      reject(new Error(`Failed to start ffmpeg: ${err.message}`));
+    });
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        const tail = stderr.trim().split('\n').slice(-15).join('\n');
+        reject(new Error(`ffmpeg exited with code ${code}\n${tail}`));
+      }
+    });
+  });
 }
 
-async function downloadWithYtDlp(url, jobId) {
+// Renders each text layer to its own temp PNG (cropped tightly to its own
+// content, see caption.js) and computes its overlay x/y from the layer's
+// 0-100 center-position percentages — both axes now, since editor text
+// layers (unlike the old single caption) are freely draggable anywhere.
+// Layers with a start/end time range get an ffmpeg enable expression so
+// they only appear during their own slice of the output timeline; layers
+// without one span the whole video.
+function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
+  return textLayers.map((layer, i) => {
+    const { buffer, width, height } = renderCaptionPng({
+      text: layer.text,
+      style: layer.style,
+      fontId: layer.fontId,
+      dropShadow: layer.dropShadow,
+      fontSize: layer.fontSize,
+      color: layer.color,
+      canvasWidth: canvasW,
+    });
+    const x = resolvePositionCoordinate(layer.xPercent, width, canvasW);
+    const y = resolvePositionCoordinate(layer.yPercent, height, canvasH);
+    const pngPath = path.join(CAPTIONS_DIR, `${jobId}-${i}.png`);
+    fs.writeFileSync(pngPath, buffer);
+    const hasRange = Number.isFinite(layer.start) && Number.isFinite(layer.end) && layer.end > layer.start;
+    return {
+      pngPath,
+      x,
+      y,
+      enable: hasRange ? `between(t,${layer.start.toFixed(3)},${layer.end.toFixed(3)})` : null,
+    };
+  });
+}
+
+// Overlay edge crop, 0-45% off each side — clamped so the two opposite
+// edges can never remove more than 90% of an axis (mirrors the frontend's
+// slider clamp).
+function clampCropPercent(value) {
+  const pct = parseFloat(value);
+  if (!Number.isFinite(pct)) return 0;
+  return Math.min(45, Math.max(0, pct));
+}
+
+// overlayFile is a multer file object (image or video) already saved to
+// UPLOADS_DIR — sizePercent/xPercent/yPercent come from the overlay size
+// slider and drag-to-position preview; crop* trim the media's own edges;
+// start/end (FINAL-video seconds, already mapped across cuts+speed by the
+// frontend) bound when the overlay is on screen.
+function buildMediaOverlay(body, overlayFile) {
+  if (!overlayFile) return null;
+  const start = parseFloat(body.overlayStart);
+  const end = parseFloat(body.overlayEnd);
+  return {
+    path: overlayFile.path,
+    sizePercent: clampPositionPercent(body.overlaySize, 35),
+    xPercent: clampPositionPercent(body.overlayX, 50),
+    yPercent: clampPositionPercent(body.overlayY, 50),
+    cropTop: clampCropPercent(body.overlayCropTop),
+    cropBottom: clampCropPercent(body.overlayCropBottom),
+    cropLeft: clampCropPercent(body.overlayCropLeft),
+    cropRight: clampCropPercent(body.overlayCropRight),
+    start: Number.isFinite(start) ? start : null,
+    end: Number.isFinite(end) ? end : null,
+  };
+}
+
+// audioFile is an uploaded mp3 (or any ffmpeg-readable audio file) mixed
+// into the output alongside the main video's own audio — volumePercent
+// controls only the sound effect's own level, not the original audio.
+// delaySeconds is where on the FINAL timeline the effect starts (0 =
+// plays from the top).
+function buildAudioOverlay(body, audioFile) {
+  if (!audioFile) return null;
+  const delay = parseFloat(body.audioDelay);
+  return {
+    path: audioFile.path,
+    volumePercent: clampPositionPercent(body.audioVolume, 80),
+    delaySeconds: Number.isFinite(delay) && delay > 0 ? delay : 0,
+  };
+}
+
+function findFileWithPrefix(dir, prefix) {
+  const match = fs.readdirSync(dir).find((name) => name.startsWith(`${prefix}.`));
+  return match ? path.join(dir, match) : null;
+}
+
+// section ({ start, end } in seconds, or null) narrows a VOD download to
+// just that time range instead of pulling a whole multi-hour broadcast —
+// yt-dlp's --download-sections does the range fetch, and
+// --force-keyframes-at-cuts re-encodes at the boundaries so the cut is
+// frame-accurate rather than snapping to the nearest (possibly seconds-
+// away) keyframe.
+function ytDlpArgs(url, section, outputTemplate) {
+  const args = ['-o', outputTemplate, '--no-playlist'];
+  if (section) {
+    args.push('--download-sections', `*${section.start}-${section.end}`, '--force-keyframes-at-cuts');
+  }
+  args.push(url);
+  return args;
+}
+
+async function downloadWithYtDlp(url, section, jobId) {
   const outputTemplate = path.join(DOWNLOADS_DIR, `${jobId}.%(ext)s`);
-  await runCommand(YTDLP_BIN, ['-o', outputTemplate, '--no-playlist', url]);
-  const match = fs
-    .readdirSync(DOWNLOADS_DIR)
-    .find((name) => name.startsWith(`${jobId}.`));
-  if (!match) {
+  await runCommand(YTDLP_BIN, ytDlpArgs(url, section, outputTemplate));
+  const filePath = findFileWithPrefix(DOWNLOADS_DIR, jobId);
+  if (!filePath) {
     throw new Error('yt-dlp reported success but no downloaded file was found');
   }
-  return path.join(DOWNLOADS_DIR, match);
+  return filePath;
 }
 
-async function processJob(jobId, inputPath, zoom, blur, captionText, captionStyle, mirror, speed) {
-  let captionOverlay = null;
+// The section is part of the cache key — the same VOD URL with two
+// different timestamp ranges is two different downloads.
+function previewCacheKey(url, section) {
+  const keySource = section ? `${url}|${section.start}-${section.end}` : url;
+  return crypto.createHash('sha1').update(keySource).digest('hex');
+}
+
+// Downloads a clip purely for the live preview, reusing a prior download of
+// the exact same URL if one's already cached (see PREVIEW_CACHE_DIR above).
+async function fetchPreviewSource(url, section) {
+  const cacheKey = previewCacheKey(url, section);
+  let filePath = findFileWithPrefix(PREVIEW_CACHE_DIR, cacheKey);
+  if (!filePath) {
+    const outputTemplate = path.join(PREVIEW_CACHE_DIR, `${cacheKey}.%(ext)s`);
+    await runCommand(YTDLP_BIN, ytDlpArgs(url, section, outputTemplate));
+    filePath = findFileWithPrefix(PREVIEW_CACHE_DIR, cacheKey);
+    if (!filePath) {
+      throw new Error('yt-dlp reported success but no downloaded file was found');
+    }
+  }
+  return filePath;
+}
+
+// Optional VOD timestamp range riding along with a URL — both bounds in
+// seconds (the frontend converts hh:mm:ss input to seconds before
+// sending). Only a fully-specified, positive-length range counts;
+// anything else means "whole clip", never a half-open guess.
+function buildSection(body) {
+  const start = parseFloat(body.sectionStart);
+  const end = parseFloat(body.sectionEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) return null;
+  return { start, end };
+}
+
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlay, audioOverlay) {
+  let captionOverlays = [];
   try {
-    setJob(jobId, { status: 'processing' });
+    setJob(jobId, { status: 'processing', progress: 0 });
     const outputPath = path.join(OUTPUTS_DIR, `${jobId}.mp4`);
+    const { width: canvasW, height: canvasH } = ASPECT_RATIOS[aspectRatio];
 
-    const needsProbe = (typeof captionText === 'string' && captionText.trim()) || speed !== 1;
-    const mediaInfo = needsProbe ? await probeSource(inputPath) : null;
+    // Always probed now: hasAudio has to be genuinely known (not just
+    // assumed) whenever the segment-concat path might run or a sound
+    // effect needs mixing — guessing wrong is a hard ffmpeg error — the
+    // source dimensions size the black gap fillers, and duration feeds
+    // the export progress percentage.
+    const mediaInfo = await probeSource(inputPath);
 
-    captionOverlay = buildCaptionOverlay(jobId, mediaInfo, captionText, captionStyle, zoom);
-    const hasAudio = mediaInfo ? mediaInfo.hasAudio : true;
+    captionOverlays = buildCaptionOverlays(jobId, textLayers, canvasW, canvasH);
 
-    await runFfmpeg(inputPath, outputPath, zoom, blur, captionOverlay, mirror, speed, hasAudio);
-    setJob(jobId, { status: 'done', outputUrl: `/outputs/${jobId}.mp4` });
+    // Expected output length: the full output span — pieces plus any
+    // free-form black gaps (max of outStart+len, not just the kept sum) —
+    // stretched by speed. Capped at 0.99 until the process actually exits
+    // cleanly, so the bar never shows "done" for a render that then fails
+    // at the muxing stage.
+    const outputSpan =
+      segments && segments.length > 0
+        ? segments.reduce((max, s) => Math.max(max, s.outStart + (s.end - s.start)), 0)
+        : mediaInfo.duration || 0;
+    const expectedDuration = outputSpan / speed;
+    const onProgress = (outTime) => {
+      if (expectedDuration > 0) {
+        setJob(jobId, { progress: Math.min(0.99, outTime / expectedDuration) });
+      }
+    };
+
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, captionOverlays, mediaOverlay, audioOverlay, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, onProgress);
+    setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   } finally {
-    if (captionOverlay) {
-      fs.unlink(captionOverlay.pngPath, () => {});
+    // Only the text-layer PNGs are server-generated temp artifacts cleaned
+    // up here — mediaOverlay.path/audioOverlay.path are genuine uploads,
+    // left in place same as the main video upload (see the Notes section
+    // in README.md).
+    for (const cap of captionOverlays) {
+      fs.unlink(cap.pngPath, () => {});
     }
   }
 }
 
-async function downloadAndProcess(jobId, url, zoom, blur, captionText, captionStyle, mirror, speed) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlay, audioOverlay) {
   try {
     setJob(jobId, { status: 'downloading' });
-    const inputPath = await downloadWithYtDlp(url, jobId);
-    await processJob(jobId, inputPath, zoom, blur, captionText, captionStyle, mirror, speed);
+    // If the user already fetched a live preview for this exact URL (and
+    // VOD section, if any), reuse that download instead of running yt-dlp
+    // a second time.
+    const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
+    const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlay, audioOverlay);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
 }
 
+// One shared config for every file the Generate form can submit: the main
+// video (Upload tab only — the Clip URL tab has no 'video' field at all,
+// since its video comes from yt-dlp instead), an optional image/video
+// overlay, and (see buildAudioOverlay) an optional mp3 sound-effect track.
+// Filenames include the field name since a single job can now upload more
+// than one file at once, unlike the original single-file version of this.
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.mp4';
-      cb(null, `${req.jobId}${ext}`);
+      const ext = path.extname(file.originalname) || (file.fieldname === 'video' ? '.mp4' : '');
+      cb(null, `${req.jobId}-${file.fieldname}${ext}`);
     },
   }),
   limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2GB
 });
+const uploadFields = upload.fields([
+  { name: 'video', maxCount: 1 },
+  { name: 'overlay', maxCount: 1 },
+  { name: 'audioTrack', maxCount: 1 },
+]);
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(ROOT, 'public')));
 app.use('/outputs', express.static(OUTPUTS_DIR));
+// Exposes the same bundled TTFs caption.js renders with, so the browser can
+// load them as @font-face for the live client-side caption preview — no
+// separate copy, just the one already used server-side.
+app.use('/fonts', express.static(path.join(ROOT, 'fonts')));
+// Serves clips fetched for the Clip URL tab's live preview (see
+// PREVIEW_CACHE_DIR above) so the browser can load them into a <video>.
+app.use('/preview-cache', express.static(PREVIEW_CACHE_DIR));
+// Bundled overlay/SFX preset files (see /api/sfx-presets above).
+app.use('/assets', express.static(path.join(ROOT, 'assets')));
 
-app.post('/api/process-url', (req, res) => {
-  const { url, zoom, blur, captionText, captionStyle, mirror, speed } = req.body || {};
+app.post('/api/preview-source', async (req, res) => {
+  const { url } = req.body || {};
+  const trimmedUrl = typeof url === 'string' ? url.trim() : '';
+  if (!isValidHttpUrl(trimmedUrl)) {
+    return res.status(400).json({ error: 'Please enter a valid clip URL (starting with http:// or https://)' });
+  }
+  try {
+    const filePath = await fetchPreviewSource(trimmedUrl, buildSection(req.body || {}));
+    res.json({ previewUrl: `/preview-cache/${path.basename(filePath)}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// caption.js interpolates this directly into an SVG fill="..." attribute
+// with no escaping, so this can't just be a loose sanity check — anything
+// that isn't strictly `#rrggbb` is rejected outright (falls back to
+// caption.js's own default) rather than risking attribute/markup
+// injection from an unvalidated value.
+const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
+function normalizeColor(value) {
+  return typeof value === 'string' && HEX_COLOR_RE.test(value) ? value : undefined;
+}
+
+// `textLayers` arrives as a JSON string (multipart form field) or a real
+// array — each entry is one editor text layer. Every field goes through
+// the same clamp/normalize guards the old single caption's fields did;
+// start/end (OUTPUT-timeline seconds, already mapped by the frontend) are
+// optional — a layer without them spans the whole video. Layers with no
+// actual text are dropped here rather than rendering empty PNGs.
+function buildTextLayers(body) {
+  let raw = body.textLayers;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((l) => ({
+      text: typeof (l && l.text) === 'string' ? l.text : '',
+      style: clampCaptionStyle(l && l.style),
+      fontId: normalizeFontId(l && l.fontId),
+      fontSize: clampFontSize(l && l.fontSize),
+      color: normalizeColor(l && l.color),
+      dropShadow: normalizeDropShadow(l && l.dropShadow),
+      xPercent: clampPositionPercent(l && l.xPercent, 50),
+      yPercent: clampPositionPercent(l && l.yPercent, 25),
+      start: Number.isFinite(parseFloat(l && l.start)) ? parseFloat(l.start) : null,
+      end: Number.isFinite(parseFloat(l && l.end)) ? parseFloat(l.end) : null,
+    }))
+    .filter((l) => l.text.trim());
+}
+
+// Both Generate routes now always arrive as multipart/form-data (not JSON)
+// — even the Clip URL tab, which has no video file of its own, still needs
+// multipart so an optional overlay image/video or sound-effect mp3 can
+// ride along in the same request. uploadFields tolerates fields it wasn't
+// sent (req.files.overlay etc. just come back undefined) so this is a
+// harmless superset for a request that only ever sends a URL.
+app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID(); next(); }, uploadFields, (req, res) => {
+  const { url, zoom, blur, mirror, speed } = req.body || {};
   const trimmedUrl = typeof url === 'string' ? url.trim() : '';
   if (!isValidHttpUrl(trimmedUrl)) {
     return res.status(400).json({ error: 'Please enter a valid clip URL (starting with http:// or https://)' });
   }
 
-  const jobId = createJob();
+  const jobId = req.jobId;
+  jobs.set(jobId, { status: 'downloading' });
   res.json({ jobId });
+  const overlayFile = req.files.overlay && req.files.overlay[0];
+  const audioFile = req.files.audioTrack && req.files.audioTrack[0];
   downloadAndProcess(
     jobId,
     trimmedUrl,
+    buildSection(req.body || {}),
+    normalizeAspectRatio(req.body.aspectRatio),
     clampZoom(zoom),
     clampBlur(blur),
-    captionText,
-    clampCaptionStyle(captionStyle),
+    buildTextLayers(req.body || {}),
     normalizeMirror(mirror),
-    clampSpeed(speed)
+    clampSpeed(speed),
+    buildSegments(req.body || {}),
+    buildTransitions(req.body || {}),
+    buildMediaOverlay(req.body || {}, overlayFile),
+    buildAudioOverlay(req.body || {}, audioFile)
   );
 });
 
@@ -378,26 +1018,113 @@ app.post(
     req.jobId = crypto.randomUUID();
     next();
   },
-  upload.single('video'),
+  uploadFields,
   (req, res) => {
-    if (!req.file) {
+    const videoFile = req.files.video && req.files.video[0];
+    if (!videoFile) {
       return res.status(400).json({ error: 'A video file is required' });
     }
     const jobId = req.jobId;
     jobs.set(jobId, { status: 'processing' });
     res.json({ jobId });
+    const overlayFile = req.files.overlay && req.files.overlay[0];
+    const audioFile = req.files.audioTrack && req.files.audioTrack[0];
     processJob(
       jobId,
-      req.file.path,
+      videoFile.path,
+      normalizeAspectRatio(req.body.aspectRatio),
       clampZoom(req.body.zoom),
       clampBlur(req.body.blur),
-      req.body.captionText,
-      clampCaptionStyle(req.body.captionStyle),
+      buildTextLayers(req.body),
       normalizeMirror(req.body.mirror),
-      clampSpeed(req.body.speed)
+      clampSpeed(req.body.speed),
+      buildSegments(req.body),
+      buildTransitions(req.body),
+      buildMediaOverlay(req.body, overlayFile),
+      buildAudioOverlay(req.body, audioFile)
     );
   }
 );
+
+// Auto-captions: transcribes either an uploaded video file or a clip URL
+// (reusing the preview cache — by the time anyone asks for captions the
+// clip is almost always already downloaded). Returned timestamps are in
+// SOURCE time — the same domain the editor timeline works in — so the
+// frontend can drop them straight onto the text track. Synchronous
+// (one await, no job queue): a 60s clip transcribes in seconds with the
+// base model, not long enough to justify polling machinery.
+app.post('/api/transcribe', (req, res, next) => { req.jobId = crypto.randomUUID(); next(); }, uploadFields, async (req, res) => {
+  try {
+    let inputPath;
+    const videoFile = req.files.video && req.files.video[0];
+    if (videoFile) {
+      inputPath = videoFile.path;
+    } else {
+      const trimmedUrl = typeof (req.body || {}).url === 'string' ? req.body.url.trim() : '';
+      if (!isValidHttpUrl(trimmedUrl)) {
+        return res.status(400).json({ error: 'Provide a video file or a valid clip URL to transcribe' });
+      }
+      inputPath = await fetchPreviewSource(trimmedUrl, buildSection(req.body || {}));
+    }
+    const segments = await transcribeSource(inputPath, {
+      ffmpegBin: FFMPEG_BIN,
+      resourcesDir: process.env.CLIP_EDITOR_RESOURCES,
+      modelsDir: MODELS_DIR,
+      workDir: TRANSCRIBE_DIR,
+      // 'words' = one caption per word (TikTok style), 'blocks' = short
+      // multi-word lines. Anything else falls back to blocks.
+      mode: (req.body || {}).mode === 'words' ? 'words' : 'blocks',
+    });
+    res.json({ segments });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Lets the frontend show/hide the Auto captions button (and point at the
+// right missing piece) without triggering a whole failed transcription.
+app.get('/api/whisper-status', (req, res) => {
+  const setup = checkWhisperSetup({ resourcesDir: process.env.CLIP_EDITOR_RESOURCES, modelsDir: MODELS_DIR });
+  res.json({ ready: setup.ready, binaryFound: !!setup.binary, modelFound: !!setup.model });
+});
+
+// Bundled preset packs the Overlay/Sound tabs offer alongside "use your
+// own file" — just whatever files sit in assets/sfx and assets/overlays,
+// so adding a preset for everyone is literally dropping a file in the
+// folder. Names are prettied-up filenames; the files themselves are
+// served by the express.static('/assets') mount below.
+function listPresets(dir, urlPrefix, extensions) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((name) => extensions.test(name))
+    .sort()
+    .map((name) => ({
+      id: name,
+      label: name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      url: `${urlPrefix}/${encodeURIComponent(name)}`,
+    }));
+}
+
+app.get('/api/sfx-presets', (req, res) => {
+  res.json({ presets: listPresets(path.join(ROOT, 'assets', 'sfx'), '/assets/sfx', /\.(mp3|wav|ogg|m4a)$/i) });
+});
+
+app.get('/api/overlay-presets', (req, res) => {
+  res.json({ presets: listPresets(path.join(ROOT, 'assets', 'overlays'), '/assets/overlays', /\.(png|jpe?g|gif|webp|webm|mp4|mov)$/i) });
+});
+
+app.get('/api/fonts', (req, res) => {
+  res.json({ fonts: getFontOptions() });
+});
+
+app.get('/api/aspect-ratios', (req, res) => {
+  res.json({ aspectRatios: getAspectRatioOptions() });
+});
 
 app.get('/api/status/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId);

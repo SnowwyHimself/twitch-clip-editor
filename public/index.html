@@ -7,86 +7,358 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<div class="app">
-  <header>
-    <h1>Clip Editor</h1>
-    <p class="subtitle">Turn horizontal Twitch clips into vertical TikTok/Reels/Shorts edits.</p>
+<div class="editor">
+
+  <header class="topbar">
+    <div class="brand">Clip Editor</div>
+    <div class="source-input">
+      <input id="clip-url" type="text" placeholder="Paste a Twitch clip or VOD URL — it loads straight into the timeline" />
+      <details id="vod-range" class="vod-range">
+        <summary title="Only needed for full VODs — grabs just this time range">VOD range</summary>
+        <div class="vod-range-fields">
+          <p class="vod-range-hint">Only needed for a full VOD — grabs just this range.</p>
+          <label class="vod-field">Start
+            <input id="vod-start" type="text" placeholder="e.g. 1:02:30" />
+          </label>
+          <label class="vod-field">End
+            <input id="vod-end" type="text" placeholder="e.g. 1:03:15" />
+          </label>
+        </div>
+      </details>
+      <button type="button" id="load-url-btn" class="secondary-btn">Load</button>
+      <button type="button" id="open-file-btn" class="secondary-btn">Open file</button>
+      <input id="clip-file" type="file" accept="video/*" hidden />
+    </div>
+    <button type="button" id="export-btn" class="primary-btn">Export</button>
   </header>
 
-  <main class="card">
-    <div class="tabs">
-      <button class="tab-btn active" data-tab="url">Clip URL</button>
-      <button class="tab-btn" data-tab="upload">Upload file</button>
-    </div>
+  <main class="workspace">
+    <section class="preview-area" id="preview-area">
+      <div id="preview-frame" class="preview-frame no-source">
+        <video id="preview-bg-video" class="preview-video preview-bg" muted loop playsinline></video>
+        <video id="preview-fg-video" class="preview-video preview-fg" muted loop playsinline></video>
+        <div id="preview-placeholder" class="preview-placeholder">
+          Paste a clip URL above, or open a video file
+        </div>
+        <div id="preview-guide-y" class="preview-guide preview-guide-y"></div>
+        <div id="preview-guide-x" class="preview-guide preview-guide-x"></div>
+        <div id="preview-overlay" class="preview-overlay hidden"></div>
+        <div id="text-layers" class="text-layers"></div>
+        <div id="preview-flash" class="preview-flash"></div>
+      </div>
+      <div id="preview-controls" class="preview-controls hidden">
+        <button type="button" id="preview-play-btn" class="preview-play-btn" aria-label="Play or pause">⏸</button>
+        <input type="range" id="preview-seek" class="preview-seek" min="0" max="100" step="0.01" value="0" aria-label="Seek" />
+        <span id="preview-time" class="preview-time">0:00 / 0:00</span>
+        <button type="button" id="preview-mute-btn" class="preview-play-btn" aria-label="Mute or unmute">🔇</button>
+      </div>
+    </section>
 
-    <div class="tab-panel active" data-panel="url">
-      <label class="field-label" for="clip-url">Twitch clip URL</label>
-      <input id="clip-url" type="text" placeholder="https://clips.twitch.tv/..." />
-    </div>
+    <aside class="panel">
+      <div class="panel-tabs">
+        <button type="button" id="ptab-video" class="panel-tab active">Video</button>
+        <button type="button" id="ptab-text" class="panel-tab">Text</button>
+        <button type="button" id="ptab-captions" class="panel-tab">Captions</button>
+        <button type="button" id="ptab-overlay" class="panel-tab">Overlay</button>
+        <button type="button" id="ptab-sound" class="panel-tab">Sound</button>
+        <button type="button" id="ptab-transitions" class="panel-tab">Transitions</button>
+      </div>
 
-    <div class="tab-panel" data-panel="upload">
-      <label class="field-label" for="clip-file">Video file</label>
-      <input id="clip-file" type="file" accept="video/*" />
-    </div>
+      <div id="panel-video" class="panel-body">
+        <div class="field-group">
+          <label class="field-label">Aspect ratio</label>
+          <div id="aspect-ratio-group" class="toggle-group aspect-ratio-group"></div>
+        </div>
 
-    <div class="field-group">
-      <label class="field-label" for="zoom-slider">
-        Zoom <span id="zoom-value">135%</span>
-      </label>
-      <input id="zoom-slider" type="range" min="100" max="200" value="135" step="1" />
-    </div>
+        <div class="field-group">
+          <label class="field-label" for="zoom-slider">Zoom <span id="zoom-value">135%</span></label>
+          <input id="zoom-slider" type="range" min="100" max="200" value="135" step="1" />
+        </div>
 
-    <div class="field-group">
-      <label class="field-label" for="blur-slider">
-        Blur <span id="blur-value">20%</span>
-      </label>
-      <input id="blur-slider" type="range" min="0" max="100" value="20" step="1" />
-    </div>
+        <div class="field-group">
+          <label class="field-label" for="blur-slider">Background blur <span id="blur-value">20%</span></label>
+          <input id="blur-slider" type="range" min="0" max="100" value="20" step="1" />
+        </div>
 
-    <div class="field-group">
-      <label class="field-label" for="speed-slider">
-        Speed <span id="speed-value">1.00x</span>
-      </label>
-      <input id="speed-slider" type="range" min="0.5" max="2" value="1" step="0.05" />
-    </div>
+        <div class="field-group">
+          <label class="field-label" for="speed-slider">Speed <span id="speed-value">1.00x</span></label>
+          <input id="speed-slider" type="range" min="0.5" max="2" value="1" step="0.05" />
+        </div>
 
-    <div class="field-group">
-      <label class="switch-row" for="mirror-toggle">
-        <span class="field-label switch-label">Mirror</span>
+        <div class="field-group">
+          <label class="switch-row" for="mirror-toggle">
+            <span class="field-label switch-label">Mirror</span>
+            <span class="switch">
+              <input type="checkbox" id="mirror-toggle" />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div id="panel-captions" class="panel-body hidden">
+        <div class="field-group">
+          <label class="field-label">Caption mode</label>
+          <div class="toggle-group">
+            <button type="button" class="toggle-btn active" data-caption-mode="words">Word by word</button>
+            <button type="button" class="toggle-btn" data-caption-mode="blocks">Short lines</button>
+          </div>
+          <p class="field-hint">Word by word shows each word exactly as it's spoken, TikTok-style.</p>
+        </div>
+
+        <div class="field-group">
+          <button type="button" id="captions-generate-btn" class="primary-btn captions-generate">Generate captions</button>
+          <p class="field-hint" id="captions-status">Transcribes the clip's audio locally with Whisper.</p>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Style</label>
+          <div class="toggle-group">
+            <button type="button" class="toggle-btn" data-cap-style="plain">None</button>
+            <button type="button" class="toggle-btn active" data-cap-style="outline">Outline</button>
+            <button type="button" class="toggle-btn" data-cap-style="box">Box</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="cap-font-select">Font</label>
+          <select id="cap-font-select" class="font-select"></select>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Color</label>
+          <div id="cap-color-picker" class="color-picker"></div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="cap-size-slider">Size <span id="cap-size-value">58px</span></label>
+          <input id="cap-size-slider" type="range" min="32" max="120" value="58" step="1" />
+        </div>
+
+        <div class="field-group">
+          <label class="switch-row" for="cap-shadow-toggle">
+            <span class="field-label switch-label">Drop shadow</span>
+            <span class="switch">
+              <input type="checkbox" id="cap-shadow-toggle" />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="cap-y-slider">Vertical position <span id="cap-y-value">75%</span></label>
+          <input id="cap-y-slider" type="range" min="0" max="100" value="75" step="1" />
+          <p class="field-hint">Styling applies to all caption blocks at once. Select a single block on the timeline to fine-tune it in the Text tab.</p>
+        </div>
+      </div>
+
+      <div id="panel-overlay" class="panel-body hidden">
+        <div class="field-group">
+          <button type="button" id="overlay-choose-btn" class="secondary-btn full-width">Use your own image or video…</button>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Presets</label>
+          <div id="overlay-presets" class="preset-grid"></div>
+        </div>
+        <div class="field-group hidden" id="overlay-size-group">
+          <label class="field-label" for="overlay-size-slider">Overlay size <span id="overlay-size-value">35%</span></label>
+          <input id="overlay-size-slider" type="range" min="5" max="100" value="35" step="1" />
+          <p class="field-hint">Drag the overlay in the preview to reposition it. Drag its bar on the timeline's Overlay row to set when it appears.</p>
+
+          <label class="field-label crop-label">Crop</label>
+          <div class="crop-grid">
+            <label class="crop-field">Top <span id="crop-top-value">0%</span>
+              <input id="crop-top" type="range" min="0" max="45" value="0" step="1" />
+            </label>
+            <label class="crop-field">Bottom <span id="crop-bottom-value">0%</span>
+              <input id="crop-bottom" type="range" min="0" max="45" value="0" step="1" />
+            </label>
+            <label class="crop-field">Left <span id="crop-left-value">0%</span>
+              <input id="crop-left" type="range" min="0" max="45" value="0" step="1" />
+            </label>
+            <label class="crop-field">Right <span id="crop-right-value">0%</span>
+              <input id="crop-right" type="range" min="0" max="45" value="0" step="1" />
+            </label>
+          </div>
+
+          <button type="button" id="overlay-remove-btn" class="danger-btn">Remove overlay</button>
+        </div>
+      </div>
+
+      <div id="panel-sound" class="panel-body hidden">
+        <div class="field-group">
+          <button type="button" id="sound-choose-btn" class="secondary-btn full-width">Use your own audio file…</button>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Sound effects</label>
+          <div id="sfx-presets" class="preset-grid"></div>
+        </div>
+        <div class="field-group hidden" id="audio-volume-group">
+          <label class="field-label" for="audio-volume-slider">Volume <span id="audio-volume-value">80%</span></label>
+          <input id="audio-volume-slider" type="range" min="0" max="100" value="80" step="1" />
+          <p class="field-hint" id="audio-current">Sound added.</p>
+          <button type="button" id="audio-remove-btn" class="danger-btn">Remove sound</button>
+        </div>
+      </div>
+
+      <div id="panel-transitions" class="panel-body hidden">
+        <div class="field-group">
+          <label class="field-label">Transition</label>
+          <div class="preset-grid">
+            <button type="button" id="trans-white-flash" class="preset-item active">
+              <span class="preset-thumb">⚡</span><span>White Flash</span>
+            </button>
+          </div>
+          <p class="field-hint">Dip to white between two pieces of the clip.</p>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="trans-duration-slider">Duration <span id="trans-duration-value">0.5s</span></label>
+          <input id="trans-duration-slider" type="range" min="0.2" max="1.5" value="0.5" step="0.1" />
+        </div>
+
+        <div class="field-group">
+          <button type="button" id="trans-add-btn" class="primary-btn full-width">Add at playhead cut</button>
+          <p class="field-hint" id="trans-status">Put the playhead near a cut between two pieces, then add. Split the clip first if there's no cut yet.</p>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Applied</label>
+          <div id="trans-list" class="trans-list"></div>
+        </div>
+      </div>
+
+      <div id="panel-text" class="panel-body hidden">
+        <div class="field-group">
+          <button type="button" id="text-add-btn" class="primary-btn full-width">+ Add text at playhead</button>
+        </div>
+        <p id="panel-text-empty" class="panel-empty">
+          No text layer selected — add one above, or click a bar on the timeline's Text row.
+        </p>
+
+        <div id="panel-text-controls">
+          <div class="field-group">
+            <div class="caption-label-row">
+              <label class="field-label" for="caption-text">Text</label>
+              <button type="button" id="emoji-picker-btn" class="emoji-picker-btn" aria-label="Insert emoji">😀</button>
+            </div>
+            <textarea id="caption-text" rows="3" placeholder="Type your text..."></textarea>
+            <div id="emoji-panel" class="emoji-panel hidden"></div>
+            <p class="field-hint">Drag the text in the preview to reposition it.</p>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">Style</label>
+            <div class="toggle-group">
+              <button type="button" class="toggle-btn" data-caption-style="plain">None</button>
+              <button type="button" class="toggle-btn" data-caption-style="outline">Outline</button>
+              <button type="button" class="toggle-btn" data-caption-style="box">Box</button>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="font-select">Font</label>
+            <select id="font-select" class="font-select"></select>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">Color</label>
+            <div id="color-picker" class="color-picker"></div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="font-size-slider">Size <span id="font-size-value">64px</span></label>
+            <input id="font-size-slider" type="range" min="32" max="120" value="64" step="1" />
+          </div>
+
+          <div class="field-group">
+            <label class="switch-row" for="drop-shadow-toggle">
+              <span class="field-label switch-label">Drop shadow</span>
+              <span class="switch">
+                <input type="checkbox" id="drop-shadow-toggle" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">Timing (seconds)</label>
+            <div class="timing-fields">
+              <input id="layer-start" type="number" min="0" step="0.1" aria-label="Start time" />
+              <span class="timing-sep">→</span>
+              <input id="layer-end" type="number" min="0" step="0.1" aria-label="End time" />
+            </div>
+          </div>
+
+          <div class="field-group layer-actions">
+            <button type="button" id="duplicate-layer-btn" class="secondary-btn">Duplicate</button>
+            <button type="button" id="delete-layer-btn" class="danger-btn">Delete layer</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <section class="timeline">
+    <div class="timeline-toolbar">
+      <button type="button" id="tl-undo" class="secondary-btn" disabled title="Undo (⌘Z)">↩</button>
+      <button type="button" id="tl-redo" class="secondary-btn" disabled title="Redo (⇧⌘Z)">↪</button>
+      <span class="toolbar-sep"></span>
+      <button type="button" id="tl-add-text" class="secondary-btn">+ Text</button>
+      <button type="button" id="tl-auto-captions" class="secondary-btn">Auto captions</button>
+      <button type="button" id="tl-add-overlay" class="secondary-btn">+ Overlay</button>
+      <button type="button" id="tl-add-sound" class="secondary-btn">+ Sound</button>
+      <button type="button" id="tl-transitions" class="secondary-btn">Transitions</button>
+      <span class="toolbar-sep"></span>
+      <button type="button" id="tl-split" class="secondary-btn">✂ Split</button>
+      <button type="button" id="tl-delete" class="secondary-btn" disabled>🗑 Delete</button>
+      <input id="overlay-file" type="file" accept="image/*,video/*" hidden />
+      <input id="audio-file" type="file" accept="audio/*" hidden />
+      <label class="switch-row snap-toggle" for="snap-toggle" title="Snap: pieces always close up (CapCut). Off: free placement, gaps play as black (Premiere).">
+        <span class="field-label switch-label">Snap</span>
         <span class="switch">
-          <input type="checkbox" id="mirror-toggle" />
+          <input type="checkbox" id="snap-toggle" checked />
           <span class="switch-track"></span>
         </span>
       </label>
     </div>
-
-    <div class="field-group">
-      <label class="field-label" for="caption-text">Caption text (optional)</label>
-      <textarea id="caption-text" rows="3" placeholder="Type a caption to burn into the video..."></textarea>
+    <div id="tl-body" class="tl-body">
+      <p id="tl-empty" class="tl-empty">Load a clip to start editing</p>
+      <div class="tl-grid">
+        <div class="tl-label"></div>
+        <div id="tl-ruler" class="tl-ruler"></div>
+        <div class="tl-label">Video</div>
+        <div id="tl-video-track" class="tl-video-track"></div>
+        <div class="tl-label hidden">Overlay</div>
+        <div id="tl-overlay-row" class="tl-type-row hidden"></div>
+        <div class="tl-label hidden">Captions</div>
+        <div id="tl-captions-row" class="tl-type-row hidden"></div>
+        <div class="tl-label hidden">Text</div>
+        <div id="tl-text-row" class="tl-type-row hidden"></div>
+        <div class="tl-label hidden">Sound</div>
+        <div id="tl-sound-row" class="tl-type-row hidden"></div>
+      </div>
+      <div id="tl-playhead" class="tl-playhead hidden"></div>
     </div>
+  </section>
 
-    <div class="field-group">
-      <label class="field-label">Caption style</label>
-      <div class="toggle-group">
-        <button type="button" class="toggle-btn active" data-caption-style="outline">Outline</button>
-        <button type="button" class="toggle-btn" data-caption-style="box">Box</button>
+  <div id="export-modal" class="export-modal hidden">
+    <div class="export-card">
+      <div class="export-header">
+        <h2>Export</h2>
+        <button type="button" id="export-close-btn" class="secondary-btn">Close</button>
+      </div>
+      <div id="export-status" class="export-status">Starting...</div>
+      <div class="export-bar"><div id="export-bar-fill" class="export-bar-fill"></div></div>
+      <div id="export-result" class="export-result hidden">
+        <video id="result-video" controls></video>
+        <a id="download-link" class="primary-btn download-btn" download>Download</a>
       </div>
     </div>
+  </div>
 
-    <button id="generate-btn" class="primary-btn">Generate edit</button>
-
-    <div id="status-area" class="status-area hidden">
-      <div id="status-text" class="status-text"></div>
-      <div id="status-bar" class="status-bar"><div class="status-bar-fill"></div></div>
-    </div>
-
-    <div id="result-area" class="result-area hidden">
-      <video id="result-video" controls></video>
-      <a id="download-link" class="primary-btn download-btn" download>Download edited clip</a>
-    </div>
-  </main>
 </div>
 
-<script src="app.js"></script>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

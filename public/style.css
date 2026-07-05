@@ -1,6 +1,7 @@
 :root {
   --bg: #0e0e12;
   --panel: #17171d;
+  --panel-2: #1d1d25;
   --border: #26262f;
   --text: #e8e8ec;
   --text-dim: #9a9aa5;
@@ -8,10 +9,52 @@
   --accent-hover: #8f72ff;
   --success: #3ecf6e;
   --error: #ff5c5c;
+  --topbar-h: 52px;
+  --timeline-h: 190px;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Same bundled TTFs caption.js rasterizes with server-side (served at
+   /fonts via express.static) — reused here so the live preview's text
+   matches the real render's font as closely as CSS text allows.
+   Proxima Nova has no @font-face on purpose: it's a real system font, only
+   ever referenced by name, never bundled/copied (see caption.js). */
+@font-face {
+  font-family: 'Montserrat SemiBold Preview';
+  src: url('/fonts/Montserrat-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+}
+@font-face {
+  font-family: 'Manrope ExtraBold Preview';
+  src: url('/fonts/Manrope-ExtraBold.ttf') format('truetype');
+  font-weight: 800;
+}
+@font-face {
+  font-family: 'Poppins ExtraBold Preview';
+  src: url('/fonts/Poppins-ExtraBold.ttf') format('truetype');
+  font-weight: 800;
+}
+@font-face {
+  font-family: 'Archivo Black Preview';
+  src: url('/fonts/ArchivoBlack-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Bebas Neue Preview';
+  src: url('/fonts/BebasNeue-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Anton Preview';
+  src: url('/fonts/Anton-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+
+html, body {
+  height: 100%;
 }
 
 body {
@@ -19,136 +62,552 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  min-height: 100vh;
+  overflow: hidden;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ===== App shell: topbar / workspace / timeline ===== */
+
+.editor {
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr var(--timeline-h);
+  height: 100vh;
+}
+
+.topbar {
   display: flex;
-  justify-content: center;
-  padding: 48px 16px;
-}
-
-.app {
-  width: 100%;
-  max-width: 520px;
-}
-
-header {
-  margin-bottom: 24px;
-  text-align: center;
-}
-
-h1 {
-  margin: 0 0 8px;
-  font-size: 24px;
-  font-weight: 600;
-}
-
-.subtitle {
-  margin: 0;
-  color: var(--text-dim);
-  font-size: 14px;
-}
-
-.card {
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 24px;
+  border-bottom: 1px solid var(--border);
 }
 
-.tabs {
+.brand {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.source-input {
   display: flex;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 20px;
-  background: var(--bg);
-  border-radius: 10px;
-  padding: 4px;
+  flex: 1;
+  min-width: 0;
 }
 
-.tab-btn {
+.source-input input[type="text"] {
   flex: 1;
-  padding: 10px;
+  min-width: 0;
+}
+
+.vod-range {
+  position: relative;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.vod-range summary {
+  cursor: pointer;
+  white-space: nowrap;
+  list-style: none;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.vod-range[open] summary {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.vod-range-fields {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  width: 240px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.vod-range-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.vod-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* Overrides the topbar's .source-input input rule (flex:1/min-width:0),
+   which otherwise squeezes these; give them the full popover width and a
+   readable size so the typed time is never clipped. */
+.vod-range-fields input[type="text"] {
+  flex: none;
+  width: 100%;
+  padding: 9px 11px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  min-height: 0;
+}
+
+/* ===== Preview area ===== */
+
+.preview-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  background: var(--bg);
+}
+
+.preview-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #000;
+  /* JS sets explicit width/height matching the selected aspect ratio —
+     this is just the no-flash fallback for first paint. */
+  width: 220px;
+  aspect-ratio: 9 / 16;
+}
+
+.preview-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.preview-bg {
+  object-fit: cover;
+  transform-origin: center center;
+}
+
+.preview-fg {
+  object-fit: contain;
+  transform-origin: center center;
+}
+
+.preview-frame.no-source .preview-bg,
+.preview-frame.no-source .preview-fg {
+  display: none;
+}
+
+.preview-placeholder {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.preview-frame.no-source .preview-placeholder {
+  display: flex;
+}
+
+.preview-guide {
+  position: absolute;
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+  z-index: 4;
+}
+
+.preview-guide-y {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.preview-guide-x {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.preview-guide.visible {
+  opacity: 0.8;
+}
+
+.preview-overlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  cursor: grab;
+  touch-action: none;
+  z-index: 2; /* above the video, below text/captions (z-index 3) */
+  overflow: hidden; /* clips the scaled-up media to the crop region */
+}
+
+.preview-overlay.dragging {
+  cursor: grabbing;
+}
+
+/* Hidden by the playhead being outside the overlay's clip range (kept in
+   layout, unlike .hidden, so it can still be measured/edited). */
+.preview-overlay.overlay-hidden {
+  visibility: hidden;
+}
+
+/* The media is absolutely positioned and its width/height/offset are set
+   in JS (updateOverlay) to place the crop region within the box. */
+.preview-overlay img,
+.preview-overlay video {
+  position: absolute;
+  display: block;
+  pointer-events: none; /* drag targets the wrapper div, not the media element */
+}
+
+.text-layers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* individual captions re-enable it */
+  z-index: 3;
+}
+
+/* White-flash transition preview — opacity driven per-frame from JS. */
+.preview-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Free-mode output gap: no footage here, the frame shows black. */
+.preview-frame.in-gap .preview-fg,
+.preview-frame.in-gap .preview-bg,
+.preview-frame.in-gap .preview-overlay {
+  visibility: hidden;
+}
+
+/* Positioned with fixed left/top at 50%/50% and moved purely via a
+   translate offset (see setCenterTransform in preview.js) — a variable
+   left/top would feed into the browser's shrink-to-fit width calculation
+   and make word-wrap depend on position. */
+.preview-caption {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  cursor: grab;
+  touch-action: none;
+  pointer-events: auto;
+  border: 1px dashed transparent;
+  border-radius: 4px;
+}
+
+.preview-caption.selected {
+  border-color: var(--accent);
+}
+
+.preview-caption.dragging {
+  cursor: grabbing;
+}
+
+/* Hidden by playhead time but still measurable (pill math needs layout) —
+   visibility, never display. */
+.preview-caption.time-hidden {
+  visibility: hidden;
+}
+
+.preview-caption-inner {
+  font-weight: 600;
+  white-space: pre-wrap;
+  word-break: break-word;
+  paint-order: stroke; /* keeps the black outline behind the fill, matching the SVG render's paint-order */
+  position: relative;
+  z-index: 1; /* text above the box style's pill backgrounds */
+}
+
+/* Holds the box style's per-line pill backgrounds (see applyBoxPills in
+   preview.js). Sits behind the text. */
+.preview-caption-fillers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 220px; /* JS keeps this synced to the frame's actual width */
+  margin-top: 10px;
+}
+
+.preview-play-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.preview-play-btn:hover {
+  border-color: var(--accent);
+}
+
+.preview-seek {
+  flex: 1;
+}
+
+.preview-time {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Properties panel ===== */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px 0;
+  overflow-x: auto; /* five tabs — scrolls sideways on narrow panels */
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+
+.panel-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.panel-tab {
+  flex: 1 0 auto;
+  padding: 8px 12px;
   background: transparent;
   border: none;
   border-radius: 8px;
   color: var(--text-dim);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
 }
 
-.tab-btn.active {
+.panel-tab.active {
   background: var(--accent);
   color: white;
 }
 
-.tab-panel {
-  display: none;
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 24px;
 }
 
-.tab-panel.active {
-  display: block;
+.panel-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.field-group {
+  margin-bottom: 16px;
+  position: relative;
 }
 
 .field-label {
   display: block;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-dim);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+}
+
+.field-label span {
+  color: var(--text);
+  float: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 input[type="text"],
-input[type="file"],
-textarea {
+input[type="number"],
+textarea,
+.font-select {
   width: 100%;
-  padding: 12px;
+  padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   font-family: inherit;
 }
 
-textarea {
-  resize: vertical;
-  min-height: 64px;
-}
-
 input[type="text"]:focus,
-textarea:focus {
+input[type="number"]:focus,
+textarea:focus,
+.font-select:focus {
   outline: none;
   border-color: var(--accent);
 }
 
+textarea {
+  resize: vertical;
+}
+
+input[type="file"] {
+  width: 100%;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+/* Buttons */
+
+.primary-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 18px;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+}
+
+.primary-btn:hover {
+  background: var(--accent-hover);
+}
+
+.primary-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.secondary-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.secondary-btn:hover {
+  border-color: var(--accent);
+}
+
+.secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.danger-btn {
+  background: transparent;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  color: var(--error);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.danger-btn:hover {
+  background: rgba(255, 92, 92, 0.1);
+}
+
+/* Toggle groups (aspect ratio, caption style) */
+
 .toggle-group {
   display: flex;
-  gap: 8px;
-  background: var(--bg);
-  border-radius: 10px;
-  padding: 4px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .toggle-btn {
   flex: 1;
-  padding: 10px;
-  background: transparent;
-  border: none;
+  min-width: 52px;
+  padding: 8px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text-dim);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
 }
 
 .toggle-btn.active {
-  background: var(--accent);
-  color: white;
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(124, 92, 255, 0.12);
 }
 
-.field-group {
-  margin-top: 20px;
-}
+/* Switches */
 
 .switch-row {
   display: flex;
@@ -164,18 +623,15 @@ textarea:focus {
 .switch {
   position: relative;
   display: inline-block;
-  width: 44px;
-  height: 24px;
+  width: 38px;
+  height: 22px;
   flex-shrink: 0;
 }
 
 .switch input {
-  position: absolute;
   opacity: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  cursor: pointer;
+  width: 0;
+  height: 0;
 }
 
 .switch-track {
@@ -183,19 +639,19 @@ textarea:focus {
   inset: 0;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 22px;
   transition: background 0.15s, border-color 0.15s;
 }
 
 .switch-track::before {
-  content: "";
+  content: '';
   position: absolute;
-  height: 18px;
-  width: 18px;
-  left: 2px;
   top: 2px;
-  background: var(--text-dim);
+  left: 2px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
+  background: var(--text-dim);
   transition: transform 0.15s, background 0.15s;
 }
 
@@ -205,115 +661,643 @@ textarea:focus {
 }
 
 .switch input:checked + .switch-track::before {
-  transform: translateX(20px);
+  transform: translateX(16px);
   background: white;
 }
 
-input[type="range"] {
-  width: 100%;
-  accent-color: var(--accent);
+/* Color picker */
+
+.color-picker {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.color-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
   cursor: pointer;
+  padding: 0;
 }
 
-.primary-btn {
-  display: block;
-  width: 100%;
-  margin-top: 24px;
-  padding: 14px;
-  background: var(--accent);
-  border: none;
-  border-radius: 10px;
-  color: white;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: center;
-  text-decoration: none;
-  transition: background 0.15s;
+.color-swatch.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.35);
 }
 
-.primary-btn:hover {
-  background: var(--accent-hover);
+/* Emoji picker */
+
+.caption-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.primary-btn:disabled {
-  background: var(--border);
-  color: var(--text-dim);
-  cursor: not-allowed;
-}
-
-.hidden {
-  display: none !important;
-}
-
-.status-area {
-  margin-top: 20px;
-}
-
-.status-text {
+.emoji-picker-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   font-size: 14px;
-  margin-bottom: 10px;
+  line-height: 1;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+
+.emoji-picker-btn:hover {
+  border-color: var(--accent);
+}
+
+.emoji-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  width: 100%;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.emoji-item {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-size: 18px;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+
+.emoji-item:hover {
+  background: var(--border);
+}
+
+/* Preset grids (Overlay/Sound tabs) */
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+/* Overlay crop: four edge-trim sliders in a 2x2 grid. */
+.crop-label {
+  margin-top: 4px;
+}
+
+.crop-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.crop-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-dim);
 }
 
-.status-text.success {
-  color: var(--success);
+.crop-field span {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
-.status-text.error {
+.preset-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.preset-item:hover {
+  border-color: var(--accent);
+}
+
+.preset-thumb {
+  font-size: 22px;
+  line-height: 1;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--panel-2);
+  object-fit: cover;
+}
+
+img.preset-thumb {
+  padding: 0;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.captions-generate {
+  width: 100%;
+}
+
+/* Timing fields */
+
+.timing-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timing-sep {
+  color: var(--text-dim);
+}
+
+.layer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.layer-actions > * {
+  flex: 1;
+}
+
+/* ===== Timeline ===== */
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  flex-wrap: wrap;
+}
+
+.toolbar-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+}
+
+.snap-toggle {
+  margin-left: auto;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.snap-toggle .switch-label {
+  font-size: 11px;
+}
+
+/* Applied-transitions list in the Transitions tab. */
+.trans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trans-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.trans-remove {
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+
+.preset-item.active {
+  border-color: var(--accent);
+}
+
+.timeline-hint {
+  margin: 0 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-body {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 14px 10px;
+}
+
+.tl-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  z-index: 5;
+}
+
+.tl-ruler {
+  position: relative;
+  height: 22px;
+  cursor: ew-resize;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.tl-tick {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: var(--text-dim);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-tick::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  width: 1px;
+  height: 5px;
+  background: var(--border);
+}
+
+.tl-video-track {
+  position: relative;
+  height: 44px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+/* A snap-mode piece floating under the cursor mid-drag, before it snaps
+   home on release. */
+.tl-segment.floating {
+  opacity: 0.7;
+  z-index: 5;
+}
+
+/* Transition badge on a cut between two pieces. */
+.tl-transition-badge {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: #333;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 4;
+  padding: 0;
+}
+
+.tl-transition-badge:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.tl-segment {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 8px;
+  cursor: pointer;
+  background: rgba(124, 92, 255, 0.28);
+  border: 1px solid rgba(124, 92, 255, 0.5);
+}
+
+.tl-segment:hover {
+  background: rgba(124, 92, 255, 0.4);
+}
+
+.tl-segment.selected {
+  border-color: #fff;
+  background: rgba(124, 92, 255, 0.45);
+  box-shadow: 0 0 0 1px #fff inset;
+}
+
+/* Per-segment trim handles, CapCut-style: white grip bars on both edges,
+   subtle until the segment is hovered/selected. */
+.tl-seg-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.tl-seg-edge::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.tl-segment:hover .tl-seg-edge::after,
+.tl-segment.selected .tl-seg-edge::after {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.tl-seg-edge-left {
+  left: 0;
+}
+
+.tl-seg-edge-left::after {
+  left: 3px;
+}
+
+.tl-seg-edge-right {
+  right: 0;
+}
+
+.tl-seg-edge-right::after {
+  right: 3px;
+}
+
+/* Label gutter + track column; every element type gets its own row. */
+.tl-grid {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  row-gap: 6px;
+  column-gap: 8px;
+  align-items: stretch;
+}
+
+.tl-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.tl-type-row {
+  position: relative;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.tl-text-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 6px;
+  background: rgba(62, 207, 110, 0.25);
+  border: 1px solid rgba(62, 207, 110, 0.5);
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.tl-text-bar.selected {
+  border-color: var(--success);
+  background: rgba(62, 207, 110, 0.4);
+}
+
+/* Auto-caption bars read as a distinct family from hand-made text. */
+.tl-text-bar.caption {
+  background: rgba(10, 132, 255, 0.25);
+  border-color: rgba(10, 132, 255, 0.5);
+}
+
+.tl-text-bar.caption.selected {
+  border-color: #0a84ff;
+  background: rgba(10, 132, 255, 0.42);
+}
+
+/* A layer whose footage is entirely cut out — collapsed to a sliver on
+   the output-time axis, and skipped at export. */
+.tl-text-bar.ghost {
+  opacity: 0.35;
+}
+
+/* The sound effect's clip on the Sound row. */
+.tl-sound-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 6px;
+  background: rgba(255, 149, 0, 0.28);
+  border: 1px solid rgba(255, 149, 0, 0.55);
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.tl-sound-bar:active {
+  cursor: grabbing;
+}
+
+/* Overlay clip on the timeline's Overlay row — its own colour (cyan),
+   draggable to reposition and edge-resizable like a text bar. */
+.tl-overlay-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 6px;
+  background: rgba(10, 200, 220, 0.24);
+  border: 1px solid rgba(10, 200, 220, 0.55);
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.tl-overlay-bar:active {
+  cursor: grabbing;
+}
+
+.tl-text-label {
+  font-size: 11px;
+  color: var(--text);
+  padding: 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.tl-text-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.tl-text-edge-left {
+  left: 0;
+}
+
+.tl-text-edge-right {
+  right: 0;
+}
+
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 11px;
+  transform: translateX(-50%);
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 4;
+}
+
+.tl-playhead::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  border-radius: 1px;
+}
+
+.tl-playhead::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid #fff;
+}
+
+/* ===== Export modal ===== */
+
+.export-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.export-card {
+  width: min(440px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.export-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.export-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.export-status {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.export-status.error {
   color: var(--error);
   white-space: pre-wrap;
-  word-break: break-word;
 }
 
-.status-bar {
-  height: 6px;
-  border-radius: 999px;
+.export-bar {
+  height: 8px;
+  border-radius: 4px;
   background: var(--bg);
   overflow: hidden;
+  margin-bottom: 14px;
 }
 
-.status-bar-fill {
+.export-bar-fill {
   height: 100%;
-  width: 40%;
+  width: 0;
   background: var(--accent);
-  border-radius: 999px;
-  animation: pulse 1.2s ease-in-out infinite;
+  border-radius: 4px;
+  transition: width 0.3s;
 }
 
-.status-bar.done .status-bar-fill {
-  width: 100%;
-  background: var(--success);
-  animation: none;
-}
-
-.status-bar.error .status-bar-fill {
-  width: 100%;
+.export-bar-fill.error {
   background: var(--error);
-  animation: none;
 }
 
-@keyframes pulse {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(250%); }
-}
-
-.result-area {
-  margin-top: 20px;
-}
-
-#result-video {
+.export-result video {
   width: 100%;
-  max-height: 480px;
+  max-height: 50vh;
   border-radius: 10px;
-  background: black;
-  display: block;
+  background: #000;
+  margin-bottom: 12px;
 }
 
 .download-btn {
-  background: var(--success);
-}
-
-.download-btn:hover {
-  background: #4fe085;
+  display: block;
 }
