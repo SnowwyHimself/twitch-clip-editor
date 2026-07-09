@@ -146,20 +146,19 @@ electron-builder's bundled NSIS installer tool is Intel-only.
    caption blocks at once, like CapCut's caption styling; select a single
    block to fine-tune it in the Text tab. Regenerating replaces the
    caption set but never touches hand-made text.
-5. **Overlay and sound**: **+ Overlay** and **+ Sound** in the timeline
+5. **Overlays and sounds**: **+ Overlay** and **+ Sound** in the timeline
    toolbar open their own panel tabs, each offering **your own file** or
    a **bundled preset** (whatever's in `assets/overlays/` and
    `assets/sfx/` — three starter sounds ship: Pop, Ding, Whoosh; presets
-   added there show up for everyone). The **overlay** (image or video)
-   renders above the video, drags anywhere in the preview, and is a clip
-   on its own **Overlay row** — drag its bar to move it, drag the edges to
-   set how long it shows. A **video** overlay plays and pauses in sync
-   with the editor. The Overlay tab also has a **Crop** control (four
-   edge sliders, works on images and videos). The **sound effect** lands
-   at the playhead as a clip on the **Sound row** — drag it to move it; it
-   plays at that moment in the preview and the export (mixed over the
-   original audio via `adelay`). The timeline gives each element type its
-   own row: Video, Overlay, Captions, Text, Sound.
+   added there show up for everyone). You can add **as many overlays and
+   sounds as you like** — each is an independent clip on its row (Overlay
+   / Sound) that you select, drag, edge-resize, **split** (with the piece
+   selected), and delete, exactly like a text layer. Overlays (image or
+   video) render above the video and drag anywhere in the preview; a
+   **video** overlay plays/pauses in sync with the editor, and the Overlay
+   tab has a **Crop** control (four edge sliders, images and videos).
+   Sounds mix over the original audio (`adelay` + `amix`). Every clip
+   type gets its own timeline row: Video, Overlay, Captions, Text, Sound.
 6. **Transitions**: the **Transitions** toolbar button opens its tab —
    pick **White Flash** (dip to white), set a duration, put the playhead
    near a cut between two pieces, and **Add**. A ✦ badge marks the cut

@@ -498,7 +498,7 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, captionOverlays, mediaOverlay, audioOverlay, mirror, speed, hasAudio, segments, transitions, mediaInfo, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, onProgress) {
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
   // straight [0:v]/[0:a]. A single kept range starting at output 0 (the
@@ -526,31 +526,32 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, ca
   // default.
   const overlayStages = [];
   let nextInputIndex = 1;
-  if (mediaOverlay) {
-    args.push('-i', mediaOverlay.path);
-    const overlayWidthPx = Math.round(canvasW * (mediaOverlay.sizePercent / 100));
-    // Crop the media's own edges before scaling to size — the ffmpeg
-    // equivalent of the preview's scale-inside-overflow-hidden crop.
-    const cl = mediaOverlay.cropLeft / 100;
-    const cr = mediaOverlay.cropRight / 100;
-    const ct = mediaOverlay.cropTop / 100;
-    const cb = mediaOverlay.cropBottom / 100;
+  // Each overlay is its own input + composite stage, stacked in order (so a
+  // later overlay sits on top). A video overlay is input-seeked by `offset`
+  // (so a split video overlay's right half continues where it left off) and
+  // crop-then-scaled; every overlay is shown only during its own window.
+  for (const ov of mediaOverlays) {
+    if (ov.isVideo && ov.offset > 0.01) args.push('-ss', ov.offset.toFixed(3));
+    args.push('-i', ov.path);
+    const overlayWidthPx = Math.round(canvasW * (ov.sizePercent / 100));
+    const cl = ov.cropLeft / 100;
+    const cr = ov.cropRight / 100;
+    const ct = ov.cropTop / 100;
+    const cb = ov.cropBottom / 100;
     const cropChain =
       cl + cr + ct + cb > 0.001
         ? `crop=iw*${(1 - cl - cr).toFixed(4)}:ih*${(1 - ct - cb).toFixed(4)}:iw*${cl.toFixed(4)}:ih*${ct.toFixed(4)},`
         : '';
-    // Only shown during its own window (in final-video seconds). A video
-    // overlay shorter than its window holds its last frame (ffmpeg
-    // overlay's default eof_action) rather than disappearing.
     const enable =
-      Number.isFinite(mediaOverlay.start) && Number.isFinite(mediaOverlay.end) && mediaOverlay.end > mediaOverlay.start
-        ? `between(t,${mediaOverlay.start.toFixed(3)},${mediaOverlay.end.toFixed(3)})`
+      Number.isFinite(ov.start) && Number.isFinite(ov.end) && ov.end > ov.start
+        ? `between(t,${ov.start.toFixed(3)},${ov.end.toFixed(3)})`
         : null;
+    const label = `[ovlm${nextInputIndex}]`;
     overlayStages.push({
-      pre: `[${nextInputIndex}:v]${cropChain}scale=${overlayWidthPx}:-2[ovlm]`,
-      inputLabel: '[ovlm]',
-      x: `x=(main_w-overlay_w)*${(mediaOverlay.xPercent / 100).toFixed(4)}`,
-      y: `y=(main_h-overlay_h)*${(mediaOverlay.yPercent / 100).toFixed(4)}`,
+      pre: `[${nextInputIndex}:v]${cropChain}scale=${overlayWidthPx}:-2${label}`,
+      inputLabel: label,
+      x: `x=(main_w-overlay_w)*${(ov.xPercent / 100).toFixed(4)}`,
+      y: `y=(main_h-overlay_h)*${(ov.yPercent / 100).toFixed(4)}`,
       enable,
     });
     nextInputIndex += 1;
@@ -565,13 +566,13 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, ca
     });
     nextInputIndex += 1;
   }
-  // The sound-effect track is audio-only, so its input order relative to
-  // the video-side inputs above doesn't matter — it never appears in the
-  // video filter graph at all, only in the audio-mixing stage below.
-  let audioOverlayInputIndex = null;
-  if (audioOverlay) {
-    args.push('-i', audioOverlay.path);
-    audioOverlayInputIndex = nextInputIndex;
+  // Sound clips are audio-only, so their input order relative to the
+  // video-side inputs above doesn't matter — they never appear in the video
+  // filter graph, only in the audio-mixing stage below.
+  const audioInputs = [];
+  for (const au of audioOverlays) {
+    args.push('-i', au.path);
+    audioInputs.push({ idx: nextInputIndex, ...au });
     nextInputIndex += 1;
   }
 
@@ -603,28 +604,37 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, ca
     audioMap = '[outa]';
   }
 
-  // Mixing a second audio source in (rather than just mapping it) always
-  // requires going through the filter graph — '0:a?' (the plain,
-  // un-filtered CLI map used above whenever nothing else needed the audio
-  // touched) isn't valid inside a filter chain, so it's swapped back out
-  // for the real [0:a] input reference the moment mixing is actually
-  // needed.
-  if (audioOverlay) {
-    const volume = (audioOverlay.volumePercent / 100).toFixed(3);
-    // delaySeconds places the effect at its timeline position (already in
-    // final-video seconds — the frontend maps across cuts and speed).
-    const delayMs = Math.round((audioOverlay.delaySeconds || 0) * 1000);
-    const delayChain = delayMs > 0 ? `adelay=${delayMs}:all=1,` : '';
-    filterComplex += `;[${audioOverlayInputIndex}:a]${delayChain}volume=${volume}[sfx]`;
+  // Each sound clip is trimmed to its [trimStart,trimEnd] region of the
+  // file, delayed to its timeline position (adelay, in final-video seconds
+  // — the frontend already mapped across cuts and speed), and volumed, then
+  // all sounds are amix'd together with the main audio. normalize=0 keeps
+  // levels from dropping as more sounds are added. '0:a?' (the plain CLI
+  // map) isn't valid inside a filter chain, so it's swapped for the real
+  // [0:a] the moment mixing is needed.
+  if (audioInputs.length > 0) {
+    const sfxLabels = [];
+    audioInputs.forEach((au, i) => {
+      const volume = (au.volume / 100).toFixed(3);
+      const trimChain =
+        Number.isFinite(au.trimStart) && Number.isFinite(au.trimEnd) && au.trimEnd > au.trimStart
+          ? `atrim=start=${au.trimStart.toFixed(3)}:end=${au.trimEnd.toFixed(3)},asetpts=PTS-STARTPTS,`
+          : '';
+      const delayMs = Math.round((au.delay || 0) * 1000);
+      const delayChain = delayMs > 0 ? `adelay=${delayMs}:all=1,` : '';
+      const label = `[sfx${i}]`;
+      filterComplex += `;[${au.idx}:a]${trimChain}${delayChain}volume=${volume}${label}`;
+      sfxLabels.push(label);
+    });
     if (hasAudio) {
       const mainAudioLabel = audioMap === '0:a?' ? sourceAudioLabel : audioMap;
-      filterComplex += `;${mainAudioLabel}[sfx]amix=inputs=2:duration=first:dropout_transition=0[mixedaudio]`;
+      filterComplex += `;${mainAudioLabel}${sfxLabels.join('')}amix=inputs=${sfxLabels.length + 1}:duration=first:dropout_transition=0:normalize=0[mixedaudio]`;
       audioMap = '[mixedaudio]';
+    } else if (sfxLabels.length === 1) {
+      // No source audio — the single sound becomes the whole track.
+      audioMap = sfxLabels[0];
     } else {
-      // No audio in the source video at all — the sound effect becomes
-      // the entire output audio track rather than being mixed with
-      // nothing.
-      audioMap = '[sfx]';
+      filterComplex += `;${sfxLabels.join('')}amix=inputs=${sfxLabels.length}:duration=first:dropout_transition=0:normalize=0[mixedaudio]`;
+      audioMap = '[mixedaudio]';
     }
   }
 
@@ -722,42 +732,64 @@ function clampCropPercent(value) {
   return Math.min(45, Math.max(0, pct));
 }
 
-// overlayFile is a multer file object (image or video) already saved to
-// UPLOADS_DIR — sizePercent/xPercent/yPercent come from the overlay size
-// slider and drag-to-position preview; crop* trim the media's own edges;
-// start/end (FINAL-video seconds, already mapped across cuts+speed by the
-// frontend) bound when the overlay is on screen.
-function buildMediaOverlay(body, overlayFile) {
-  if (!overlayFile) return null;
-  const start = parseFloat(body.overlayStart);
-  const end = parseFloat(body.overlayEnd);
-  return {
-    path: overlayFile.path,
-    sizePercent: clampPositionPercent(body.overlaySize, 35),
-    xPercent: clampPositionPercent(body.overlayX, 50),
-    yPercent: clampPositionPercent(body.overlayY, 50),
-    cropTop: clampCropPercent(body.overlayCropTop),
-    cropBottom: clampCropPercent(body.overlayCropBottom),
-    cropLeft: clampCropPercent(body.overlayCropLeft),
-    cropRight: clampCropPercent(body.overlayCropRight),
-    start: Number.isFinite(start) ? start : null,
-    end: Number.isFinite(end) ? end : null,
-  };
+// Each overlay file (in the multipart 'overlay' field, order-matched to the
+// JSON `overlays` metadata array) becomes an overlay descriptor:
+// size/position from the sliders + drag, crop* trimming the media edges,
+// start/end (FINAL-video seconds, already mapped across cuts+speed) bounding
+// when it's on screen, offset (video overlays start `offset` in), isVideo.
+function buildMediaOverlays(body, overlayFiles) {
+  if (!overlayFiles || overlayFiles.length === 0) return [];
+  let meta = [];
+  try {
+    meta = JSON.parse(body.overlays || '[]');
+  } catch {
+    meta = [];
+  }
+  return overlayFiles.map((file, i) => {
+    const m = meta[i] || {};
+    const start = parseFloat(m.start);
+    const end = parseFloat(m.end);
+    return {
+      path: file.path,
+      isVideo: !!m.isVideo,
+      sizePercent: clampPositionPercent(m.sizePercent, 35),
+      xPercent: clampPositionPercent(m.xPercent, 50),
+      yPercent: clampPositionPercent(m.yPercent, 50),
+      cropTop: clampCropPercent(m.cropTop),
+      cropBottom: clampCropPercent(m.cropBottom),
+      cropLeft: clampCropPercent(m.cropLeft),
+      cropRight: clampCropPercent(m.cropRight),
+      start: Number.isFinite(start) ? start : null,
+      end: Number.isFinite(end) ? end : null,
+      offset: Number.isFinite(parseFloat(m.offset)) ? parseFloat(m.offset) : 0,
+    };
+  });
 }
 
-// audioFile is an uploaded mp3 (or any ffmpeg-readable audio file) mixed
-// into the output alongside the main video's own audio — volumePercent
-// controls only the sound effect's own level, not the original audio.
-// delaySeconds is where on the FINAL timeline the effect starts (0 =
-// plays from the top).
-function buildAudioOverlay(body, audioFile) {
-  if (!audioFile) return null;
-  const delay = parseFloat(body.audioDelay);
-  return {
-    path: audioFile.path,
-    volumePercent: clampPositionPercent(body.audioVolume, 80),
-    delaySeconds: Number.isFinite(delay) && delay > 0 ? delay : 0,
-  };
+// Each sound file (multipart 'audioTrack' field, order-matched to the JSON
+// `sounds` array) becomes a descriptor: volume, delay (FINAL-video seconds
+// where it starts), and trimStart/trimEnd (the region of the file to play).
+function buildAudioOverlays(body, audioFiles) {
+  if (!audioFiles || audioFiles.length === 0) return [];
+  let meta = [];
+  try {
+    meta = JSON.parse(body.sounds || '[]');
+  } catch {
+    meta = [];
+  }
+  return audioFiles.map((file, i) => {
+    const m = meta[i] || {};
+    const delay = parseFloat(m.delay);
+    const trimStart = parseFloat(m.trimStart);
+    const trimEnd = parseFloat(m.trimEnd);
+    return {
+      path: file.path,
+      volume: clampPositionPercent(m.volume, 80),
+      delay: Number.isFinite(delay) && delay > 0 ? delay : 0,
+      trimStart: Number.isFinite(trimStart) ? trimStart : 0,
+      trimEnd: Number.isFinite(trimEnd) ? trimEnd : null,
+    };
+  });
 }
 
 function findFileWithPrefix(dir, prefix) {
@@ -824,7 +856,7 @@ function buildSection(body) {
   return { start, end };
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlay, audioOverlay) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -856,13 +888,13 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, captionOverlays, mediaOverlay, audioOverlay, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   } finally {
     // Only the text-layer PNGs are server-generated temp artifacts cleaned
-    // up here — mediaOverlay.path/audioOverlay.path are genuine uploads,
+    // up here — overlay/sound uploads are genuine files,
     // left in place same as the main video upload (see the Notes section
     // in README.md).
     for (const cap of captionOverlays) {
@@ -871,7 +903,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlay, audioOverlay) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -879,7 +911,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlay, audioOverlay);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -888,7 +920,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
 // One shared config for every file the Generate form can submit: the main
 // video (Upload tab only — the Clip URL tab has no 'video' field at all,
 // since its video comes from yt-dlp instead), an optional image/video
-// overlay, and (see buildAudioOverlay) an optional mp3 sound-effect track.
+// overlay, and optional mp3 sound-effect tracks.
 // Filenames include the field name since a single job can now upload more
 // than one file at once, unlike the original single-file version of this.
 const upload = multer({
@@ -903,8 +935,8 @@ const upload = multer({
 });
 const uploadFields = upload.fields([
   { name: 'video', maxCount: 1 },
-  { name: 'overlay', maxCount: 1 },
-  { name: 'audioTrack', maxCount: 1 },
+  { name: 'overlay', maxCount: 30 },
+  { name: 'audioTrack', maxCount: 30 },
 ]);
 
 const app = express();
@@ -993,8 +1025,6 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
   const jobId = req.jobId;
   jobs.set(jobId, { status: 'downloading' });
   res.json({ jobId });
-  const overlayFile = req.files.overlay && req.files.overlay[0];
-  const audioFile = req.files.audioTrack && req.files.audioTrack[0];
   downloadAndProcess(
     jobId,
     trimmedUrl,
@@ -1007,8 +1037,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     clampSpeed(speed),
     buildSegments(req.body || {}),
     buildTransitions(req.body || {}),
-    buildMediaOverlay(req.body || {}, overlayFile),
-    buildAudioOverlay(req.body || {}, audioFile)
+    buildMediaOverlays(req.body || {}, req.files.overlay),
+    buildAudioOverlays(req.body || {}, req.files.audioTrack)
   );
 });
 
@@ -1027,8 +1057,6 @@ app.post(
     const jobId = req.jobId;
     jobs.set(jobId, { status: 'processing' });
     res.json({ jobId });
-    const overlayFile = req.files.overlay && req.files.overlay[0];
-    const audioFile = req.files.audioTrack && req.files.audioTrack[0];
     processJob(
       jobId,
       videoFile.path,
@@ -1040,8 +1068,8 @@ app.post(
       clampSpeed(req.body.speed),
       buildSegments(req.body),
       buildTransitions(req.body),
-      buildMediaOverlay(req.body, overlayFile),
-      buildAudioOverlay(req.body, audioFile)
+      buildMediaOverlays(req.body, req.files.overlay),
+      buildAudioOverlays(req.body, req.files.audioTrack)
     );
   }
 );

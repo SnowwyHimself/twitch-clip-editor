@@ -19,7 +19,9 @@ import {
   state,
   on,
   emit,
+  isSelected,
   selectLayer,
+  selectOverlay,
   resetSegments,
   resetHistory,
   sourceDuration,
@@ -36,7 +38,7 @@ const fgVideo = document.getElementById('preview-fg-video');
 const placeholder = document.getElementById('preview-placeholder');
 const guideX = document.getElementById('preview-guide-x');
 const guideY = document.getElementById('preview-guide-y');
-const overlayEl = document.getElementById('preview-overlay');
+const overlaysContainer = document.getElementById('preview-overlays');
 const layersContainer = document.getElementById('text-layers');
 const controls = document.getElementById('preview-controls');
 const playBtn = document.getElementById('preview-play-btn');
@@ -267,7 +269,7 @@ function updateLayerEl(layer) {
   const { width: frameWidth, height: frameHeight } = frameSize();
   const scale = frameWidth / state.aspect.width;
 
-  root.classList.toggle('selected', layer.id === state.selectedId);
+  root.classList.toggle('selected', isSelected('layer', layer.id));
   root.classList.toggle('style-box', layer.style === 'box');
   inner.style.fontFamily = PREVIEW_FONT_CSS_FAMILY[layer.fontId] || PREVIEW_FONT_CSS_FAMILY.montserrat;
   inner.innerHTML = captionHtml(layer.text);
@@ -320,7 +322,7 @@ function updateLayerVisibility() {
     const entry = layerEls.get(layer.id);
     if (!entry) continue;
     const inRange = !gap && t >= layer.start && t < layer.end;
-    const visible = inRange || layer.id === state.selectedId;
+    const visible = inRange || isSelected('layer', layer.id);
     entry.root.classList.toggle('time-hidden', !visible);
   }
 }
@@ -389,161 +391,145 @@ function attachLayerDrag(el, layerId) {
   el.addEventListener('pointercancel', end);
 }
 
-// --- media overlay (image/video, rendered above the video) -------------------
+// --- media overlays (image/video, rendered above the video) ------------------
+// Each overlay in state.overlays gets its own absolutely-positioned,
+// crop-clipped element, draggable to position, shown while the playhead is
+// in its range (or while it's selected, for editing). A video overlay
+// plays/pauses in sync with the editor.
 
-let overlayObjectUrl = null;
-let overlayMediaEl = null; // the <img>/<video> child of overlayEl
-let overlayIsVideo = false;
-let overlayMediaDims = null; // { w, h } natural dims, once known
-let overlayEditing = false; // Overlay tab active -> keep visible for editing
+const overlayEls = new Map(); // id -> { root, media, url, dims, isVideo }
 
-// Kept visible for editing regardless of the playhead — the same way a
-// selected text layer stays visible. The panel calls this on tab switches.
-export function setOverlayEditing(editing) {
-  overlayEditing = editing;
-  tickOverlay(getCurrentOutputTime());
-}
-
-export function setOverlayFile(file) {
-  if (overlayObjectUrl) {
-    URL.revokeObjectURL(overlayObjectUrl);
-    overlayObjectUrl = null;
-  }
-  overlayEl.innerHTML = '';
-  overlayMediaEl = null;
-  overlayMediaDims = null;
-  if (!file) {
-    state.overlay = null;
-    emit('settings');
-    return;
-  }
-  const duration = sourceDuration();
-  overlayIsVideo = file.type.startsWith('video/');
-  state.overlay = {
-    file,
-    isVideo: overlayIsVideo,
-    sizePercent: 35,
-    xPercent: 50,
-    yPercent: 50,
-    cropTop: 0,
-    cropBottom: 0,
-    cropLeft: 0,
-    cropRight: 0,
-    start: 0,
-    end: duration > 0 ? duration : 5, // spans the whole clip by default
-  };
-
-  const el = document.createElement(overlayIsVideo ? 'video' : 'img');
-  if (overlayIsVideo) {
+function createOverlayEl(o) {
+  const root = document.createElement('div');
+  root.className = 'preview-overlay';
+  root.dataset.id = o.id;
+  const media = document.createElement(o.isVideo ? 'video' : 'img');
+  if (o.isVideo) {
     // Muted (overlay audio is never mapped into the render), looped so a
-    // short clip fills a longer range, and driven manually by tickOverlay
-    // — NOT autoplay — so it plays/pauses in lockstep with the editor.
-    el.muted = true;
-    el.loop = true;
-    el.playsInline = true;
+    // short clip fills a longer range, driven manually by tickOverlays —
+    // NOT autoplay — so it plays/pauses in lockstep with the editor.
+    media.muted = true;
+    media.loop = true;
+    media.playsInline = true;
   }
-  el.addEventListener(
-    overlayIsVideo ? 'loadedmetadata' : 'load',
+  const url = URL.createObjectURL(o.file);
+  const entry = { root, media, url, dims: null, isVideo: o.isVideo };
+  media.addEventListener(
+    o.isVideo ? 'loadedmetadata' : 'load',
     () => {
-      overlayMediaDims = overlayIsVideo
-        ? { w: el.videoWidth, h: el.videoHeight }
-        : { w: el.naturalWidth, h: el.naturalHeight };
-      updateOverlay();
+      entry.dims = o.isVideo
+        ? { w: media.videoWidth, h: media.videoHeight }
+        : { w: media.naturalWidth, h: media.naturalHeight };
+      // Video length feeds the timeline's clip-length clamp and export.
+      if (o.isVideo && media.duration) o.duration = media.duration;
+      layoutOverlayEl(o);
     },
     { once: true }
   );
-  el.src = URL.createObjectURL(file);
-  overlayObjectUrl = el.src;
-  overlayEl.appendChild(el);
-  overlayMediaEl = el;
-  overlayEditing = true; // just added from the Overlay tab
-  emit('settings');
+  media.src = url;
+  root.appendChild(media);
+  overlaysContainer.appendChild(root);
+  attachOverlayDrag(root, o.id);
+  overlayEls.set(o.id, entry);
+  return entry;
 }
 
-// Sizes/positions the overlay box and applies the crop by scaling the
-// media inside an overflow-hidden box so the kept region fills the box —
-// the CSS equivalent of the export's ffmpeg crop+scale.
-function updateOverlay() {
-  const { width: frameWidth, height: frameHeight } = frameSize();
-  if (!state.overlay) {
-    overlayEl.classList.add('hidden');
-    return;
+// Reconciles the overlay elements with state.overlays (create new, drop
+// removed), then lays them out — the same create/update/remove pattern as
+// text layers.
+function syncOverlayEls() {
+  const ids = new Set(state.overlays.map((o) => o.id));
+  for (const [id, entry] of overlayEls) {
+    if (!ids.has(id)) {
+      URL.revokeObjectURL(entry.url);
+      entry.root.remove();
+      overlayEls.delete(id);
+    }
   }
-  overlayEl.classList.remove('hidden');
-  const o = state.overlay;
+  for (const o of state.overlays) {
+    if (!overlayEls.has(o.id)) createOverlayEl(o);
+    layoutOverlayEl(o);
+  }
+  tickOverlays(getCurrentOutputTime());
+}
+
+// Sizes/positions one overlay box and applies its crop by scaling the media
+// inside an overflow-hidden box so the kept region fills the box — the CSS
+// equivalent of the export's ffmpeg crop+scale.
+function layoutOverlayEl(o) {
+  const entry = overlayEls.get(o.id);
+  if (!entry) return;
+  const { root, media, dims } = entry;
+  const { width: frameWidth, height: frameHeight } = frameSize();
   const boxW = frameWidth * (o.sizePercent / 100);
   const cropFracW = Math.max(0.1, 1 - (o.cropLeft + o.cropRight) / 100);
   const cropFracH = Math.max(0.1, 1 - (o.cropTop + o.cropBottom) / 100);
 
   let boxH;
-  if (overlayMediaDims && overlayMediaEl) {
-    const croppedAspect = (overlayMediaDims.w * cropFracW) / (overlayMediaDims.h * cropFracH);
+  if (dims) {
+    const croppedAspect = (dims.w * cropFracW) / (dims.h * cropFracH);
     boxH = boxW / croppedAspect;
-    // Scale the media up so its kept region exactly fills the box, and
-    // translate so that region's top-left aligns to the box's corner.
     const mediaW = boxW / cropFracW;
     const mediaH = boxH / cropFracH;
-    overlayMediaEl.style.width = `${mediaW}px`;
-    overlayMediaEl.style.height = `${mediaH}px`;
-    overlayMediaEl.style.left = `${-(o.cropLeft / 100) * mediaW}px`;
-    overlayMediaEl.style.top = `${-(o.cropTop / 100) * mediaH}px`;
+    media.style.width = `${mediaW}px`;
+    media.style.height = `${mediaH}px`;
+    media.style.left = `${-(o.cropLeft / 100) * mediaW}px`;
+    media.style.top = `${-(o.cropTop / 100) * mediaH}px`;
   } else {
     boxH = boxW; // brief pre-load fallback, corrected once dims are known
-    if (overlayMediaEl) {
-      overlayMediaEl.style.width = '100%';
-      overlayMediaEl.style.height = 'auto';
-      overlayMediaEl.style.left = '0';
-      overlayMediaEl.style.top = '0';
-    }
+    media.style.width = '100%';
+    media.style.height = 'auto';
+    media.style.left = '0';
+    media.style.top = '0';
   }
 
-  overlayEl.style.width = `${boxW}px`;
-  overlayEl.style.height = `${boxH}px`;
+  root.style.width = `${boxW}px`;
+  root.style.height = `${boxH}px`;
   const centerX = resolvePreviewCenter(o.xPercent, boxW, frameWidth);
   const centerY = resolvePreviewCenter(o.yPercent, boxH, frameHeight);
-  setCenterTransform(overlayEl, centerX, centerY, frameWidth, frameHeight);
+  setCenterTransform(root, centerX, centerY, frameWidth, frameHeight);
 }
 
-// Range-based visibility + play/pause sync (analogous to tickSfx). A video
-// overlay shows the correct frame while the playhead is inside its clip,
-// plays only while the editor is playing, and pauses the instant the
-// editor pauses. Kept visible while editing so it can be positioned/cropped.
-function tickOverlay(outT) {
-  if (!state.overlay) return;
-  const startOut = sourceToOutput(state.overlay.start);
-  const endOut = sourceToOutput(state.overlay.end);
-  const inRange = !gap && outT >= startOut && outT < endOut;
-  overlayEl.classList.toggle('overlay-hidden', !(inRange || overlayEditing));
+// Per-frame for every overlay: visibility (in range OR selected) and, for
+// video overlays, currentTime + play/pause synced to the editor.
+function tickOverlays(outT) {
+  for (const o of state.overlays) {
+    const entry = overlayEls.get(o.id);
+    if (!entry) continue;
+    const startOut = sourceToOutput(o.start);
+    const endOut = sourceToOutput(o.end);
+    const inRange = !gap && outT >= startOut && outT < endOut;
+    entry.root.classList.toggle('overlay-hidden', !(inRange || isSelected('overlay', o.id)));
 
-  if (!overlayIsVideo || !overlayMediaEl) return;
-  if (inRange) {
-    const rel = (outT - startOut) / state.speed;
-    const dur = overlayMediaEl.duration || 0;
-    const target = dur > 0 ? rel % dur : rel;
-    if (Math.abs(overlayMediaEl.currentTime - target) > 0.3) {
-      try {
-        overlayMediaEl.currentTime = target;
-      } catch {}
+    if (!entry.isVideo) continue;
+    if (inRange) {
+      const target = (o.offset || 0) + (outT - startOut) / state.speed;
+      if (Math.abs(entry.media.currentTime - target) > 0.3) {
+        try {
+          entry.media.currentTime = target;
+        } catch {}
+      }
+      if (logicalPlaying && entry.media.paused) entry.media.play().catch(() => {});
+      if (!logicalPlaying && !entry.media.paused) entry.media.pause();
+    } else if (!entry.media.paused) {
+      entry.media.pause();
     }
-    if (logicalPlaying && overlayMediaEl.paused) overlayMediaEl.play().catch(() => {});
-    if (!logicalPlaying && !overlayMediaEl.paused) overlayMediaEl.pause();
-  } else if (!overlayMediaEl.paused) {
-    overlayMediaEl.pause();
   }
 }
 
-function attachOverlayDrag() {
+function attachOverlayDrag(root, id) {
   let dragging = false;
   let startPointer = null;
   let startCenter = null;
 
-  overlayEl.addEventListener('pointerdown', (e) => {
-    if (overlayEl.classList.contains('hidden') || overlayEl.classList.contains('overlay-hidden')) return;
+  root.addEventListener('pointerdown', (e) => {
+    if (root.classList.contains('overlay-hidden')) return;
+    selectOverlay(id);
     dragging = true;
-    overlayEl.setPointerCapture(e.pointerId);
-    overlayEl.classList.add('dragging');
+    root.setPointerCapture(e.pointerId);
+    root.classList.add('dragging');
     const frameRect = previewFrame.getBoundingClientRect();
-    const rect = overlayEl.getBoundingClientRect();
+    const rect = root.getBoundingClientRect();
     startPointer = { x: e.clientX, y: e.clientY };
     startCenter = {
       x: (rect.left + rect.right) / 2 - frameRect.left,
@@ -552,11 +538,13 @@ function attachOverlayDrag() {
     e.preventDefault();
   });
 
-  overlayEl.addEventListener('pointermove', (e) => {
-    if (!dragging || !state.overlay) return;
+  root.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const o = state.overlays.find((x) => x.id === id);
+    if (!o) return;
     const { width: frameWidth, height: frameHeight } = frameSize();
-    const w = overlayEl.offsetWidth;
-    const h = overlayEl.offsetHeight;
+    const w = root.offsetWidth;
+    const h = root.offsetHeight;
 
     let newX = startCenter.x + (e.clientX - startPointer.x);
     let newY = startCenter.y + (e.clientY - startPointer.y);
@@ -570,20 +558,20 @@ function attachOverlayDrag() {
     guideX.classList.toggle('visible', snappedX);
     guideY.classList.toggle('visible', snappedY);
 
-    setCenterTransform(overlayEl, newX, newY, frameWidth, frameHeight);
-    state.overlay.xPercent = Math.round(resolvePreviewPercent(newX, w, frameWidth));
-    state.overlay.yPercent = Math.round(resolvePreviewPercent(newY, h, frameHeight));
+    setCenterTransform(root, newX, newY, frameWidth, frameHeight);
+    o.xPercent = Math.round(resolvePreviewPercent(newX, w, frameWidth));
+    o.yPercent = Math.round(resolvePreviewPercent(newY, h, frameHeight));
   });
 
   const end = () => {
     if (!dragging) return;
     dragging = false;
-    overlayEl.classList.remove('dragging');
+    root.classList.remove('dragging');
     guideX.classList.remove('visible');
     guideY.classList.remove('visible');
   };
-  overlayEl.addEventListener('pointerup', end);
-  overlayEl.addEventListener('pointercancel', end);
+  root.addEventListener('pointerup', end);
+  root.addEventListener('pointercancel', end);
 }
 
 // --- playback ----------------------------------------------------------------
@@ -768,40 +756,51 @@ function updateFlash(outT) {
   flashEl.style.opacity = Math.max(0, Math.min(1, opacity)).toFixed(3);
 }
 
-// --- sound effect audition -------------------------------------------------------
+// --- sound audition -------------------------------------------------------------
+// One <Audio> per sound clip, reconciled with state.sounds. Each plays
+// while the output playhead is inside its clip; its offset (how far into
+// the file the clip starts) plus the elapsed real time gives the audio
+// position — matching the export, which delays and trims but never retimes.
 
-let sfxAudio = null;
-let sfxAudioUrl = null;
+const soundAudios = new Map(); // sound.id -> { audio, url }
 
-function syncSfxAudio() {
-  if (!state.sfx || !state.sfx.url) {
-    if (sfxAudio) sfxAudio.pause();
-    sfxAudio = null;
-    sfxAudioUrl = null;
-    return;
+function syncSoundAudios() {
+  const ids = new Set(state.sounds.map((s) => s.id));
+  for (const [id, entry] of soundAudios) {
+    if (!ids.has(id)) {
+      entry.audio.pause();
+      soundAudios.delete(id);
+    }
   }
-  if (sfxAudioUrl !== state.sfx.url) {
-    if (sfxAudio) sfxAudio.pause();
-    sfxAudio = new Audio(state.sfx.url);
-    sfxAudioUrl = state.sfx.url;
+  for (const s of state.sounds) {
+    let entry = soundAudios.get(s.id);
+    if (!entry || entry.url !== s.url) {
+      if (entry) entry.audio.pause();
+      entry = { audio: new Audio(s.url), url: s.url };
+      soundAudios.set(s.id, entry);
+    }
+    entry.audio.volume = Math.min(1, Math.max(0, s.volumePercent / 100));
   }
-  sfxAudio.volume = Math.min(1, Math.max(0, state.sfx.volumePercent / 100));
 }
 
-// Plays the effect when the output playhead crosses its clip — offset in
-// REAL seconds is (output delta) / speed, since the output axis is
-// pre-speed concat time but the effect itself plays at natural rate
-// (matching the export, which delays but never retimes it).
-function tickSfx(outT) {
-  if (!sfxAudio || !state.sfx) return;
-  const startOut = sourceToOutput(state.sfx.start);
-  const rel = (outT - startOut) / state.speed;
-  const inRange = logicalPlaying && rel >= 0 && rel < (state.sfx.duration || 0);
-  if (inRange && sfxAudio.paused) {
-    sfxAudio.currentTime = rel;
-    sfxAudio.play().catch(() => {});
-  } else if (!inRange && !sfxAudio.paused) {
-    sfxAudio.pause();
+function tickSounds(outT) {
+  for (const s of state.sounds) {
+    const entry = soundAudios.get(s.id);
+    if (!entry) continue;
+    const startOut = sourceToOutput(s.start);
+    const endOut = sourceToOutput(s.end);
+    const inRange = logicalPlaying && !gap && outT >= startOut && outT < endOut;
+    if (inRange) {
+      const target = (s.offset || 0) + (outT - startOut) / state.speed;
+      if (Math.abs(entry.audio.currentTime - target) > 0.3) {
+        try {
+          entry.audio.currentTime = target;
+        } catch {}
+      }
+      if (entry.audio.paused) entry.audio.play().catch(() => {});
+    } else if (!entry.audio.paused) {
+      entry.audio.pause();
+    }
   }
 }
 
@@ -861,13 +860,12 @@ function updateAll() {
   fgVideo.playbackRate = state.speed;
   bgVideo.playbackRate = state.speed;
 
-  updateOverlay();
+  syncOverlayEls();
   syncLayerEls();
 }
 
 export function initPreview() {
   fitPreviewFrame();
-  attachOverlayDrag();
 
   playBtn.addEventListener('click', togglePlay);
 
@@ -918,8 +916,8 @@ export function initPreview() {
 
     const outT = getCurrentOutputTime();
     updateFlash(outT);
-    tickSfx(outT);
-    tickOverlay(outT);
+    tickSounds(outT);
+    tickOverlays(outT);
     if (outT !== lastOutTime) {
       lastOutTime = outT;
       seekSlider.value = outT;
@@ -942,7 +940,7 @@ export function initPreview() {
     syncSeekSliderRange();
     updateTimeLabel();
   });
-  on('settings', syncSfxAudio);
+  on('settings', syncSoundAudios);
 
   // Only the foreground's mute toggles — the background copy plays the
   // same source and unmuting both would phase/echo. Starting muted keeps

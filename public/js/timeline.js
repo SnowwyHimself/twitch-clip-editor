@@ -26,13 +26,23 @@ import {
   state,
   on,
   emit,
+  isSelected,
   selectLayer,
   selectSegment,
+  selectSound,
+  selectOverlay,
   selectedLayer,
   selectedSegment,
+  selectedSound,
+  selectedOverlay,
   removeLayer,
   removeSegment,
+  removeSound,
+  removeOverlay,
   splitSegmentAt,
+  splitLayerAt,
+  splitSoundAt,
+  splitOverlayAt,
   normalizeOutStarts,
   removeTransition,
   sourceDuration,
@@ -42,7 +52,7 @@ import {
   MIN_SEGMENT_SECONDS,
   MIN_LAYER_SECONDS,
 } from './state.js';
-import { seek, seekOutput, getCurrentTime, getCurrentOutputTime, setOverlayEditing } from './preview.js';
+import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './preview.js';
 
 const ruler = document.getElementById('tl-ruler');
 const videoTrack = document.getElementById('tl-video-track');
@@ -108,8 +118,17 @@ function renderRuler() {
 
 const segmentEls = new Map(); // seg.id -> element
 const layerBarEls = new Map(); // layer.id -> element
-let soundBarEl = null;
-let overlayBarEl = null;
+const soundBarEls = new Map(); // sound.id -> element
+const overlayBarEls = new Map(); // overlay.id -> element
+
+// Positions any start/end clip bar (layer/sound/overlay) in output coords.
+function layoutClipBar(el, clip) {
+  const dispStart = sourceToOutput(clip.start);
+  const dispEnd = sourceToOutput(clip.end);
+  el.style.left = `${outTimeToX(dispStart)}px`;
+  el.style.width = `${Math.max(6, outTimeToX(dispEnd) - outTimeToX(dispStart))}px`;
+  return dispEnd - dispStart;
+}
 
 function layoutVideoTrack() {
   const pps = pxPerSecond();
@@ -134,35 +153,31 @@ function layoutLayerBars() {
   for (const layer of state.layers) {
     const el = layerBarEls.get(layer.id);
     if (!el) continue;
-    const dispStart = sourceToOutput(layer.start);
-    const dispEnd = sourceToOutput(layer.end);
-    el.style.left = `${outTimeToX(dispStart)}px`;
-    el.style.width = `${Math.max(4, outTimeToX(dispEnd) - outTimeToX(dispStart))}px`;
     // A layer whose footage is entirely cut collapses to a sliver — mark
     // it so the user can see it won't be in the export.
-    el.classList.toggle('ghost', dispEnd - dispStart < 0.05);
+    el.classList.toggle('ghost', layoutClipBar(el, layer) < 0.05);
   }
 }
 
-function layoutSoundBar() {
-  if (!soundBarEl || !state.sfx) return;
-  soundBarEl.style.left = `${outTimeToX(sourceToOutput(state.sfx.start))}px`;
-  soundBarEl.style.width = `${Math.max(10, (state.sfx.duration || 1) * pxPerSecond())}px`;
+function layoutSoundBars() {
+  for (const s of state.sounds) {
+    const el = soundBarEls.get(s.id);
+    if (el) layoutClipBar(el, s);
+  }
 }
 
-function layoutOverlayBar() {
-  if (!overlayBarEl || !state.overlay) return;
-  const dispStart = sourceToOutput(state.overlay.start);
-  const dispEnd = sourceToOutput(state.overlay.end);
-  overlayBarEl.style.left = `${outTimeToX(dispStart)}px`;
-  overlayBarEl.style.width = `${Math.max(6, outTimeToX(dispEnd) - outTimeToX(dispStart))}px`;
+function layoutOverlayBars() {
+  for (const o of state.overlays) {
+    const el = overlayBarEls.get(o.id);
+    if (el) layoutClipBar(el, o);
+  }
 }
 
 function layoutAll() {
   layoutVideoTrack();
   layoutLayerBars();
-  layoutSoundBar();
-  layoutOverlayBar();
+  layoutSoundBars();
+  layoutOverlayBars();
   updatePlayhead();
 }
 
@@ -180,7 +195,7 @@ function renderVideoTrack() {
 
     const el = document.createElement('div');
     el.className = 'tl-segment';
-    el.classList.toggle('selected', seg.id === state.selectedSegmentId);
+    el.classList.toggle('selected', isSelected('segment', seg.id));
 
     const leftEdge = document.createElement('div');
     leftEdge.className = 'tl-seg-edge tl-seg-edge-left';
@@ -324,25 +339,51 @@ function attachSegmentEdgeDrag(edgeEl, seg, prev, next, isLeft) {
 
 // --- toolbar actions -----------------------------------------------------------
 
+// Split acts on whatever's selected — a text layer, a sound, or an overlay
+// clip — splitting it at the playhead into two independent clips. With a
+// video segment selected (or nothing), it splits the video piece under the
+// playhead, as before.
 function splitAtPlayhead() {
-  const piece = splitSegmentAt(getCurrentTime());
+  const t = getCurrentTime();
+  const layer = selectedLayer();
+  if (layer) {
+    const piece = splitLayerAt(layer.id, t);
+    if (piece) selectLayer(piece.id);
+    return;
+  }
+  const sound = selectedSound();
+  if (sound) {
+    const piece = splitSoundAt(sound.id, t);
+    if (piece) selectSound(piece.id);
+    return;
+  }
+  const overlay = selectedOverlay();
+  if (overlay) {
+    const piece = splitOverlayAt(overlay.id, t);
+    if (piece) selectOverlay(piece.id);
+    return;
+  }
+  const piece = splitSegmentAt(t);
   if (piece) selectSegment(piece.id);
 }
 
+// Delete acts on whatever's selected — clip of any kind, or a video piece.
 function deleteSelection() {
   const seg = selectedSegment();
-  if (seg) {
-    removeSegment(seg.id);
-    return;
-  }
+  if (seg) return removeSegment(seg.id);
   const layer = selectedLayer();
-  if (layer) removeLayer(layer.id);
+  if (layer) return removeLayer(layer.id);
+  const sound = selectedSound();
+  if (sound) return removeSound(sound.id);
+  const overlay = selectedOverlay();
+  if (overlay) return removeOverlay(overlay.id);
 }
 
 function refreshToolbar() {
   const seg = selectedSegment();
   const canDeleteSegment = seg && state.segments.length > 1;
-  deleteBtn.disabled = !(canDeleteSegment || selectedLayer());
+  const otherSelected = !!(selectedLayer() || selectedSound() || selectedOverlay());
+  deleteBtn.disabled = !(canDeleteSegment || otherSelected);
 }
 
 // --- text / caption / sound rows --------------------------------------------------
@@ -353,15 +394,23 @@ function setRowVisible(rowEl, visible) {
   if (label && label.classList.contains('tl-label')) label.classList.toggle('hidden', !visible);
 }
 
-function buildLayerBar(layer) {
+// Generic clip bar shared by layers, sounds, and overlays: a label, two
+// resize edges, move/resize drag, and selection. opts:
+//   selected()  -> whether this clip is selected (for the highlight class)
+//   onSelect()  -> select it
+//   emitEvent   -> 'layers' | 'settings', fired once on release
+//   relayout()  -> re-position this clip's row in place during a drag
+//   content     -> sound / video overlay: front-trim advances the clip's
+//                  `offset` (media stays aligned) and length is capped to
+//                  the remaining media, since you can't play past the file.
+function buildClipBar(clip, className, labelText, opts) {
   const bar = document.createElement('div');
-  bar.className = 'tl-text-bar';
-  bar.classList.toggle('selected', layer.id === state.selectedId);
-  bar.classList.toggle('caption', layer.group === 'caption');
+  bar.className = className;
+  if (opts.selected()) bar.classList.add('selected');
 
   const label = document.createElement('span');
   label.className = 'tl-text-label';
-  label.textContent = layer.text.replace(/\s+/g, ' ').trim() || 'Text';
+  label.textContent = labelText;
   bar.appendChild(label);
 
   const leftEdge = document.createElement('div');
@@ -371,8 +420,74 @@ function buildLayerBar(layer) {
   bar.appendChild(leftEdge);
   bar.appendChild(rightEdge);
 
-  attachBarDrag(bar, leftEdge, rightEdge, layer);
+  attachClipBarDrag(bar, leftEdge, rightEdge, clip, opts);
   return bar;
+}
+
+// Clip bars are dragged in OUTPUT coordinates (what's on screen) and the
+// result converted back to source time — so a bar dragged up against a cut
+// lands exactly at the cut's edge footage.
+function attachClipBarDrag(bar, leftEdge, rightEdge, clip, opts) {
+  function startDrag(e, mode) {
+    e.stopPropagation();
+    e.preventDefault();
+    opts.onSelect();
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    const outDur = outputDuration();
+    const grabOut = xToOutTime(e.clientX);
+    const dispStartAtGrab = sourceToOutput(clip.start);
+    const dispEndAtGrab = sourceToOutput(clip.end);
+    const startAtGrab = clip.start;
+    const offsetAtGrab = clip.offset || 0;
+    const maxLen = opts.content && clip.duration ? clip.duration - offsetAtGrab : Infinity;
+
+    const clampToFootage = (outT) => {
+      const src = outputToSource(Math.min(outDur, Math.max(0, outT)));
+      return src !== null ? src : null;
+    };
+
+    const onMove = (moveEvent) => {
+      const t = xToOutTime(moveEvent.clientX);
+      if (mode === 'move') {
+        const span = dispEndAtGrab - dispStartAtGrab;
+        const ns = Math.max(0, Math.min(dispStartAtGrab + (t - grabOut), outDur - span));
+        const s = clampToFootage(ns);
+        const en = clampToFootage(ns + span);
+        if (s !== null) clip.start = s;
+        if (en !== null) clip.end = Math.max(en, clip.start + MIN_LAYER_SECONDS / 2);
+      } else if (mode === 'left') {
+        const newDisp = Math.max(0, Math.min(t, sourceToOutput(clip.end) - MIN_LAYER_SECONDS));
+        const s = clampToFootage(newDisp);
+        if (s !== null) {
+          const newStart = Math.min(s, clip.end - MIN_LAYER_SECONDS);
+          if (opts.content) clip.offset = Math.max(0, offsetAtGrab + (newStart - startAtGrab));
+          clip.start = newStart;
+        }
+      } else {
+        const newDisp = Math.min(outDur, Math.max(t, sourceToOutput(clip.start) + MIN_LAYER_SECONDS));
+        const en = clampToFootage(newDisp);
+        if (en !== null) {
+          let newEnd = Math.max(en, clip.start + MIN_LAYER_SECONDS);
+          if (Number.isFinite(maxLen)) newEnd = Math.min(newEnd, clip.start + maxLen);
+          clip.end = newEnd;
+        }
+      }
+      opts.relayout();
+    };
+    const onUp = (upEvent) => {
+      target.releasePointerCapture(upEvent.pointerId);
+      target.removeEventListener('pointermove', onMove);
+      target.removeEventListener('pointerup', onUp);
+      emit(opts.emitEvent);
+    };
+    target.addEventListener('pointermove', onMove);
+    target.addEventListener('pointerup', onUp);
+  }
+
+  bar.addEventListener('pointerdown', (e) => startDrag(e, 'move'));
+  leftEdge.addEventListener('pointerdown', (e) => startDrag(e, 'left'));
+  rightEdge.addEventListener('pointerdown', (e) => startDrag(e, 'right'));
 }
 
 function renderLayerRows() {
@@ -385,15 +500,18 @@ function renderLayerRows() {
   let textCount = 0;
   if (hasSource) {
     for (const layer of state.layers) {
-      const bar = buildLayerBar(layer);
+      const bar = buildClipBar(layer, 'tl-text-bar', layer.text.replace(/\s+/g, ' ').trim() || 'Text', {
+        selected: () => isSelected('layer', layer.id),
+        onSelect: () => selectLayer(layer.id),
+        emitEvent: 'layers',
+        relayout: layoutLayerBars,
+        content: false,
+      });
+      if (layer.group === 'caption') bar.classList.add('caption');
       layerBarEls.set(layer.id, bar);
-      if (layer.group === 'caption') {
-        captionsRow.appendChild(bar);
-        captionCount += 1;
-      } else {
-        textRow.appendChild(bar);
-        textCount += 1;
-      }
+      (layer.group === 'caption' ? captionsRow : textRow).appendChild(bar);
+      if (layer.group === 'caption') captionCount += 1;
+      else textCount += 1;
     }
   }
   setRowVisible(captionsRow, captionCount > 0);
@@ -403,190 +521,44 @@ function renderLayerRows() {
 
 function renderSoundRow() {
   soundRow.innerHTML = '';
-  soundBarEl = null;
-  const show = sourceDuration() > 0 && !!state.sfx;
+  soundBarEls.clear();
+  const show = sourceDuration() > 0 && state.sounds.length > 0;
   setRowVisible(soundRow, show);
   if (!show) return;
-
-  const bar = document.createElement('div');
-  bar.className = 'tl-sound-bar';
-  const label = document.createElement('span');
-  label.className = 'tl-text-label';
-  label.textContent = `🔊 ${state.sfx.label || 'Sound'}`;
-  bar.appendChild(label);
-  attachSoundDrag(bar);
-  soundBarEl = bar;
-  soundRow.appendChild(bar);
-  layoutSoundBar();
-}
-
-// Layer bars are dragged in OUTPUT coordinates (what's on screen) and the
-// result converted back to source time — so a bar dragged up against a
-// cut lands exactly at the cut's edge footage.
-function attachBarDrag(bar, leftEdge, rightEdge, layer) {
-  function startDrag(e, mode) {
-    e.stopPropagation();
-    e.preventDefault();
-    selectLayer(layer.id);
-    const target = e.currentTarget;
-    target.setPointerCapture(e.pointerId);
-    const outDuration = outputDuration();
-    const grabOut = xToOutTime(e.clientX);
-    const dispStartAtGrab = sourceToOutput(layer.start);
-    const dispEndAtGrab = sourceToOutput(layer.end);
-
-    const clampToFootage = (outT) => {
-      const src = outputToSource(Math.min(outDuration, Math.max(0, outT)));
-      return src !== null ? src : null;
-    };
-
-    const onMove = (moveEvent) => {
-      const t = xToOutTime(moveEvent.clientX);
-      if (mode === 'move') {
-        const span = dispEndAtGrab - dispStartAtGrab;
-        let newDispStart = dispStartAtGrab + (t - grabOut);
-        newDispStart = Math.max(0, Math.min(newDispStart, outDuration - span));
-        const s = clampToFootage(newDispStart);
-        const en = clampToFootage(newDispStart + span);
-        if (s !== null) layer.start = s;
-        if (en !== null) layer.end = Math.max(en, layer.start + MIN_LAYER_SECONDS / 2);
-      } else if (mode === 'left') {
-        const newDisp = Math.max(0, Math.min(t, sourceToOutput(layer.end) - MIN_LAYER_SECONDS));
-        const s = clampToFootage(newDisp);
-        if (s !== null) layer.start = Math.min(s, layer.end - MIN_LAYER_SECONDS);
-      } else {
-        const newDisp = Math.min(outDuration, Math.max(t, sourceToOutput(layer.start) + MIN_LAYER_SECONDS));
-        const en = clampToFootage(newDisp);
-        if (en !== null) layer.end = Math.max(en, layer.start + MIN_LAYER_SECONDS);
-      }
-      layoutLayerBars();
-    };
-    const onUp = (upEvent) => {
-      target.releasePointerCapture(upEvent.pointerId);
-      target.removeEventListener('pointermove', onMove);
-      target.removeEventListener('pointerup', onUp);
-      emit('layers');
-    };
-    target.addEventListener('pointermove', onMove);
-    target.addEventListener('pointerup', onUp);
+  for (const s of state.sounds) {
+    const bar = buildClipBar(s, 'tl-sound-bar', `🔊 ${s.label || 'Sound'}`, {
+      selected: () => isSelected('sound', s.id),
+      onSelect: () => selectSound(s.id),
+      emitEvent: 'settings',
+      relayout: layoutSoundBars,
+      content: true,
+    });
+    soundBarEls.set(s.id, bar);
+    soundRow.appendChild(bar);
   }
-
-  bar.addEventListener('pointerdown', (e) => startDrag(e, 'move'));
-  leftEdge.addEventListener('pointerdown', (e) => startDrag(e, 'left'));
-  rightEdge.addEventListener('pointerdown', (e) => startDrag(e, 'right'));
-}
-
-function attachSoundDrag(bar) {
-  bar.addEventListener('pointerdown', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    selectLayer(null);
-    bar.setPointerCapture(e.pointerId);
-    const grabOut = xToOutTime(e.clientX);
-    const dispAtGrab = sourceToOutput(state.sfx.start);
-
-    const onMove = (moveEvent) => {
-      if (!state.sfx) return;
-      const t = xToOutTime(moveEvent.clientX);
-      let newDisp = Math.max(0, Math.min(dispAtGrab + (t - grabOut), Math.max(0, outputDuration() - 0.1)));
-      const src = outputToSource(newDisp);
-      if (src !== null) state.sfx.start = src;
-      layoutSoundBar();
-    };
-    const onUp = (upEvent) => {
-      bar.releasePointerCapture(upEvent.pointerId);
-      bar.removeEventListener('pointermove', onMove);
-      bar.removeEventListener('pointerup', onUp);
-      emit('settings');
-    };
-    bar.addEventListener('pointermove', onMove);
-    bar.addEventListener('pointerup', onUp);
-  });
+  layoutSoundBars();
 }
 
 // --- overlay row ------------------------------------------------------------------
 
 function renderOverlayRow() {
   overlayRow.innerHTML = '';
-  overlayBarEl = null;
-  const show = sourceDuration() > 0 && !!state.overlay;
+  overlayBarEls.clear();
+  const show = sourceDuration() > 0 && state.overlays.length > 0;
   setRowVisible(overlayRow, show);
   if (!show) return;
-
-  const bar = document.createElement('div');
-  bar.className = 'tl-overlay-bar';
-  const label = document.createElement('span');
-  label.className = 'tl-text-label';
-  label.textContent = `🖼 ${state.overlay.isVideo ? 'Video' : 'Image'} overlay`;
-  bar.appendChild(label);
-
-  const leftEdge = document.createElement('div');
-  leftEdge.className = 'tl-text-edge tl-text-edge-left';
-  const rightEdge = document.createElement('div');
-  rightEdge.className = 'tl-text-edge tl-text-edge-right';
-  bar.appendChild(leftEdge);
-  bar.appendChild(rightEdge);
-
-  attachOverlayBarDrag(bar, leftEdge, rightEdge);
-  overlayBarEl = bar;
-  overlayRow.appendChild(bar);
-  layoutOverlayBar();
-}
-
-// Same move/resize gesture as a text bar, but on the single overlay clip.
-// Grabbing it keeps the overlay visible in the preview (setOverlayEditing)
-// so you can see what you're timing.
-function attachOverlayBarDrag(bar, leftEdge, rightEdge) {
-  function startDrag(e, mode) {
-    e.stopPropagation();
-    e.preventDefault();
-    setOverlayEditing(true);
-    const target = e.currentTarget;
-    target.setPointerCapture(e.pointerId);
-    const o = state.overlay;
-    const outDur = outputDuration();
-    const grabOut = xToOutTime(e.clientX);
-    const dispStartAtGrab = sourceToOutput(o.start);
-    const dispEndAtGrab = sourceToOutput(o.end);
-    const clampToFootage = (outT) => {
-      const src = outputToSource(Math.min(outDur, Math.max(0, outT)));
-      return src !== null ? src : null;
-    };
-
-    const onMove = (moveEvent) => {
-      if (!state.overlay) return;
-      const t = xToOutTime(moveEvent.clientX);
-      if (mode === 'move') {
-        const span = dispEndAtGrab - dispStartAtGrab;
-        let ns = Math.max(0, Math.min(dispStartAtGrab + (t - grabOut), outDur - span));
-        const s = clampToFootage(ns);
-        const en = clampToFootage(ns + span);
-        if (s !== null) o.start = s;
-        if (en !== null) o.end = Math.max(en, o.start + MIN_LAYER_SECONDS / 2);
-      } else if (mode === 'left') {
-        const nd = Math.max(0, Math.min(t, sourceToOutput(o.end) - MIN_LAYER_SECONDS));
-        const s = clampToFootage(nd);
-        if (s !== null) o.start = Math.min(s, o.end - MIN_LAYER_SECONDS);
-      } else {
-        const nd = Math.min(outDur, Math.max(t, sourceToOutput(o.start) + MIN_LAYER_SECONDS));
-        const en = clampToFootage(nd);
-        if (en !== null) o.end = Math.max(en, o.start + MIN_LAYER_SECONDS);
-      }
-      layoutOverlayBar();
-    };
-    const onUp = (upEvent) => {
-      target.releasePointerCapture(upEvent.pointerId);
-      target.removeEventListener('pointermove', onMove);
-      target.removeEventListener('pointerup', onUp);
-      emit('settings');
-    };
-    target.addEventListener('pointermove', onMove);
-    target.addEventListener('pointerup', onUp);
+  for (const o of state.overlays) {
+    const bar = buildClipBar(o, 'tl-overlay-bar', `🖼 ${o.isVideo ? 'Video' : 'Image'} overlay`, {
+      selected: () => isSelected('overlay', o.id),
+      onSelect: () => selectOverlay(o.id),
+      emitEvent: 'settings',
+      relayout: layoutOverlayBars,
+      content: o.isVideo,
+    });
+    overlayBarEls.set(o.id, bar);
+    overlayRow.appendChild(bar);
   }
-
-  bar.addEventListener('pointerdown', (e) => startDrag(e, 'move'));
-  leftEdge.addEventListener('pointerdown', (e) => startDrag(e, 'left'));
-  rightEdge.addEventListener('pointerdown', (e) => startDrag(e, 'right'));
+  layoutOverlayBars();
 }
 
 // --- playhead / scrubbing ---------------------------------------------------------
@@ -647,6 +619,8 @@ export function initTimeline() {
   on('selection', () => {
     renderVideoTrack();
     renderLayerRows();
+    renderSoundRow();
+    renderOverlayRow();
     refreshToolbar();
   });
   on('time', updatePlayhead);

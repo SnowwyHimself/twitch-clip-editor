@@ -25,8 +25,16 @@ import {
   sourceDuration,
   addTransitionAfter,
   removeTransition,
+  addOverlay,
+  updateOverlay,
+  removeOverlay,
+  selectedOverlay,
+  addSound,
+  updateSound,
+  removeSound,
+  selectedSound,
 } from './state.js';
-import { setOverlayFile, setOverlayEditing, getCurrentTime, getCurrentOutputTime } from './preview.js';
+import { getCurrentTime, getCurrentOutputTime } from './preview.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile } from './api.js';
 
 const CAPTION_COLORS = [
@@ -145,9 +153,6 @@ export function showTab(which) {
     tab.btn.classList.toggle('active', name === which);
     tab.body.classList.toggle('hidden', name !== which);
   }
-  // While the Overlay tab is open, keep the overlay visible in the preview
-  // regardless of the playhead so it can be positioned and cropped.
-  setOverlayEditing(which === 'overlay');
 }
 
 function activeTab() {
@@ -231,13 +236,25 @@ function wireVideoControls() {
 
 // --- overlay tab --------------------------------------------------------------------
 
-function setOverlay(file) {
-  setOverlayFile(file);
-  els.overlaySizeGroup.classList.toggle('hidden', !file);
-  // A fresh overlay starts uncropped — reset the sliders to match.
+// Adds a new overlay clip from a file (image or video). It's auto-selected
+// (addOverlay selects it) so its size/crop/position controls appear, and
+// the preview builds the element from state.overlays.
+function addOverlayFromFile(file) {
+  if (!file) return;
+  addOverlay({ file, isVideo: file.type.startsWith('video/'), label: file.name });
+  showTab('overlay');
+}
+
+// Fills the overlay controls from the selected overlay (or hides them).
+function refreshOverlayPanel() {
+  const o = selectedOverlay();
+  els.overlaySizeGroup.classList.toggle('hidden', !o);
+  if (!o) return;
+  els.overlaySizeSlider.value = o.sizePercent;
+  els.overlaySizeValue.textContent = `${o.sizePercent}%`;
   for (const key of Object.keys(els.cropSliders)) {
-    els.cropSliders[key].value = 0;
-    els.cropValues[key].textContent = '0%';
+    els.cropSliders[key].value = o[key];
+    els.cropValues[key].textContent = `${o[key]}%`;
   }
 }
 
@@ -258,7 +275,7 @@ async function buildOverlayPresets() {
         ? `<span class="preset-thumb">🎞</span><span>${preset.label}</span>`
         : `<img class="preset-thumb" src="${preset.url}" alt="" /><span>${preset.label}</span>`;
       btn.addEventListener('click', async () => {
-        setOverlay(await presetAsFile(preset));
+        addOverlayFromFile(await presetAsFile(preset));
       });
       els.overlayPresets.appendChild(btn);
     }
@@ -270,84 +287,79 @@ async function buildOverlayPresets() {
 function wireOverlayControls() {
   els.overlayChooseBtn.addEventListener('click', () => els.overlayFile.click());
   els.overlayFile.addEventListener('change', () => {
-    setOverlay(els.overlayFile.files[0] || null);
+    addOverlayFromFile(els.overlayFile.files[0] || null);
+    els.overlayFile.value = '';
   });
   els.overlaySizeSlider.addEventListener('input', () => {
-    if (state.overlay) state.overlay.sizePercent = parseFloat(els.overlaySizeSlider.value);
+    const o = selectedOverlay();
+    if (o) updateOverlay(o.id, { sizePercent: parseFloat(els.overlaySizeSlider.value) });
     els.overlaySizeValue.textContent = `${els.overlaySizeSlider.value}%`;
-    emit('settings');
   });
 
-  // Crop sliders — each trims 0-45% off one edge of the overlay media.
-  // Opposite edges are clamped so they can never remove the whole image.
+  // Crop sliders — each trims 0-45% off one edge of the SELECTED overlay's
+  // media. Opposite edges are clamped so they can never remove the whole
+  // image.
   for (const key of Object.keys(els.cropSliders)) {
     els.cropSliders[key].addEventListener('input', () => {
-      if (!state.overlay) return;
+      const o = selectedOverlay();
+      if (!o) return;
       const opposite = { cropTop: 'cropBottom', cropBottom: 'cropTop', cropLeft: 'cropRight', cropRight: 'cropLeft' }[key];
       let val = parseFloat(els.cropSliders[key].value);
-      const max = 90 - state.overlay[opposite]; // keep at least 10% of the axis
+      const max = 90 - o[opposite]; // keep at least 10% of the axis
       if (val > max) {
         val = max;
         els.cropSliders[key].value = val;
       }
-      state.overlay[key] = val;
+      updateOverlay(o.id, { [key]: val });
       els.cropValues[key].textContent = `${val}%`;
-      emit('settings');
     });
   }
 
   els.overlayRemoveBtn.addEventListener('click', () => {
-    els.overlayFile.value = '';
-    setOverlay(null);
+    const o = selectedOverlay();
+    if (o) removeOverlay(o.id);
   });
 }
 
 // --- sound tab ----------------------------------------------------------------------
 
-let sfxObjectUrl = null; // blob URL for user-picked files, revoked on replace
-
-// The sound effect is a timeline clip: it lands at the playhead when
-// added (drag its bar on the Sound row to move it), and its duration —
-// read from the file's own metadata — sets the bar's length and how long
-// it plays in the preview.
-function setSfx(file, label, url) {
-  if (sfxObjectUrl) {
-    URL.revokeObjectURL(sfxObjectUrl);
-    sfxObjectUrl = null;
-  }
-  if (!file) {
-    state.sfx = null;
-    els.audioVolumeGroup.classList.add('hidden');
-    emit('settings');
-    return;
-  }
-  let audioUrl = url;
-  if (!audioUrl) {
-    audioUrl = URL.createObjectURL(file);
-    sfxObjectUrl = audioUrl;
-  }
-  state.sfx = {
+// Adds a new sound clip at the playhead. Its duration is read from the
+// file's own metadata (sets the bar length + how much plays); it's
+// auto-selected so its volume/remove controls appear.
+function addSoundFromFile(file, label, url) {
+  if (!file) return;
+  const audioUrl = url || URL.createObjectURL(file);
+  const start = getCurrentTime();
+  const sound = addSound({
     file,
     label: label || file.name.replace(/\.[^.]+$/, ''),
     url: audioUrl,
     volumePercent: parseFloat(els.audioVolumeSlider.value),
-    start: getCurrentTime(),
+    start,
+    end: start + 1,
+    offset: 0,
     duration: 1,
-  };
+  });
   const probe = new Audio(audioUrl);
   probe.addEventListener(
     'loadedmetadata',
     () => {
-      if (state.sfx && state.sfx.url === audioUrl) {
-        state.sfx.duration = probe.duration || 1;
-        emit('settings');
-      }
+      const dur = probe.duration || 1;
+      updateSound(sound.id, { duration: dur, end: sound.start + dur });
     },
     { once: true }
   );
-  els.audioVolumeGroup.classList.remove('hidden');
-  els.audioCurrent.textContent = `Added at playhead: ${state.sfx.label} — drag its bar on the timeline to move it.`;
-  emit('settings');
+  showTab('sound');
+}
+
+// Fills the sound controls from the selected sound (or hides them).
+function refreshSoundPanel() {
+  const s = selectedSound();
+  els.audioVolumeGroup.classList.toggle('hidden', !s);
+  if (!s) return;
+  els.audioVolumeSlider.value = s.volumePercent;
+  els.audioVolumeValue.textContent = `${s.volumePercent}%`;
+  els.audioCurrent.textContent = `${s.label} — drag its bar or edges on the timeline; ✂ Split cuts it.`;
 }
 
 async function buildSfxPresets() {
@@ -366,7 +378,7 @@ async function buildSfxPresets() {
       btn.addEventListener('click', async () => {
         // Audible feedback on pick — hearing the effect beats reading its name.
         new Audio(preset.url).play().catch(() => {});
-        setSfx(await presetAsFile(preset), preset.label, preset.url);
+        addSoundFromFile(await presetAsFile(preset), preset.label, preset.url);
       });
       els.sfxPresets.appendChild(btn);
     }
@@ -378,16 +390,17 @@ async function buildSfxPresets() {
 function wireSoundControls() {
   els.soundChooseBtn.addEventListener('click', () => els.audioFile.click());
   els.audioFile.addEventListener('change', () => {
-    const file = els.audioFile.files[0] || null;
-    setSfx(file);
+    addSoundFromFile(els.audioFile.files[0] || null);
+    els.audioFile.value = '';
   });
   els.audioVolumeSlider.addEventListener('input', () => {
-    if (state.sfx) state.sfx.volumePercent = parseFloat(els.audioVolumeSlider.value);
+    const s = selectedSound();
+    if (s) updateSound(s.id, { volumePercent: parseFloat(els.audioVolumeSlider.value) });
     els.audioVolumeValue.textContent = `${els.audioVolumeSlider.value}%`;
   });
   els.audioRemoveBtn.addEventListener('click', () => {
-    els.audioFile.value = '';
-    setSfx(null);
+    const s = selectedSound();
+    if (s) removeSound(s.id);
   });
 }
 
@@ -719,25 +732,36 @@ export function initPanel() {
   buildSfxPresets();
   refreshVideoPanel();
   refreshTextPanel();
+  refreshOverlayPanel();
+  refreshSoundPanel();
   renderTransitionList();
+
+  const tabForKind = { layer: 'text', overlay: 'overlay', sound: 'sound' };
 
   for (const [name, tab] of Object.entries(els.tabs)) {
     tab.btn.addEventListener('click', () => {
-      if (name !== 'text') selectLayer(null);
+      // Switching to a tab that isn't the selected clip's own tab deselects
+      // (Video/Captions/Transitions always do). Text/Overlay/Sound keep a
+      // matching clip selected so its controls stay shown.
+      if (tabForKind[state.sel && state.sel.kind] !== name) selectLayer(null);
       showTab(name);
     });
   }
 
+  // Selecting any clip routes to its tab and fills its controls; deselecting
+  // while on a clip tab backs out to Video.
   on('selection', () => {
-    if (selectedLayer()) {
-      showTab('text');
-    } else if (activeTab() === 'text') {
-      // Deselecting only backs out of the Text tab — it never yanks the
-      // user away from a tab they opened on purpose.
-      showTab('video');
-    }
+    const kind = state.sel && state.sel.kind;
+    if (tabForKind[kind]) showTab(tabForKind[kind]);
+    else if (['text', 'overlay', 'sound'].includes(activeTab())) showTab('video');
     refreshTextPanel();
+    refreshOverlayPanel();
+    refreshSoundPanel();
   });
   on('layers', refreshTextPanel);
+  on('settings', () => {
+    refreshOverlayPanel();
+    refreshSoundPanel();
+  });
   on('segments', renderTransitionList);
 }

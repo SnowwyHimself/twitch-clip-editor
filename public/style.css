@@ -269,14 +269,27 @@ body {
   opacity: 0.8;
 }
 
+/* Container for all overlay elements — above the video, below text (z 3). */
+.preview-overlays {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* individual overlays re-enable it */
+  z-index: 2;
+}
+
 .preview-overlay {
   position: absolute;
   left: 50%;
   top: 50%;
   cursor: grab;
   touch-action: none;
-  z-index: 2; /* above the video, below text/captions (z-index 3) */
+  pointer-events: auto;
   overflow: hidden; /* clips the scaled-up media to the crop region */
+}
+
+.preview-overlay.selected {
+  outline: 1px dashed var(--accent);
+  outline-offset: 1px;
 }
 
 .preview-overlay.dragging {
@@ -1178,17 +1191,47 @@ img.preset-thumb {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 8px;
+  width: 9px;
   cursor: ew-resize;
   touch-action: none;
+  z-index: 2;
+}
+
+/* Visible grip, same as the video pieces' trim handles — makes it obvious
+   the ends of a text / sound / overlay clip are draggable. */
+.tl-text-edge::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.tl-text-bar:hover .tl-text-edge::after,
+.tl-text-bar.selected .tl-text-edge::after,
+.tl-sound-bar:hover .tl-text-edge::after,
+.tl-sound-bar.selected .tl-text-edge::after,
+.tl-overlay-bar:hover .tl-text-edge::after,
+.tl-overlay-bar.selected .tl-text-edge::after {
+  background: rgba(255, 255, 255, 0.95);
 }
 
 .tl-text-edge-left {
   left: 0;
 }
 
+.tl-text-edge-left::after {
+  left: 3px;
+}
+
 .tl-text-edge-right {
   right: 0;
+}
+
+.tl-text-edge-right::after {
+  right: 3px;
 }
 
 .tl-playhead {

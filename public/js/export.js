@@ -91,27 +91,43 @@ function buildFormData() {
       formData.append('transitions', JSON.stringify(transitions));
     }
   }
-  if (state.overlay) {
-    const o = state.overlay;
+  // Overlays — one file per overlay (order matches the `overlays` metadata
+  // array); each carries crop, position, its on-screen window in FINAL
+  // video seconds, and offset (video overlays start `offset` in).
+  const overlays = [];
+  for (const o of state.overlays) {
     formData.append('overlay', o.file);
-    formData.append('overlaySize', o.sizePercent);
-    formData.append('overlayX', o.xPercent);
-    formData.append('overlayY', o.yPercent);
-    formData.append('overlayCropTop', o.cropTop);
-    formData.append('overlayCropBottom', o.cropBottom);
-    formData.append('overlayCropLeft', o.cropLeft);
-    formData.append('overlayCropRight', o.cropRight);
-    // Overlay's on-screen window in the FINAL video's seconds (mapped
-    // across cuts and speed, same as text layers).
-    formData.append('overlayStart', mapToOutput(o.start).toFixed(3));
-    formData.append('overlayEnd', mapToOutput(o.end).toFixed(3));
+    overlays.push({
+      isVideo: o.isVideo,
+      sizePercent: o.sizePercent,
+      xPercent: o.xPercent,
+      yPercent: o.yPercent,
+      cropTop: o.cropTop,
+      cropBottom: o.cropBottom,
+      cropLeft: o.cropLeft,
+      cropRight: o.cropRight,
+      start: Number(mapToOutput(o.start).toFixed(3)),
+      end: Number(mapToOutput(o.end).toFixed(3)),
+      offset: Number((o.offset || 0).toFixed(3)),
+    });
   }
-  if (state.sfx) {
-    formData.append('audioTrack', state.sfx.file);
-    formData.append('audioVolume', state.sfx.volumePercent);
-    // Where the effect starts in the FINAL video's seconds.
-    formData.append('audioDelay', mapToOutput(state.sfx.start).toFixed(3));
+  if (overlays.length > 0) formData.append('overlays', JSON.stringify(overlays));
+
+  // Sounds — one file per sound; each is delayed to its FINAL-video start,
+  // trimmed to the [offset, offset+length] region of its file, and volumed.
+  const sounds = [];
+  for (const s of state.sounds) {
+    formData.append('audioTrack', s.file);
+    const delay = mapToOutput(s.start);
+    const playLen = mapToOutput(s.end) - mapToOutput(s.start);
+    sounds.push({
+      volume: s.volumePercent,
+      delay: Number(delay.toFixed(3)),
+      trimStart: Number((s.offset || 0).toFixed(3)),
+      trimEnd: Number(((s.offset || 0) + playLen).toFixed(3)),
+    });
   }
+  if (sounds.length > 0) formData.append('sounds', JSON.stringify(sounds));
 
   let endpoint;
   if (state.source.kind === 'url') {

@@ -32,7 +32,12 @@ export const state = {
   // nothing is ever destroyed), outStart is the piece's position on the
   // output timeline.
   segments: [],
-  selectedSegmentId: null,
+
+  // Single selection across every clip kind: { kind, id } | null, where
+  // kind is 'segment' | 'layer' | 'sound' | 'overlay'. One field so the
+  // Split/Delete buttons and the panel can act on whatever's selected,
+  // regardless of type.
+  sel: null,
 
   // 'snap' (CapCut): pieces always close up, deletes ripple. 'free'
   // (Premiere): pieces sit wherever they're dropped; output gaps play as
@@ -47,7 +52,6 @@ export const state = {
   // by Auto captions carry group:'caption' so the Captions tab can style
   // and regenerate them as a set; hand-made layers have group:null.
   layers: [],
-  selectedId: null,
 
   // The Captions tab's shared settings, applied to every group:'caption'
   // layer at once (like CapCut/TikTok's caption styling, which styles the
@@ -62,18 +66,21 @@ export const state = {
     yPercent: 75,
   },
 
-  // Optional extras
-  // Media overlay as a timeline clip (its own row): start/end are SOURCE
-  // seconds (like text layers — when it's on screen), crop* are 0-45%
-  // trimmed off each edge of the media itself, and it renders ABOVE the
-  // video in the preview. A video overlay plays/pauses in sync with the
-  // editor while inside its range.
-  // { file, isVideo, sizePercent, xPercent, yPercent, cropTop, cropBottom,
-  //   cropLeft, cropRight, start, end }
-  overlay: null,
-  // Sound effect as a timeline clip: start is SOURCE seconds (it rides
-  // the footage like text layers do), duration comes from the file.
-  sfx: null, // { file, label, url, volumePercent, start, duration }
+  // Media overlays — each its own clip on the Overlay row (create/delete/
+  // split individually, like text). start/end are SOURCE seconds (when
+  // it's on screen), offset is how far into the media the clip starts
+  // (matters for split — the right half continues the video), crop* are
+  // 0-45% off each edge of the media, and they render ABOVE the video. A
+  // video overlay plays/pauses in sync with the editor while in range.
+  // { id, file, isVideo, url, sizePercent, xPercent, yPercent, cropTop,
+  //   cropBottom, cropLeft, cropRight, start, end, offset, duration }
+  overlays: [],
+  // Sound clips — each its own clip on the Sound row (create/delete/split
+  // individually). start/end are SOURCE seconds (timeline placement),
+  // offset is how far into the audio file the clip begins, duration is the
+  // file's length. { id, file, label, url, volumePercent, start, end,
+  //   offset, duration }
+  sounds: [],
 
   // Server-provided option lists, loaded once at boot
   fonts: [],
@@ -201,13 +208,9 @@ function newSegment(start, end, outStart) {
 export function resetSegments() {
   const duration = sourceDuration();
   state.segments = duration > 0 ? [newSegment(0, duration, 0)] : [];
-  state.selectedSegmentId = null;
+  state.sel = null;
   state.transitions = [];
   emit('segments');
-}
-
-export function selectedSegment() {
-  return state.segments.find((s) => s.id === state.selectedSegmentId) || null;
 }
 
 // Splits whichever piece contains this SOURCE time into two touching
@@ -242,10 +245,7 @@ export function removeSegment(id) {
   state.segments.splice(idx, 1);
   state.transitions = state.transitions.filter((tr) => tr.afterSegmentId !== id);
   if (state.timelineMode === 'snap') normalizeOutStarts();
-  if (state.selectedSegmentId === id) {
-    state.selectedSegmentId = null;
-    emit('selection');
-  }
+  if (isSelected('segment', id)) clearSelection();
   emit('segments');
 }
 
@@ -281,26 +281,52 @@ export function transitionAfter(segmentId) {
 }
 
 // --- selection -------------------------------------------------------------------
+// One selection across all clip kinds (only one thing is ever selected).
+// isSelected(kind, id) is the highlight check; the typed selectX/selectedX
+// wrappers keep call sites readable.
+
+export function select(kind, id) {
+  if (id == null) return clearSelection();
+  if (state.sel && state.sel.kind === kind && state.sel.id === id) return;
+  state.sel = { kind, id };
+  emit('selection');
+}
+
+export function clearSelection() {
+  if (!state.sel) return;
+  state.sel = null;
+  emit('selection');
+}
+
+export function isSelected(kind, id) {
+  return !!state.sel && state.sel.kind === kind && state.sel.id === id;
+}
+
+export function selectLayer(id) {
+  if (id == null) clearSelection();
+  else select('layer', id);
+}
+export function selectSegment(id) {
+  select('segment', id);
+}
+export function selectSound(id) {
+  select('sound', id);
+}
+export function selectOverlay(id) {
+  select('overlay', id);
+}
 
 export function selectedLayer() {
-  return state.layers.find((l) => l.id === state.selectedId) || null;
+  return state.sel && state.sel.kind === 'layer' ? state.layers.find((l) => l.id === state.sel.id) || null : null;
 }
-
-// Layer and segment selection are one shared concept (like any editor's
-// single selection): picking one always clears the other, and
-// selectLayer(null) deselects everything.
-export function selectLayer(id) {
-  if (state.selectedId === id && state.selectedSegmentId === null) return;
-  state.selectedId = id;
-  state.selectedSegmentId = null;
-  emit('selection');
+export function selectedSegment() {
+  return state.sel && state.sel.kind === 'segment' ? state.segments.find((s) => s.id === state.sel.id) || null : null;
 }
-
-export function selectSegment(id) {
-  if (state.selectedSegmentId === id && state.selectedId === null) return;
-  state.selectedSegmentId = id;
-  state.selectedId = null;
-  emit('selection');
+export function selectedSound() {
+  return state.sel && state.sel.kind === 'sound' ? state.sounds.find((s) => s.id === state.sel.id) || null : null;
+}
+export function selectedOverlay() {
+  return state.sel && state.sel.kind === 'overlay' ? state.overlays.find((o) => o.id === state.sel.id) || null : null;
 }
 
 // --- text layers ------------------------------------------------------------------
@@ -340,11 +366,21 @@ export function removeLayer(id) {
   const idx = state.layers.findIndex((l) => l.id === id);
   if (idx === -1) return;
   state.layers.splice(idx, 1);
-  if (state.selectedId === id) {
-    state.selectedId = null;
-    emit('selection');
-  }
+  if (isSelected('layer', id)) clearSelection();
   emit('layers');
+}
+
+// Splits a text layer into two at a SOURCE time — the two halves are
+// independent layers with identical styling. Returns the new right half.
+export function splitLayerAt(id, srcTime) {
+  const layer = state.layers.find((l) => l.id === id);
+  if (!layer) return null;
+  if (srcTime <= layer.start + MIN_LAYER_SECONDS || srcTime >= layer.end - MIN_LAYER_SECONDS) return null;
+  const right = { ...layer, id: `layer-${Date.now()}-${layerCounter++}`, start: srcTime };
+  layer.end = srcTime;
+  state.layers.splice(state.layers.indexOf(layer) + 1, 0, right);
+  emit('layers');
+  return right;
 }
 
 export function captionLayers() {
@@ -353,12 +389,130 @@ export function captionLayers() {
 
 export function removeCaptionLayers() {
   if (captionLayers().length === 0) return;
-  if (state.layers.find((l) => l.id === state.selectedId && l.group === 'caption')) {
-    state.selectedId = null;
-    emit('selection');
-  }
+  const sel = selectedLayer();
+  if (sel && sel.group === 'caption') clearSelection();
   state.layers = state.layers.filter((l) => l.group !== 'caption');
   emit('layers');
+}
+
+// --- sounds -----------------------------------------------------------------------
+// Sounds/overlays hold File objects, so they stay OUT of undo history and
+// ride the 'settings' event (same as when each was a single item).
+
+let soundCounter = 0;
+
+export function addSound(partial = {}, { select: doSelect = true } = {}) {
+  const sound = {
+    id: `sound-${Date.now()}-${soundCounter++}`,
+    file: null,
+    label: 'Sound',
+    url: null,
+    volumePercent: 80,
+    start: 0,
+    end: 1,
+    offset: 0,
+    duration: 1,
+    ...partial,
+  };
+  state.sounds.push(sound);
+  emit('settings');
+  if (doSelect) selectSound(sound.id);
+  return sound;
+}
+
+export function updateSound(id, patch) {
+  const s = state.sounds.find((x) => x.id === id);
+  if (!s) return;
+  Object.assign(s, patch);
+  emit('settings');
+}
+
+export function removeSound(id) {
+  const i = state.sounds.findIndex((s) => s.id === id);
+  if (i === -1) return;
+  state.sounds.splice(i, 1);
+  if (isSelected('sound', id)) clearSelection();
+  emit('settings');
+}
+
+// Split at a SOURCE time — the right half continues the audio (its offset
+// advances so it plays where the left half left off).
+export function splitSoundAt(id, srcTime) {
+  const s = state.sounds.find((x) => x.id === id);
+  if (!s) return null;
+  if (srcTime <= s.start + MIN_LAYER_SECONDS || srcTime >= s.end - MIN_LAYER_SECONDS) return null;
+  const right = {
+    ...s,
+    id: `sound-${Date.now()}-${soundCounter++}`,
+    start: srcTime,
+    offset: s.offset + (srcTime - s.start),
+  };
+  s.end = srcTime;
+  state.sounds.splice(state.sounds.indexOf(s) + 1, 0, right);
+  emit('settings');
+  return right;
+}
+
+// --- overlays ---------------------------------------------------------------------
+
+let overlayCounter = 0;
+
+export function addOverlay(partial = {}, { select: doSelect = true } = {}) {
+  const duration = sourceDuration();
+  const o = {
+    id: `ovl-${Date.now()}-${overlayCounter++}`,
+    file: null,
+    isVideo: false,
+    url: null,
+    sizePercent: 35,
+    xPercent: 50,
+    yPercent: 50,
+    cropTop: 0,
+    cropBottom: 0,
+    cropLeft: 0,
+    cropRight: 0,
+    start: 0,
+    end: duration > 0 ? duration : 5,
+    offset: 0,
+    duration: 0,
+    ...partial,
+  };
+  state.overlays.push(o);
+  emit('settings');
+  if (doSelect) selectOverlay(o.id);
+  return o;
+}
+
+export function updateOverlay(id, patch) {
+  const o = state.overlays.find((x) => x.id === id);
+  if (!o) return;
+  Object.assign(o, patch);
+  emit('settings');
+}
+
+export function removeOverlay(id) {
+  const i = state.overlays.findIndex((o) => o.id === id);
+  if (i === -1) return;
+  state.overlays.splice(i, 1);
+  if (isSelected('overlay', id)) clearSelection();
+  emit('settings');
+}
+
+export function splitOverlayAt(id, srcTime) {
+  const o = state.overlays.find((x) => x.id === id);
+  if (!o) return null;
+  if (srcTime <= o.start + MIN_LAYER_SECONDS || srcTime >= o.end - MIN_LAYER_SECONDS) return null;
+  const right = {
+    ...o,
+    id: `ovl-${Date.now()}-${overlayCounter++}`,
+    start: srcTime,
+    // A video overlay continues playing where the left half stopped.
+    offset: o.isVideo ? o.offset + (srcTime - o.start) : o.offset,
+  };
+  o.end = srcTime;
+  state.overlays.splice(state.overlays.indexOf(o) + 1, 0, right);
+  emit('settings');
+  return right;
 }
 
 // Pushes the Captions tab's shared style onto every caption layer at once.
@@ -437,8 +591,7 @@ function restoreSnapshot(snap) {
     state.timelineMode = data.timelineMode;
     state.transitions = data.transitions;
     state.layers = data.layers;
-    state.selectedSegmentId = null;
-    state.selectedId = null;
+    state.sel = null;
     emit('selection');
     emit('segments');
     emit('layers');
