@@ -826,6 +826,81 @@ img.preset-thumb {
   width: 100%;
 }
 
+/* Presets (Video tab) */
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.preset-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.preset-star {
+  flex-shrink: 0;
+  width: 30px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.preset-star.on {
+  color: #ffd24a;
+  border-color: #ffd24a;
+}
+
+.preset-apply {
+  flex: 1;
+  text-align: left;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preset-apply:hover {
+  border-color: var(--accent);
+}
+
+.preset-del {
+  flex-shrink: 0;
+  width: 30px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.preset-del:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.preset-save-row {
+  display: flex;
+  gap: 6px;
+}
+
+.preset-save-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 .captions-generate {
   width: 100%;
 }

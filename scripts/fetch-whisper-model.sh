@@ -17,7 +17,21 @@ if [ -f "$DEST" ]; then
 fi
 
 mkdir -p "$MODELS_DIR"
-echo "Downloading $MODEL_NAME (~148MB for base.en)..."
-curl -L --fail --progress-bar -o "$DEST.tmp" "$URL"
-mv "$DEST.tmp" "$DEST"
-echo "Done: $DEST"
+if [ ! -f "$DEST" ]; then
+  echo "Downloading $MODEL_NAME (~148MB for base.en)..."
+  curl -L --fail --progress-bar -o "$DEST.tmp" "$URL"
+  mv "$DEST.tmp" "$DEST"
+  echo "Done: $DEST"
+fi
+
+# Silero VAD model (~0.9MB) — enables Voice Activity Detection so noisy
+# clips transcribe far better (see transcribe.js). Optional; skipped
+# silently if the download fails.
+VAD_NAME="ggml-silero-v5.1.2.bin"
+VAD_DEST="$MODELS_DIR/$VAD_NAME"
+if [ ! -f "$VAD_DEST" ]; then
+  echo "Downloading VAD model ($VAD_NAME)..."
+  curl -L --fail -o "$VAD_DEST.tmp" "https://huggingface.co/ggml-org/whisper-vad/resolve/main/$VAD_NAME" \
+    && mv "$VAD_DEST.tmp" "$VAD_DEST" && echo "Done: $VAD_DEST" \
+    || { echo "VAD model download failed — auto-captions still work, just without VAD."; rm -f "$VAD_DEST.tmp"; }
+fi

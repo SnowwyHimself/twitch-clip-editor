@@ -66,18 +66,38 @@
 
       <div id="panel-video" class="panel-body">
         <div class="field-group">
+          <label class="field-label">Presets</label>
+          <div id="preset-list" class="preset-list"></div>
+          <div class="preset-save-row">
+            <input id="preset-name" type="text" maxlength="24" placeholder="Name a preset…" />
+            <button type="button" id="preset-save-btn" class="secondary-btn">Save</button>
+          </div>
+          <p class="field-hint">Saves the current video settings (up to 3). The ★ one auto-applies when you load a clip.</p>
+        </div>
+
+        <div class="field-group">
           <label class="field-label">Aspect ratio</label>
           <div id="aspect-ratio-group" class="toggle-group aspect-ratio-group"></div>
         </div>
 
         <div class="field-group">
-          <label class="field-label" for="zoom-slider">Zoom <span id="zoom-value">135%</span></label>
-          <input id="zoom-slider" type="range" min="100" max="200" value="135" step="1" />
+          <label class="field-label" for="zoom-slider">Zoom <span id="zoom-value">100%</span></label>
+          <input id="zoom-slider" type="range" min="100" max="200" value="100" step="1" />
         </div>
 
         <div class="field-group">
-          <label class="field-label" for="blur-slider">Background blur <span id="blur-value">20%</span></label>
-          <input id="blur-slider" type="range" min="0" max="100" value="20" step="1" />
+          <label class="field-label" for="blur-slider">Background blur <span id="blur-value">0%</span></label>
+          <input id="blur-slider" type="range" min="0" max="100" value="0" step="1" />
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="pan-x-slider">Position X <span id="pan-x-value">0</span></label>
+          <input id="pan-x-slider" type="range" min="-100" max="100" value="0" step="1" />
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="pan-y-slider">Position Y <span id="pan-y-value">0</span></label>
+          <input id="pan-y-slider" type="range" min="-100" max="100" value="0" step="1" />
         </div>
 
         <div class="field-group">
@@ -109,6 +129,12 @@
         <div class="field-group">
           <button type="button" id="captions-generate-btn" class="primary-btn captions-generate">Generate captions</button>
           <p class="field-hint" id="captions-status">Transcribes the clip's audio locally with Whisper.</p>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="cap-timing-slider">Timing nudge <span id="cap-timing-value">+0.15s</span></label>
+          <input id="cap-timing-slider" type="range" min="-0.5" max="0.5" value="0.15" step="0.05" />
+          <p class="field-hint">Shifts all captions later (+) or earlier (−). Whisper often runs a touch early, especially on noisy clips.</p>
         </div>
 
         <div class="field-group">

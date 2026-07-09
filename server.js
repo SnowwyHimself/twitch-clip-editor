@@ -112,8 +112,15 @@ function clampZoom(value) {
 
 function clampBlur(value) {
   const blur = parseFloat(value);
-  if (Number.isNaN(blur)) return 20;
+  if (Number.isNaN(blur)) return 0;
   return Math.min(MAX_BLUR, Math.max(MIN_BLUR, blur));
+}
+
+// Main-clip pan, -100..100 (% of half the canvas; 0 = centered).
+function clampPan(value) {
+  const pan = parseFloat(value);
+  if (Number.isNaN(pan)) return 0;
+  return Math.min(100, Math.max(-100, pan));
 }
 
 function clampSpeed(value) {
@@ -387,22 +394,28 @@ function buildSourcePrefix(sourceLabel, speed, mirror, consumerCount) {
 // after segment trims and speed changes — which is exactly the domain the
 // frontend maps layer times into before submitting (see export payload
 // notes in public/js/export.js).
-function buildFilterComplex(canvasW, canvasH, zoom, blur, overlayStages, mirror, speed, sourceLabel) {
+function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel) {
   const fgWidth = Math.round((canvasW * zoom) / 2) * 2;
   const fgChain = `scale=${fgWidth}:-2,crop=${canvasW}:ih:(iw-${canvasW})/2:0`;
 
-  let graph;
-  if (blur <= 0) {
-    const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 1);
-    graph = `${stage}${labels[0]}${fgChain},pad=${canvasW}:${canvasH}:0:(${canvasH}-ih)/2:color=black[c0]`;
-  } else {
-    const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 2);
-    const [bgSource, fgSource] = labels;
-    const bg = `${bgSource}scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase,crop=${canvasW}:${canvasH},gblur=sigma=${blur}[bg]`;
-    const fg = `${fgSource}${fgChain}[fg]`;
-    const overlay = `[bg][fg]overlay=(W-w)/2:(H-h)/2[c0]`;
-    graph = `${stage}${bg};${fg};${overlay}`;
-  }
+  // pan moves the sharp foreground over the background, in canvas pixels
+  // (panX/panY are % of half the canvas; 0 = centered). Both blur>0 and
+  // blur=0 now composite via overlay on a full-canvas background (blurred,
+  // or a black frame DERIVED FROM THE SOURCE via drawbox — never a `color`
+  // filter source, whose fps/timebase mismatch makes concat/overlay
+  // misbehave) so panning works identically at any blur.
+  const panXpx = Math.round((panX / 100) * (canvasW / 2));
+  const panYpx = Math.round((panY / 100) * (canvasH / 2));
+  const panXExpr = panXpx !== 0 ? `+(${panXpx})` : '';
+  const panYExpr = panYpx !== 0 ? `+(${panYpx})` : '';
+
+  const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 2);
+  const [bgSource, fgSource] = labels;
+  const bgFill = blur > 0 ? `gblur=sigma=${blur}` : `drawbox=color=black:t=fill`;
+  const bg = `${bgSource}scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase,crop=${canvasW}:${canvasH},${bgFill}[bg]`;
+  const fg = `${fgSource}${fgChain}[fg]`;
+  const overlay = `[bg][fg]overlay=(W-w)/2${panXExpr}:(H-h)/2${panYExpr}[c0]`;
+  let graph = `${stage}${bg};${fg};${overlay}`;
 
   let current = '[c0]';
   overlayStages.forEach((stage, i) => {
@@ -498,7 +511,7 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, onProgress) {
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
   // straight [0:v]/[0:a]. A single kept range starting at output 0 (the
@@ -588,7 +601,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, ca
 
   let filterComplex =
     segmentPrefix +
-    buildFilterComplex(canvasW, canvasH, zoom, blur, overlayStages, mirror, speed, sourceVideoLabel);
+    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel);
 
   // atempo only accepts 0.5-2.0 per instance, which matches the slider's
   // own range exactly, so a single atempo call always suffices — no need
@@ -856,7 +869,7 @@ function buildSection(body) {
   return { start, end };
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -888,7 +901,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -903,7 +916,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -911,7 +924,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -1032,6 +1045,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     normalizeAspectRatio(req.body.aspectRatio),
     clampZoom(zoom),
     clampBlur(blur),
+    clampPan(req.body.panX),
+    clampPan(req.body.panY),
     buildTextLayers(req.body || {}),
     normalizeMirror(mirror),
     clampSpeed(speed),
@@ -1063,6 +1078,8 @@ app.post(
       normalizeAspectRatio(req.body.aspectRatio),
       clampZoom(req.body.zoom),
       clampBlur(req.body.blur),
+      clampPan(req.body.panX),
+      clampPan(req.body.panY),
       buildTextLayers(req.body),
       normalizeMirror(req.body.mirror),
       clampSpeed(req.body.speed),

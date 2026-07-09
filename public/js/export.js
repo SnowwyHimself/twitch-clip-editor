@@ -68,6 +68,8 @@ function buildFormData() {
   formData.append('aspectRatio', state.aspect.id);
   formData.append('zoom', state.zoom);
   formData.append('blur', state.blur);
+  formData.append('panX', state.panX);
+  formData.append('panY', state.panY);
   formData.append('mirror', state.mirror);
   formData.append('speed', state.speed);
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));

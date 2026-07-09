@@ -847,7 +847,14 @@ export function setPlaceholder(text) {
 // --- global refresh -------------------------------------------------------------
 
 function updateAll() {
-  fgVideo.style.transform = `scale(${(state.mirror ? -1 : 1) * state.zoom}, ${state.zoom})`;
+  // Pan translates the foreground clip over the (blurred/black) background,
+  // in frame pixels: panX/panY are % of half the frame. The translate is
+  // listed before scale so it's applied in unmirrored frame space (a
+  // negative-x mirror scale never flips the pan direction).
+  const { width: frameW, height: frameH } = frameSize();
+  const tx = (state.panX / 100) * (frameW / 2);
+  const ty = (state.panY / 100) * (frameH / 2);
+  fgVideo.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${(state.mirror ? -1 : 1) * state.zoom}, ${state.zoom})`;
   bgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
 
   if (state.blur > 0) {

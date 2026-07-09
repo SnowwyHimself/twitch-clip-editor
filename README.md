@@ -140,8 +140,13 @@ electron-builder's bundled NSIS installer tool is Intel-only.
    open the **Captions** tab. Pick a mode — **Word by word** (each word
    appears exactly as it's spoken, TikTok-style; the default) or **Short
    lines** — and hit **Generate**: the clip's audio is transcribed
-   locally with whisper.cpp (DTW token alignment for tight sync) and each
-   block becomes a text layer on the timeline. The tab's style controls
+   locally with whisper.cpp (DTW token alignment for tight sync, plus
+   **Voice Activity Detection** when the silero VAD model is present — it
+   skips wind/background noise, which is the main cause of bad timing on
+   noisy clips) and each block becomes a text layer on the timeline. A
+   **Timing nudge** slider shifts every caption later (+) or earlier (−)
+   if they're consistently off — whisper tends to run a touch early, so it
+   defaults to +0.15s. The tab's style controls
    (style/font/color/size/shadow/vertical position) restyle **all**
    caption blocks at once, like CapCut's caption styling; select a single
    block to fine-tune it in the Text tab. Regenerating replaces the
@@ -168,9 +173,13 @@ electron-builder's bundled NSIS installer tool is Intel-only.
 7. **Video settings** (right panel, **Video** tab — also shown whenever
    nothing is selected): **aspect ratio** (9:16 default), **zoom**
    (100–200%, how tightly the clip is cropped), **background blur**
-   (0–100%; at 0% there's no blur layer at all, just black letterboxing),
+   (0–100%; at 0% the leftover space is plain black), **Position X / Y**
+   (move the main clip left/right and up/down over the background),
    **speed** (0.5x–2x; audio pitch stays natural), and **mirror**
    (flips the footage horizontally — text layers are never mirrored).
+   Everything starts neutral (zoom 100%, no blur, no pan). Save up to
+   **3 named presets** of these settings; ★ one and it auto-applies every
+   time you load a clip, so imported clips land in your template.
 8. **Export**: click **Export** in the top bar. A progress bar tracks the
    render (real ffmpeg progress, not a spinner); when it's done, preview
    the result inline and click **Download**.

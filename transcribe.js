@@ -76,20 +76,44 @@ function resolveWhisperBinary(resourcesDir) {
 // user's models dir is checked first (a model they dropped there wins),
 // then the app's bundled resources/models (the packaged desktop app ships
 // ggml-base.en.bin there, so auto-captions works with no extra install).
+function modelDirs({ modelsDir, resourcesDir }) {
+  const dirs = [modelsDir];
+  if (resourcesDir) dirs.push(path.join(resourcesDir, 'models'));
+  return dirs;
+}
+
 function resolveModelPath({ modelsDir, resourcesDir }) {
   const fromEnv = process.env[MODEL_ENV];
   if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
-  const dirs = [modelsDir];
-  if (resourcesDir) dirs.push(path.join(resourcesDir, 'models'));
-  for (const dir of dirs) {
+  for (const dir of modelDirs({ modelsDir, resourcesDir })) {
     let entries;
     try {
       entries = fs.readdirSync(dir);
     } catch {
       continue;
     }
-    const model = entries.find((name) => /^ggml-.*\.bin$/.test(name));
+    // Any ggml-*.bin EXCEPT the silero VAD model (which lives in the same
+    // dir and matches the same pattern) — so base.en/small.en/etc. resolve,
+    // never the VAD file.
+    const model = entries.find((name) => /^ggml-.*\.bin$/.test(name) && !/silero|vad/i.test(name));
     if (model) return path.join(dir, model);
+  }
+  return null;
+}
+
+// The silero VAD model (optional). When present, transcription runs with
+// Voice Activity Detection, which isolates speech and skips wind/background
+// noise — big accuracy + timing win on noisy clips.
+function resolveVadModelPath({ modelsDir, resourcesDir }) {
+  for (const dir of modelDirs({ modelsDir, resourcesDir })) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    const vad = entries.find((name) => /silero|vad/i.test(name) && /\.bin$/.test(name));
+    if (vad) return path.join(dir, vad);
   }
   return null;
 }
@@ -155,6 +179,15 @@ async function transcribeSource(inputPath, { ffmpegBin, resourcesDir, modelsDir,
     ];
     const dtwType = dtwTypeFromModelPath(setup.model);
     if (dtwType) args.push('--dtw', dtwType);
+
+    // Voice Activity Detection when the silero model is available — isolates
+    // speech and skips wind/background noise, which is the main cause of bad
+    // timing/accuracy on noisy clips. A little speech padding avoids clipping
+    // word onsets.
+    const vadModel = resolveVadModelPath({ resourcesDir, modelsDir });
+    if (vadModel) {
+      args.push('--vad', '--vad-model', vadModel, '--vad-speech-pad-ms', '48');
+    }
     await runCommand(setup.binary, args);
 
     const parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));

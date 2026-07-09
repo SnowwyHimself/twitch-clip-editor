@@ -21,6 +21,7 @@ import {
   addTextLayer,
   removeCaptionLayers,
   applyCaptionStyle,
+  applyCaptionTiming,
   defaultFontId,
   sourceDuration,
   addTransitionAfter,
@@ -83,9 +84,16 @@ function lookupElements() {
     zoomValue: byId('zoom-value'),
     blurSlider: byId('blur-slider'),
     blurValue: byId('blur-value'),
+    panXSlider: byId('pan-x-slider'),
+    panXValue: byId('pan-x-value'),
+    panYSlider: byId('pan-y-slider'),
+    panYValue: byId('pan-y-value'),
     speedSlider: byId('speed-slider'),
     speedValue: byId('speed-value'),
     mirrorToggle: byId('mirror-toggle'),
+    presetList: byId('preset-list'),
+    presetName: byId('preset-name'),
+    presetSaveBtn: byId('preset-save-btn'),
     // Overlay tab
     overlayFile: byId('overlay-file'),
     overlayChooseBtn: byId('overlay-choose-btn'),
@@ -143,6 +151,8 @@ function lookupElements() {
     capShadowToggle: byId('cap-shadow-toggle'),
     capYSlider: byId('cap-y-slider'),
     capYValue: byId('cap-y-value'),
+    capTimingSlider: byId('cap-timing-slider'),
+    capTimingValue: byId('cap-timing-value'),
   };
 }
 
@@ -223,6 +233,16 @@ function wireVideoControls() {
     els.blurValue.textContent = `${els.blurSlider.value}%`;
     emit('settings');
   });
+  els.panXSlider.addEventListener('input', () => {
+    state.panX = parseFloat(els.panXSlider.value);
+    els.panXValue.textContent = els.panXSlider.value;
+    emit('settings');
+  });
+  els.panYSlider.addEventListener('input', () => {
+    state.panY = parseFloat(els.panYSlider.value);
+    els.panYValue.textContent = els.panYSlider.value;
+    emit('settings');
+  });
   els.speedSlider.addEventListener('input', () => {
     state.speed = parseFloat(els.speedSlider.value);
     els.speedValue.textContent = `${state.speed.toFixed(2)}x`;
@@ -232,6 +252,133 @@ function wireVideoControls() {
     state.mirror = els.mirrorToggle.checked;
     emit('settings');
   });
+  wirePresets();
+}
+
+// --- presets (up to 3, saved in localStorage) ---------------------------------------
+// A preset captures the video settings (aspect/zoom/blur/pan/speed/mirror).
+// The one flagged default (★) is auto-applied whenever a clip loads, so an
+// imported clip lands in the user's template. Nothing here is per-clip.
+
+const PRESETS_KEY = 'clipEditor.presets.v1';
+const DEFAULT_PRESET_KEY = 'clipEditor.defaultPreset.v1';
+
+function loadPresets() {
+  try {
+    return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function savePresets(list) {
+  localStorage.setItem(PRESETS_KEY, JSON.stringify(list));
+}
+
+function getDefaultPresetId() {
+  return localStorage.getItem(DEFAULT_PRESET_KEY) || null;
+}
+
+function currentVideoSettings() {
+  return {
+    aspect: { ...state.aspect },
+    zoom: state.zoom,
+    blur: state.blur,
+    panX: state.panX,
+    panY: state.panY,
+    speed: state.speed,
+    mirror: state.mirror,
+  };
+}
+
+export function applyPresetSettings(s) {
+  if (!s) return;
+  if (s.aspect) state.aspect = { ...s.aspect };
+  if (Number.isFinite(s.zoom)) state.zoom = s.zoom;
+  if (Number.isFinite(s.blur)) state.blur = s.blur;
+  if (Number.isFinite(s.panX)) state.panX = s.panX;
+  if (Number.isFinite(s.panY)) state.panY = s.panY;
+  if (Number.isFinite(s.speed)) state.speed = s.speed;
+  if (typeof s.mirror === 'boolean') state.mirror = s.mirror;
+  buildAspectButtons();
+  refreshVideoPanel();
+  emit('settings');
+}
+
+// The default preset, applied on clip import (main.js calls this).
+export function activePresetSettings() {
+  const id = getDefaultPresetId();
+  return loadPresets().find((p) => p.id === id)?.settings || null;
+}
+
+function renderPresetList() {
+  els.presetList.innerHTML = '';
+  const presets = loadPresets();
+  const defId = getDefaultPresetId();
+  if (presets.length === 0) {
+    els.presetList.innerHTML = '<p class="field-hint">No presets saved yet.</p>';
+  }
+  for (const p of presets) {
+    const row = document.createElement('div');
+    row.className = 'preset-row';
+
+    const star = document.createElement('button');
+    star.type = 'button';
+    star.className = 'preset-star' + (p.id === defId ? ' on' : '');
+    star.textContent = p.id === defId ? '★' : '☆';
+    star.title = 'Auto-apply this preset when a clip loads';
+    star.addEventListener('click', () => {
+      localStorage.setItem(DEFAULT_PRESET_KEY, p.id === defId ? '' : p.id);
+      renderPresetList();
+    });
+
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.className = 'preset-apply';
+    name.textContent = p.name;
+    name.title = 'Apply this preset';
+    name.addEventListener('click', () => applyPresetSettings(p.settings));
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'preset-del';
+    del.textContent = '✕';
+    del.title = 'Delete preset';
+    del.addEventListener('click', () => {
+      savePresets(loadPresets().filter((x) => x.id !== p.id));
+      if (defId === p.id) localStorage.setItem(DEFAULT_PRESET_KEY, '');
+      renderPresetList();
+    });
+
+    row.append(star, name, del);
+    els.presetList.appendChild(row);
+  }
+}
+
+function wirePresets() {
+  const save = () => {
+    const name = els.presetName.value.trim();
+    if (!name) return;
+    const presets = loadPresets();
+    const existing = presets.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      existing.settings = currentVideoSettings();
+    } else {
+      if (presets.length >= 3) {
+        els.presetName.placeholder = 'Max 3 — delete one first';
+        return;
+      }
+      presets.push({ id: `p-${Date.now()}`, name, settings: currentVideoSettings() });
+    }
+    savePresets(presets);
+    els.presetName.value = '';
+    renderPresetList();
+  };
+  els.presetSaveBtn.addEventListener('click', save);
+  els.presetName.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save();
+  });
+  renderPresetList();
 }
 
 // --- overlay tab --------------------------------------------------------------------
@@ -496,7 +643,9 @@ async function generateCaptions() {
     // layers (group:null) are never touched.
     removeCaptionLayers();
     const s = state.captionSettings;
+    const offset = s.timingOffset || 0;
     for (const seg of segments) {
+      const start = Math.max(0, seg.start + offset);
       addTextLayer(
         {
           text: seg.text,
@@ -507,8 +656,12 @@ async function generateCaptions() {
           dropShadow: s.dropShadow,
           xPercent: 50,
           yPercent: s.yPercent,
-          start: seg.start,
-          end: seg.end,
+          start,
+          end: start + (seg.end - seg.start),
+          // Untouched whisper times, so the timing-nudge slider can always
+          // re-derive from the original (see applyCaptionTiming).
+          baseStart: seg.start,
+          baseEnd: seg.end,
           group: 'caption',
         },
         { select: false }
@@ -568,6 +721,13 @@ function wireCaptionControls() {
     state.captionSettings.yPercent = parseFloat(els.capYSlider.value);
     els.capYValue.textContent = `${els.capYSlider.value}%`;
     applyCaptionStyle();
+  });
+
+  els.capTimingSlider.addEventListener('input', () => {
+    const v = parseFloat(els.capTimingSlider.value);
+    state.captionSettings.timingOffset = v;
+    els.capTimingValue.textContent = `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
+    applyCaptionTiming();
   });
 }
 
@@ -711,6 +871,10 @@ function refreshVideoPanel() {
   els.zoomValue.textContent = `${Math.round(state.zoom * 100)}%`;
   els.blurSlider.value = state.blur;
   els.blurValue.textContent = `${state.blur}%`;
+  els.panXSlider.value = state.panX;
+  els.panXValue.textContent = String(state.panX);
+  els.panYSlider.value = state.panY;
+  els.panYValue.textContent = String(state.panY);
   els.speedSlider.value = state.speed;
   els.speedValue.textContent = `${state.speed.toFixed(2)}x`;
   els.mirrorToggle.checked = state.mirror;
@@ -764,4 +928,11 @@ export function initPanel() {
     refreshSoundPanel();
   });
   on('segments', renderTransitionList);
+
+  // Auto-apply the default (★) preset whenever a clip loads, so an imported
+  // clip lands in the user's template.
+  on('source', () => {
+    const s = activePresetSettings();
+    if (s) applyPresetSettings(s);
+  });
 }

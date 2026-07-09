@@ -19,12 +19,18 @@ export const state = {
   // { kind: 'url'|'file', url, section, file, previewUrl, duration, width, height }
   source: null,
 
-  // Canvas / global video settings
+  // Canvas / global video settings. These start neutral (no-op): zoom
+  // 100%, no blur, 1x speed, no mirror, no pan. A saved preset (see
+  // presets in panel.js) can auto-apply a preferred look on import.
+  // panX/panY move the main clip over the blurred background, -100..100
+  // (% of half the canvas; 0 = centered).
   aspect: { id: '9:16', width: 1080, height: 1920 },
-  zoom: 1.35,
-  blur: 20,
+  zoom: 1.0,
+  blur: 0,
   speed: 1,
   mirror: false,
+  panX: 0,
+  panY: 0,
 
   // The KEPT pieces of the source — source-ordered, non-overlapping in
   // both domains. { id, start, end, outStart }: start/end are the source
@@ -64,6 +70,11 @@ export const state = {
     color: '#ffffff',
     dropShadow: false,
     yPercent: 75,
+    // Nudge every caption's timing by this many seconds (whisper often
+    // reports words slightly early, especially on noisy clips) — positive
+    // = later. Applied relative to each caption's original whisper time
+    // (baseStart/baseEnd), so it's always re-derivable, not cumulative.
+    timingOffset: 0.15,
   },
 
   // Media overlays — each its own clip on the Overlay row (create/delete/
@@ -527,6 +538,24 @@ export function applyCaptionStyle() {
       dropShadow: s.dropShadow,
       yPercent: s.yPercent,
     });
+  }
+  emit('layers');
+}
+
+// Re-times every caption from its original whisper time + the current
+// timingOffset. baseStart/baseEnd are the untouched whisper times, so
+// dragging the nudge slider back and forth is always relative to those
+// (never drifts). Preserves each caption's length.
+export function applyCaptionTiming() {
+  const offset = state.captionSettings.timingOffset || 0;
+  const duration = sourceDuration();
+  for (const layer of captionLayers()) {
+    if (!Number.isFinite(layer.baseStart)) continue;
+    const len = layer.baseEnd - layer.baseStart;
+    let start = Math.max(0, layer.baseStart + offset);
+    if (duration > 0) start = Math.min(start, Math.max(0, duration - len));
+    layer.start = start;
+    layer.end = start + len;
   }
   emit('layers');
 }
