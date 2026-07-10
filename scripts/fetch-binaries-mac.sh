@@ -16,6 +16,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="$ROOT/resources/bin-mac"
 mkdir -p "$BIN_DIR"
 
+# Make sure the caption renderer's macOS native binding is present (a prior
+# Windows build can leave node_modules without it) so the .dmg isn't missing
+# it. See ensure-resvg-binding.sh.
+echo "Ensuring macOS resvg native binding..."
+bash "$ROOT/scripts/ensure-resvg-binding.sh" resvg-js-darwin-arm64
+
 echo "Fetching ffmpeg (arm64)..."
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
