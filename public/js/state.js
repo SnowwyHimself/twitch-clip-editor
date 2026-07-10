@@ -39,6 +39,13 @@ export const state = {
   // surrounding keyframes (see keyframeTransformAt).
   keyframes: [],
 
+  // Face tracking (auto-reframe). A distinct render mode from keyframes/pan:
+  // when enabled the clip is shown as a frame-filling window that pans LEFT/
+  // RIGHT only to follow the chosen face, clamped to the source edges (never
+  // black bars). samples: [{ t (source s), x (0..1 face centre in source
+  // width), z (depth zoom, 1 = none) }], sorted by t.
+  faceTrack: { enabled: false, samples: [] },
+
   // The KEPT pieces of the source — source-ordered, non-overlapping in
   // both domains. { id, start, end, outStart }: start/end are the source
   // in/out points (trim handles pull them back out over cut footage —
@@ -65,6 +72,10 @@ export const state = {
   // by Auto captions carry group:'caption' so the Captions tab can style
   // and regenerate them as a set; hand-made layers have group:null.
   layers: [],
+
+  // When true, every caption (group:'caption') is hidden in preview and
+  // skipped at export — the data is kept so it restores exactly when re-shown.
+  captionsHidden: false,
 
   // The Captions tab's shared settings, applied to every group:'caption'
   // layer at once (like CapCut/TikTok's caption styling, which styles the
@@ -229,8 +240,10 @@ export function resetSegments() {
   state.sel = null;
   state.transitions = [];
   state.keyframes = [];
+  state.faceTrack = { enabled: false, samples: [] };
   emit('segments');
   emit('keyframes');
+  emit('facetrack');
 }
 
 // Splits whichever piece contains this SOURCE time into two touching
@@ -510,6 +523,15 @@ export function updateOverlay(id, patch) {
   emit('settings');
 }
 
+// Clamps one crop edge (0–45%) so the opposite edge always leaves ≥10% of the
+// axis — the single source of truth shared by the crop sliders AND the
+// on-canvas crop handles, so both produce identical values.
+const CROP_OPPOSITE = { cropTop: 'cropBottom', cropBottom: 'cropTop', cropLeft: 'cropRight', cropRight: 'cropLeft' };
+export function clampCropValue(overlay, key, value) {
+  const max = Math.min(45, 90 - (overlay[CROP_OPPOSITE[key]] || 0));
+  return Math.max(0, Math.min(max, Math.round(value)));
+}
+
 export function removeOverlay(id) {
   const i = state.overlays.findIndex((o) => o.id === id);
   if (i === -1) return;
@@ -601,6 +623,46 @@ export function keyframeTransformAt(t) {
     panX: a.panX + (b.panX - a.panX) * e,
     panY: a.panY + (b.panY - a.panY) * e,
   };
+}
+
+// --- face tracking (auto-reframe) --------------------------------------------
+
+// Turns a scanned face path into the active reframe. samples must be sorted by
+// t; x is the face centre (0..1 of source width), z the depth zoom (default 1).
+export function setFaceTrack(samples) {
+  state.faceTrack = { enabled: true, samples: samples.slice().sort((a, b) => a.t - b.t) };
+  emit('facetrack');
+}
+
+// Toggle without losing the samples — off cleanly reverts to the plain crop.
+export function setFaceTrackEnabled(on) {
+  state.faceTrack.enabled = !!on;
+  emit('facetrack');
+}
+
+export function clearFaceTrack() {
+  state.faceTrack = { enabled: false, samples: [] };
+  emit('facetrack');
+}
+
+export function faceTrackActive() {
+  return state.faceTrack.enabled && state.faceTrack.samples.length > 0;
+}
+
+// Interpolated { x, z } at source time t (linear; holds the ends). Null when
+// tracking is off/empty so callers fall back to the normal render.
+export function faceTrackAt(t) {
+  const s = state.faceTrack.samples;
+  if (!faceTrackActive()) return null;
+  if (t <= s[0].t) return { x: s[0].x, z: s[0].z || 1 };
+  if (t >= s[s.length - 1].t) return { x: s[s.length - 1].x, z: s[s.length - 1].z || 1 };
+  let i = 0;
+  while (i < s.length - 1 && s[i + 1].t <= t) i++;
+  const a = s[i];
+  const b = s[i + 1];
+  const span = b.t - a.t || 1e-6;
+  const u = (t - a.t) / span;
+  return { x: a.x + (b.x - a.x) * u, z: (a.z || 1) + ((b.z || 1) - (a.z || 1)) * u };
 }
 
 // Pushes the Captions tab's shared style onto every caption layer at once.

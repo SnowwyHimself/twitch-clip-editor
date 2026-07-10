@@ -42,6 +42,8 @@ function buildTextLayersPayload() {
   const payload = [];
   for (const layer of state.layers) {
     if (!layer.text.trim()) continue;
+    // Captions toggled off are kept in state but excluded from the render.
+    if (state.captionsHidden && layer.group === 'caption') continue;
     const start = mapToOutput(layer.start);
     const end = mapToOutput(layer.end);
     // A layer that fell entirely inside deleted footage maps to a
@@ -73,6 +75,22 @@ function buildFormData() {
   formData.append('mirror', state.mirror);
   formData.append('speed', state.speed);
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));
+
+  // Face-tracking auto-reframe: a horizontal face path (x = 0..1 of source
+  // width, z = depth zoom) timed in OUTPUT seconds. When present the server
+  // renders the clip as a frame-filling window that pans to follow it.
+  if (state.faceTrack.enabled && state.faceTrack.samples.length > 0) {
+    formData.append(
+      'faceTrack',
+      JSON.stringify(
+        state.faceTrack.samples.map((s) => ({
+          t: Number(mapToOutput(s.t).toFixed(3)),
+          x: Number(s.x.toFixed(4)),
+          z: Number((s.z || 1).toFixed(4)),
+        }))
+      )
+    );
+  }
 
   // Zoom/position keyframes, timed in OUTPUT seconds (mapped across cuts +
   // speed, same as captions) so the server's zoompan expressions line up with

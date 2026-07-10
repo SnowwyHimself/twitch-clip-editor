@@ -29,6 +29,7 @@ import {
   isSelected,
   selectLayer,
   selectSegment,
+  clearSelection,
   selectSound,
   selectOverlay,
   selectedLayer,
@@ -55,6 +56,8 @@ import {
 import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './preview.js';
 
 const ruler = document.getElementById('tl-ruler');
+const keyframeRow = document.getElementById('tl-keyframe-row');
+const keyframeLabel = document.getElementById('tl-kf-label');
 const videoTrack = document.getElementById('tl-video-track');
 const overlayRow = document.getElementById('tl-overlay-row');
 const captionsRow = document.getElementById('tl-captions-row');
@@ -62,10 +65,52 @@ const textRow = document.getElementById('tl-text-row');
 const soundRow = document.getElementById('tl-sound-row');
 const playhead = document.getElementById('tl-playhead');
 const emptyMsg = document.getElementById('tl-empty');
+const tlBody = document.getElementById('tl-body');
+
+// Selectable elements on the timeline — a pointerdown anywhere that ISN'T one
+// of these clears the selection (click-away deselect).
+const SELECTABLE_SELECTOR =
+  '.tl-segment, .tl-seg-edge, .tl-text-bar, .tl-sound-bar, .tl-overlay-bar, .tl-kf-marker, .tl-transition-badge';
 const splitBtn = document.getElementById('tl-split');
 const deleteBtn = document.getElementById('tl-delete');
+const tlGrid = document.getElementById('tl-grid');
+const zoomInBtn = document.getElementById('tl-zoom-in');
+const zoomOutBtn = document.getElementById('tl-zoom-out');
+const zoomLabel = document.getElementById('tl-zoom-label');
 
 const MOVE_THRESHOLD_PX = 4; // press-and-hold under this = click/select, over = drag
+
+// Timeline zoom: 1 = whole clip fits the width; >1 widens the tracks (the body
+// scrolls) so caption blocks / keyframes are easier to grab. The track column
+// is stretched to fitWidth×zoom; pxPerSecond derives from the ruler's own width
+// so everything (ruler, clips, keyframes, playhead) stays in sync.
+const TL_ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
+let tlZoom = 1;
+
+function fitTrackWidth() {
+  // Visible width available to the track column (body minus the label gutter).
+  return Math.max(120, tlBody.clientWidth - 64 - 8);
+}
+
+function applyTimelineZoom() {
+  if (tlZoom <= 1) {
+    tlGrid.style.width = '';
+  } else {
+    tlGrid.style.width = `${Math.round(64 + 8 + fitTrackWidth() * tlZoom)}px`;
+  }
+  zoomLabel.textContent = `${Math.round(tlZoom * 100)}%`;
+  zoomOutBtn.disabled = tlZoom <= TL_ZOOM_STEPS[0];
+  zoomInBtn.disabled = tlZoom >= TL_ZOOM_STEPS[TL_ZOOM_STEPS.length - 1];
+  renderAll();
+}
+
+function stepZoom(dir) {
+  const i = TL_ZOOM_STEPS.indexOf(tlZoom);
+  const next = TL_ZOOM_STEPS[Math.min(TL_ZOOM_STEPS.length - 1, Math.max(0, (i < 0 ? 0 : i) + dir))];
+  if (next === tlZoom) return;
+  tlZoom = next;
+  applyTimelineZoom();
+}
 
 function trackWidth() {
   return ruler.clientWidth || 1;
@@ -178,7 +223,40 @@ function layoutAll() {
   layoutLayerBars();
   layoutSoundBars();
   layoutOverlayBars();
+  layoutKeyframeMarkers();
   updatePlayhead();
+}
+
+// Keyframe diamonds sit in their own thin row directly above the video track,
+// one per zoom/position keyframe, at the keyframe's time. Same ◆ used on the
+// Video tab's keyframe button. Clicking one jumps the playhead to it.
+function renderKeyframeRow() {
+  const has = sourceDuration() > 0 && state.keyframes.length > 0;
+  keyframeRow.classList.toggle('hidden', !has);
+  keyframeLabel.classList.toggle('hidden', !has);
+  keyframeRow.innerHTML = '';
+  if (!has) return;
+  for (const kf of state.keyframes) {
+    const marker = document.createElement('button');
+    marker.type = 'button';
+    marker.className = 'tl-kf-marker';
+    marker.dataset.t = kf.t;
+    marker.textContent = '◆';
+    marker.title = `Keyframe @ ${kf.t.toFixed(2)}s — click to jump here`;
+    marker.addEventListener('click', (e) => {
+      e.stopPropagation();
+      seek(kf.t);
+    });
+    keyframeRow.appendChild(marker);
+  }
+  layoutKeyframeMarkers();
+}
+
+function layoutKeyframeMarkers() {
+  const pps = pxPerSecond();
+  keyframeRow.querySelectorAll('.tl-kf-marker').forEach((m) => {
+    m.style.left = `${(parseFloat(m.dataset.t) * pps).toFixed(1)}px`;
+  });
 }
 
 // --- video track -------------------------------------------------------------
@@ -596,6 +674,7 @@ function renderAll() {
   emptyMsg.classList.toggle('hidden', hasSource);
   setRowVisible(videoTrack, hasSource);
   renderRuler();
+  renderKeyframeRow();
   renderVideoTrack();
   renderOverlayRow();
   renderLayerRows();
@@ -608,10 +687,20 @@ export function initTimeline() {
   attachScrub();
   splitBtn.addEventListener('click', splitAtPlayhead);
   deleteBtn.addEventListener('click', deleteSelection);
+  zoomInBtn.addEventListener('click', () => stepZoom(1));
+  zoomOutBtn.addEventListener('click', () => stepZoom(-1));
+  applyTimelineZoom();
+
+  // Click-away deselect: pressing anywhere on the timeline that isn't a
+  // selectable element (a clip/keyframe/badge) clears the current selection.
+  tlBody.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest(SELECTABLE_SELECTOR)) clearSelection();
+  });
 
   on('source', renderAll);
   on('segments', renderAll);
   on('layers', renderAll);
+  on('keyframes', renderKeyframeRow);
   on('settings', () => {
     renderSoundRow();
     renderOverlayRow();
@@ -624,5 +713,5 @@ export function initTimeline() {
     refreshToolbar();
   });
   on('time', updatePlayhead);
-  window.addEventListener('resize', renderAll);
+  window.addEventListener('resize', applyTimelineZoom);
 }

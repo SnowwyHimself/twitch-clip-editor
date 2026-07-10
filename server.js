@@ -181,6 +181,27 @@ function buildKeyframes(body) {
   return cleaned;
 }
 
+// Face-tracking auto-reframe path: [{ t (output s), x (0..1 face centre), z }].
+function buildFaceTrack(body) {
+  let raw = body.faceTrack;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  return raw
+    .map((s) => ({
+      t: parseFloat(s && s.t),
+      x: Math.max(0, Math.min(1, parseFloat(s && s.x))),
+      z: Number.isFinite(parseFloat(s && s.z)) ? Math.max(1, parseFloat(s.z)) : 1,
+    }))
+    .filter((s) => Number.isFinite(s.t) && Number.isFinite(s.x) && s.t >= 0)
+    .sort((a, b) => a.t - b.t);
+}
+
 function buildSegments(body) {
   let raw = body.segments;
   if (typeof raw === 'string') {
@@ -458,7 +479,53 @@ function buildKeyframeZoompan(canvasW, canvasH, keyframes, fps) {
   return `zoompan=z='${zExpr}':x='${x}':y='${y}':d=1:s=${canvasW}x${canvasH}:fps=${fps}`;
 }
 
-function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps) {
+// Piecewise-linear interpolation of a face-track property over output time
+// (crop's x expression is evaluated per frame with variable `t`).
+function buildFaceExpr(samples, prop) {
+  const T = 't';
+  const n = samples.length;
+  if (n === 1) return `${samples[0][prop]}`;
+  let expr = `${samples[n - 1][prop]}`;
+  for (let i = n - 2; i >= 0; i--) {
+    const ta = samples[i].t;
+    const tb = samples[i + 1].t;
+    const va = samples[i][prop];
+    const vb = samples[i + 1][prop];
+    const span = tb - ta || 1e-6;
+    const u = `clip((${T}-${ta})/${span},0,1)`;
+    expr = `if(lt(${T},${tb}),(${va})+(${vb - va})*(${u}),${expr})`;
+  }
+  return expr;
+}
+
+// Face-tracking reframe base: scale the source to COVER the canvas, then crop a
+// canvas-sized window whose x follows the face (clamped to the source edges, so
+// it's always fully filled — no black bars). Horizontal only; y stays centered.
+function buildFaceTrackBase(canvasW, canvasH, faceTrack, sourceLabel, speed, mirror) {
+  const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 1);
+  const [fgSource] = labels;
+  const xExpr = buildFaceExpr(faceTrack, 'x');
+  const cover = `scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase`;
+  const crop = `crop=${canvasW}:${canvasH}:x='clip((iw-${canvasW})*(${xExpr}),0,iw-${canvasW})':y='(ih-${canvasH})/2'`;
+  return `${stage}${fgSource}${cover},${crop}[c0]`;
+}
+
+function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack) {
+  // Face-tracking overrides the normal blur-bg composite with a frame-filling
+  // reframe that pans to follow the chosen face.
+  if (Array.isArray(faceTrack) && faceTrack.length >= 1) {
+    let graph = buildFaceTrackBase(canvasW, canvasH, faceTrack, sourceLabel, speed, mirror);
+    let current = '[c0]';
+    overlayStages.forEach((stage, i) => {
+      const next = `[c${i + 1}]`;
+      if (stage.pre) graph += `;${stage.pre}`;
+      const enable = stage.enable ? `:enable='${stage.enable}'` : '';
+      graph += `;${current}${stage.inputLabel}overlay=${stage.x}:${stage.y}${enable}${next}`;
+      current = next;
+    });
+    graph += `;${current}setsar=1[outv]`;
+    return graph;
+  }
   // With keyframes, zoom/pan are animated per-frame by a zoompan applied to
   // the finished composite (below), so the base is built neutral (zoom 1, no
   // pan) and zoompan does the moving. Without keyframes it's the static look.
@@ -589,7 +656,7 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, onProgress) {
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
   // straight [0:v]/[0:a]. A single kept range starting at output 0 (the
@@ -624,14 +691,17 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   for (const ov of mediaOverlays) {
     if (ov.isVideo && ov.offset > 0.01) args.push('-ss', ov.offset.toFixed(3));
     args.push('-i', ov.path);
-    const overlayWidthPx = Math.round(canvasW * (ov.sizePercent / 100));
+    // sizePercent is the MEDIA display width, so scale the full media to it
+    // FIRST, then crop the window out — cropping trims a smaller region, it
+    // doesn't zoom the media (matches the preview's iOS-style crop).
+    const mediaWidthPx = Math.round(canvasW * (ov.sizePercent / 100));
     const cl = ov.cropLeft / 100;
     const cr = ov.cropRight / 100;
     const ct = ov.cropTop / 100;
     const cb = ov.cropBottom / 100;
     const cropChain =
       cl + cr + ct + cb > 0.001
-        ? `crop=iw*${(1 - cl - cr).toFixed(4)}:ih*${(1 - ct - cb).toFixed(4)}:iw*${cl.toFixed(4)}:ih*${ct.toFixed(4)},`
+        ? `,crop=iw*${(1 - cl - cr).toFixed(4)}:ih*${(1 - ct - cb).toFixed(4)}:iw*${cl.toFixed(4)}:ih*${ct.toFixed(4)}`
         : '';
     const enable =
       Number.isFinite(ov.start) && Number.isFinite(ov.end) && ov.end > ov.start
@@ -639,7 +709,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
         : null;
     const label = `[ovlm${nextInputIndex}]`;
     overlayStages.push({
-      pre: `[${nextInputIndex}:v]${cropChain}scale=${overlayWidthPx}:-2${label}`,
+      pre: `[${nextInputIndex}:v]scale=${mediaWidthPx}:-2${cropChain}${label}`,
       inputLabel: label,
       x: `x=(main_w-overlay_w)*${(ov.xPercent / 100).toFixed(4)}`,
       y: `y=(main_h-overlay_h)*${(ov.yPercent / 100).toFixed(4)}`,
@@ -679,7 +749,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
 
   let filterComplex =
     segmentPrefix +
-    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed));
+    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack);
 
   // atempo only accepts 0.5-2.0 per instance, which matches the slider's
   // own range exactly, so a single atempo call always suffices — no need
@@ -947,7 +1017,7 @@ function buildSection(body) {
   return { start, end };
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -979,7 +1049,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -994,7 +1064,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -1002,7 +1072,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -1132,7 +1202,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildTransitions(req.body || {}),
     buildMediaOverlays(req.body || {}, req.files.overlay),
     buildAudioOverlays(req.body || {}, req.files.audioTrack),
-    buildKeyframes(req.body || {})
+    buildKeyframes(req.body || {}),
+    buildFaceTrack(req.body || {})
   );
 });
 
@@ -1166,7 +1237,8 @@ app.post(
       buildTransitions(req.body),
       buildMediaOverlays(req.body, req.files.overlay),
       buildAudioOverlays(req.body, req.files.audioTrack),
-      buildKeyframes(req.body)
+      buildKeyframes(req.body),
+      buildFaceTrack(req.body)
     );
   }
 );

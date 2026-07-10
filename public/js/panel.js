@@ -39,9 +39,13 @@ import {
   clearKeyframes,
   keyframeAt,
   keyframeTransformAt,
+  clampCropValue,
+  setFaceTrackEnabled,
+  clearFaceTrack,
+  faceTrackActive,
 } from './state.js';
-import { getCurrentTime, getCurrentOutputTime } from './preview.js';
-import { trackFace } from './facetrack.js';
+import { getCurrentTime, getCurrentOutputTime, beginFaceSelect } from './preview.js';
+import { trackSelectedFace } from './facetrack.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile } from './api.js';
 
 const CAPTION_COLORS = [
@@ -99,6 +103,9 @@ function lookupElements() {
     kfStatus: byId('kf-status'),
     kfClearBtn: byId('kf-clear-btn'),
     faceTrackBtn: byId('face-track-btn'),
+    facetrackToggleRow: byId('facetrack-toggle-row'),
+    facetrackToggle: byId('facetrack-toggle'),
+    facetrackStatus: byId('facetrack-status'),
     speedSlider: byId('speed-slider'),
     speedValue: byId('speed-value'),
     mirrorToggle: byId('mirror-toggle'),
@@ -164,6 +171,7 @@ function lookupElements() {
     capYValue: byId('cap-y-value'),
     capTimingSlider: byId('cap-timing-slider'),
     capTimingValue: byId('cap-timing-value'),
+    captionsVisibleToggle: byId('captions-visible-toggle'),
   };
 }
 
@@ -297,6 +305,9 @@ function wireKeyframes() {
   });
   els.kfClearBtn.addEventListener('click', () => clearKeyframes());
   els.faceTrackBtn.addEventListener('click', runFaceTrack);
+  els.facetrackToggle.addEventListener('change', () => setFaceTrackEnabled(els.facetrackToggle.checked));
+  on('facetrack', renderFaceTrackUI);
+  renderFaceTrackUI();
   on('keyframes', renderKeyframeUI);
   // As the playhead moves over a keyframed range, show the interpolated
   // zoom/position on the sliders (read-out) and light ◆ on exact keyframes.
@@ -346,38 +357,63 @@ function syncKeyframeSliders() {
   state.panY = tf.panY;
 }
 
-// Auto-reframe: scans the clip for a face and fills in follow keyframes.
+// Auto-reframe: user picks a face on the preview, then we scan + follow it.
 async function runFaceTrack() {
   if (!state.source) {
-    els.kfStatus.textContent = 'Load a clip first, then track a face.';
+    els.facetrackStatus.textContent = 'Load a clip first, then select a face.';
     return;
   }
   const btn = els.faceTrackBtn;
   const originalLabel = btn.textContent;
+  clearFaceTrack(); // show the plain view so the tap maps cleanly to the footage
+  els.facetrackStatus.textContent = 'Click the face you want to follow in the preview (Esc to cancel).';
+  const target = await beginFaceSelect();
+  if (!target) {
+    renderFaceTrackUI();
+    els.facetrackStatus.textContent = 'Cancelled. Select a face to start auto-reframing.';
+    return;
+  }
   btn.disabled = true;
   btn.textContent = 'Scanning…';
-  els.kfStatus.textContent = 'Scanning the clip for a face…';
+  els.facetrackStatus.textContent = 'Scanning the clip and locking onto that face…';
   try {
-    const result = await trackFace({
+    const result = await trackSelectedFace(target, {
       onProgress: (p) => {
-        els.kfStatus.textContent = `Scanning for a face… ${Math.round(p * 100)}%`;
+        els.facetrackStatus.textContent = `Following that face… ${Math.round(p * 100)}%`;
       },
     });
     if (result.ok) {
-      renderKeyframeUI();
-      els.kfStatus.textContent = `Tracking a face with ${result.keyframes} keyframes — tweak or clear them like any others.`;
+      els.facetrackStatus.textContent = 'Tracking that face — the clip follows it left/right. Turn off to revert.';
     } else if (result.reason === 'no-face') {
-      els.kfStatus.textContent = 'No face found — this works best on face-forward clips. You can still keyframe by hand.';
+      els.facetrackStatus.textContent = 'Couldn’t find a face to follow — try a clearer, more face-forward clip.';
     } else if (result.reason === 'load-failed') {
-      els.kfStatus.textContent = 'The face detector could not load. Please try again.';
+      els.facetrackStatus.textContent = 'The face detector could not load. Please try again.';
     } else {
-      els.kfStatus.textContent = 'Load a clip first, then track a face.';
+      els.facetrackStatus.textContent = 'Load a clip first, then select a face.';
     }
   } catch {
-    els.kfStatus.textContent = 'Face tracking hit an error — please try again.';
+    els.facetrackStatus.textContent = 'Face tracking hit an error — please try again.';
   } finally {
     btn.disabled = false;
     btn.textContent = originalLabel;
+    renderFaceTrackUI();
+  }
+}
+
+// Reflects the current face-track state in the toggle + status line.
+function renderFaceTrackUI() {
+  const active = faceTrackActive();
+  const hasSamples = state.faceTrack.samples.length > 0;
+  els.facetrackToggleRow.classList.toggle('hidden', !hasSamples);
+  els.facetrackToggle.checked = active;
+  if (active) {
+    els.facetrackStatus.textContent =
+      'Tracking a face — the clip follows it left/right. Turn off to revert, or select a different face.';
+  } else if (hasSamples) {
+    els.facetrackStatus.textContent = 'Face tracking is off (kept). Turn it back on, or select a new face.';
+  } else {
+    els.facetrackStatus.textContent =
+      'Auto-reframe: follows a chosen face left/right, keeping the frame filled. Works best on face-forward clips.';
   }
 }
 
@@ -587,13 +623,8 @@ function wireOverlayControls() {
     els.cropSliders[key].addEventListener('input', () => {
       const o = selectedOverlay();
       if (!o) return;
-      const opposite = { cropTop: 'cropBottom', cropBottom: 'cropTop', cropLeft: 'cropRight', cropRight: 'cropLeft' }[key];
-      let val = parseFloat(els.cropSliders[key].value);
-      const max = 90 - o[opposite]; // keep at least 10% of the axis
-      if (val > max) {
-        val = max;
-        els.cropSliders[key].value = val;
-      }
+      const val = clampCropValue(o, key, parseFloat(els.cropSliders[key].value));
+      els.cropSliders[key].value = val;
       updateOverlay(o.id, { [key]: val });
       els.cropValues[key].textContent = `${val}%`;
     });
@@ -866,6 +897,10 @@ function wireCaptionControls() {
     els.capTimingValue.textContent = `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
     applyCaptionTiming();
   });
+  els.captionsVisibleToggle.addEventListener('change', () => {
+    state.captionsHidden = !els.captionsVisibleToggle.checked;
+    emit('layers'); // re-evaluate caption visibility in the preview + timeline
+  });
 }
 
 // --- text tab -------------------------------------------------------------------------
@@ -1004,15 +1039,18 @@ function refreshTextPanel() {
 }
 
 function refreshVideoPanel() {
-  els.zoomSlider.value = Math.round(state.zoom * 100);
+  // Skip whichever control the user is actively dragging so this (fired on
+  // every 'settings', including from drag-to-pan) never fights their input.
+  const a = document.activeElement;
+  if (a !== els.zoomSlider) els.zoomSlider.value = Math.round(state.zoom * 100);
   els.zoomValue.textContent = `${Math.round(state.zoom * 100)}%`;
-  els.blurSlider.value = state.blur;
+  if (a !== els.blurSlider) els.blurSlider.value = state.blur;
   els.blurValue.textContent = `${state.blur}%`;
-  els.panXSlider.value = state.panX;
+  if (a !== els.panXSlider) els.panXSlider.value = state.panX;
   els.panXValue.textContent = String(state.panX);
-  els.panYSlider.value = state.panY;
+  if (a !== els.panYSlider) els.panYSlider.value = state.panY;
   els.panYValue.textContent = String(state.panY);
-  els.speedSlider.value = state.speed;
+  if (a !== els.speedSlider) els.speedSlider.value = state.speed;
   els.speedValue.textContent = `${state.speed.toFixed(2)}x`;
   els.mirrorToggle.checked = state.mirror;
 }
@@ -1037,7 +1075,7 @@ export function initPanel() {
   refreshSoundPanel();
   renderTransitionList();
 
-  const tabForKind = { layer: 'text', overlay: 'overlay', sound: 'sound' };
+  const tabForKind = { layer: 'text', overlay: 'overlay', sound: 'sound', segment: 'video' };
 
   for (const [name, tab] of Object.entries(els.tabs)) {
     tab.btn.addEventListener('click', () => {
@@ -1061,6 +1099,7 @@ export function initPanel() {
   });
   on('layers', refreshTextPanel);
   on('settings', () => {
+    refreshVideoPanel(); // keep the Video-tab sliders in sync with drag-to-pan
     refreshOverlayPanel();
     refreshSoundPanel();
   });

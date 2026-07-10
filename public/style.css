@@ -255,6 +255,42 @@ body {
 .preview-fg {
   object-fit: contain;
   transform-origin: center center;
+  cursor: grab;
+}
+
+/* Main clip selected — outline the footage's own content rect (positioned in
+   JS, see updateClipOutline), like selecting any other element, plus a move
+   cursor on the draggable video. */
+.clip-outline {
+  position: absolute;
+  border: 2px dashed var(--accent);
+  pointer-events: none;
+  z-index: 5;
+  box-sizing: border-box;
+}
+.preview-frame.clip-dragging .preview-fg,
+.preview-frame.clip-dragging .preview-bg {
+  cursor: grabbing;
+}
+
+/* While picking a face to track, the whole preview is a crosshair target. */
+.preview-frame.face-selecting {
+  cursor: crosshair;
+}
+.preview-frame.face-selecting::after {
+  content: 'Click a face to follow';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 7;
 }
 
 .preview-frame.no-source .preview-bg,
@@ -372,6 +408,50 @@ body {
   bottom: 0;
   right: 0;
   cursor: nwse-resize;
+}
+
+/* Edge crop handles (iOS-style) — distinct from the square corner resize
+   handles: thin white grips centered on each edge, shown when selected. */
+.overlay-crop-handle {
+  position: absolute;
+  background: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  display: none;
+  z-index: 4;
+  touch-action: none;
+}
+.preview-overlay.selected .overlay-crop-handle {
+  display: block;
+}
+.overlay-crop-top,
+.overlay-crop-bottom {
+  left: 50%;
+  width: 26px;
+  height: 6px;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+.overlay-crop-left,
+.overlay-crop-right {
+  top: 50%;
+  width: 6px;
+  height: 26px;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+.overlay-crop-top {
+  top: 2px;
+}
+.overlay-crop-bottom {
+  bottom: 2px;
+}
+.overlay-crop-left {
+  left: 2px;
+}
+.overlay-crop-right {
+  right: 2px;
 }
 
 /* Hidden by the playhead being outside the overlay's clip range (kept in
@@ -1119,8 +1199,33 @@ img.preset-thumb {
   position: relative;
   flex: 1;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto; /* scrolls when the timeline is zoomed wider than the pane */
   padding: 0 14px 10px;
+}
+
+/* Timeline zoom control */
+.tl-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tl-zoom .secondary-btn {
+  padding: 4px 10px;
+  font-size: 15px;
+  line-height: 1;
+}
+.tl-zoom-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 34px;
+  text-align: center;
+}
+/* Keep the row labels pinned while the tracks scroll under them. */
+.tl-label {
+  position: sticky;
+  left: 0;
+  z-index: 6;
+  background: var(--panel);
 }
 
 .tl-empty {
@@ -1292,6 +1397,31 @@ img.preset-thumb {
   height: 26px;
   border-radius: 6px;
   background: var(--bg);
+}
+
+/* Keyframe diamonds row — thin strip directly above the video track. */
+.tl-keyframe-row {
+  position: relative;
+  height: 16px;
+}
+.tl-kf-label {
+  color: var(--accent);
+  font-size: 11px;
+}
+.tl-kf-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: none;
+  border: none;
+  padding: 2px 3px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--accent);
+  cursor: pointer;
+}
+.tl-kf-marker:hover {
+  color: #fff;
 }
 
 .tl-text-bar {

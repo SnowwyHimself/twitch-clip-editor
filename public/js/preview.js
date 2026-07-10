@@ -22,6 +22,8 @@ import {
   isSelected,
   selectLayer,
   selectOverlay,
+  selectSegment,
+  selectedSegment,
   resetSegments,
   resetHistory,
   sourceDuration,
@@ -30,6 +32,10 @@ import {
   outputToSourceClamped,
   pieceAtOutput,
   keyframeTransformAt,
+  addKeyframe,
+  clampCropValue,
+  faceTrackActive,
+  faceTrackAt,
 } from './state.js';
 
 const previewArea = document.getElementById('preview-area');
@@ -312,8 +318,9 @@ function updateLayerVisibility() {
   for (const layer of state.layers) {
     const entry = layerEls.get(layer.id);
     if (!entry) continue;
+    const hiddenByToggle = state.captionsHidden && layer.group === 'caption';
     const inRange = !gap && t >= layer.start && t < layer.end;
-    const visible = inRange || isSelected('layer', layer.id);
+    const visible = !hiddenByToggle && (inRange || isSelected('layer', layer.id));
     entry.root.classList.toggle('time-hidden', !visible);
   }
 }
@@ -428,6 +435,15 @@ function createOverlayEl(o) {
     root.appendChild(handle);
     attachOverlayResize(handle, root, o.id);
   }
+  // Edge crop handles — pull an edge inward to crop that side (iOS photo-crop
+  // style), writing the same cropTop/Bottom/Left/Right the sliders do. Corners
+  // resize, edges crop.
+  for (const edge of ['top', 'bottom', 'left', 'right']) {
+    const handle = document.createElement('div');
+    handle.className = `overlay-crop-handle overlay-crop-${edge}`;
+    root.appendChild(handle);
+    attachOverlayCrop(handle, root, o.id, edge);
+  }
   overlaysContainer.appendChild(root);
   attachOverlayDrag(root, o.id);
   overlayEls.set(o.id, entry);
@@ -453,33 +469,37 @@ function syncOverlayEls() {
   tickOverlays(getCurrentOutputTime());
 }
 
-// Sizes/positions one overlay box and applies its crop by scaling the media
-// inside an overflow-hidden box so the kept region fills the box — the CSS
-// equivalent of the export's ffmpeg crop+scale.
+// Sizes/positions one overlay. sizePercent is the MEDIA's display width (as a
+// fraction of the frame) and stays constant as you crop — cropping just trims
+// a smaller window out of the media (iOS photo-crop behaviour), it never zooms
+// or grows it. The box (overflow-hidden) is that trimmed window; the media
+// sits full-size inside, shifted so the kept region shows through.
 function layoutOverlayEl(o) {
   const entry = overlayEls.get(o.id);
   if (!entry) return;
   const { root, media, dims } = entry;
   const { width: frameWidth, height: frameHeight } = frameSize();
-  const boxW = frameWidth * (o.sizePercent / 100);
   const cropFracW = Math.max(0.1, 1 - (o.cropLeft + o.cropRight) / 100);
   const cropFracH = Math.max(0.1, 1 - (o.cropTop + o.cropBottom) / 100);
+  const mediaW = frameWidth * (o.sizePercent / 100); // constant w.r.t. crop
 
+  let boxW;
   let boxH;
   if (dims) {
-    const croppedAspect = (dims.w * cropFracW) / (dims.h * cropFracH);
-    boxH = boxW / croppedAspect;
-    const mediaW = boxW / cropFracW;
-    const mediaH = boxH / cropFracH;
+    const mediaH = mediaW * (dims.h / dims.w);
+    boxW = mediaW * cropFracW;
+    boxH = mediaH * cropFracH;
     media.style.width = `${mediaW}px`;
     media.style.height = `${mediaH}px`;
     media.style.left = `${-(o.cropLeft / 100) * mediaW}px`;
     media.style.top = `${-(o.cropTop / 100) * mediaH}px`;
   } else {
-    boxH = boxW; // brief pre-load fallback, corrected once dims are known
-    media.style.width = '100%';
+    // brief pre-load fallback, corrected once natural dims are known
+    boxW = mediaW * cropFracW;
+    boxH = mediaW * cropFracH;
+    media.style.width = `${mediaW}px`;
     media.style.height = 'auto';
-    media.style.left = '0';
+    media.style.left = `${-(o.cropLeft / 100) * mediaW}px`;
     media.style.top = '0';
   }
 
@@ -590,14 +610,16 @@ function attachOverlayResize(handle, root, id) {
     e.stopPropagation(); // don't also start a move-drag on the root
     selectOverlay(id);
     resizing = true;
-    handle.setPointerCapture(e.pointerId);
-    root.classList.add('resizing');
     const frameRect = previewFrame.getBoundingClientRect();
     const rect = root.getBoundingClientRect();
     center = {
       x: (rect.left + rect.right) / 2 - frameRect.left,
       y: (rect.top + rect.bottom) / 2 - frameRect.top,
     };
+    root.classList.add('resizing');
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {}
     e.preventDefault();
   });
 
@@ -609,9 +631,12 @@ function attachOverlayResize(handle, root, id) {
     const frameRect = previewFrame.getBoundingClientRect();
     const pointerX = e.clientX - frameRect.left;
     // Center-anchored: half the box width is the pointer's distance from the
-    // center, so the grabbed corner tracks the cursor horizontally.
+    // center, so the grabbed corner tracks the cursor horizontally. sizePercent
+    // is the media width, so divide the target box width by the horizontal crop
+    // fraction to recover it (a cropped overlay's box is smaller than its media).
+    const cropFracW = Math.max(0.1, 1 - (o.cropLeft + o.cropRight) / 100);
     const halfW = Math.abs(pointerX - center.x);
-    let sizePercent = Math.round(((halfW * 2) / frameWidth) * 100);
+    let sizePercent = Math.round((((halfW * 2) / cropFracW) / frameWidth) * 100);
     sizePercent = Math.min(100, Math.max(5, sizePercent));
     o.sizePercent = sizePercent;
     // Lay out at the new size, then re-plant the captured center and store
@@ -627,6 +652,75 @@ function attachOverlayResize(handle, root, id) {
     resizing = false;
     root.classList.remove('resizing');
     emit('settings'); // records history + refreshes the Overlay panel slider
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+
+// Edge crop handle: dragging an edge inward trims that side of the media,
+// mapping pixels dragged to a percentage of the media's own size (captured at
+// grab so the reshaping box doesn't feed back), clamped via the same shared
+// helper the crop sliders use.
+function attachOverlayCrop(handle, root, id, edge) {
+  let cropping = false;
+  let start = null;
+
+  handle.addEventListener('pointerdown', (e) => {
+    if (root.classList.contains('overlay-hidden')) return;
+    e.stopPropagation();
+    selectOverlay(id);
+    const o = state.overlays.find((x) => x.id === id);
+    if (!o) return;
+    cropping = true;
+    const cropFracW = Math.max(0.1, 1 - (o.cropLeft + o.cropRight) / 100);
+    const cropFracH = Math.max(0.1, 1 - (o.cropTop + o.cropBottom) / 100);
+    start = {
+      x: e.clientX,
+      y: e.clientY,
+      cropTop: o.cropTop,
+      cropBottom: o.cropBottom,
+      cropLeft: o.cropLeft,
+      cropRight: o.cropRight,
+      mediaW: root.offsetWidth / cropFracW, // full (uncropped) media px at this scale
+      mediaH: root.offsetHeight / cropFracH,
+    };
+    root.classList.add('cropping');
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {}
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!cropping) return;
+    const o = state.overlays.find((x) => x.id === id);
+    if (!o) return;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    let key;
+    let raw;
+    if (edge === 'left') {
+      key = 'cropLeft';
+      raw = start.cropLeft + (dx / start.mediaW) * 100;
+    } else if (edge === 'right') {
+      key = 'cropRight';
+      raw = start.cropRight + (-dx / start.mediaW) * 100;
+    } else if (edge === 'top') {
+      key = 'cropTop';
+      raw = start.cropTop + (dy / start.mediaH) * 100;
+    } else {
+      key = 'cropBottom';
+      raw = start.cropBottom + (-dy / start.mediaH) * 100;
+    }
+    o[key] = clampCropValue(o, key, raw);
+    layoutOverlayEl(o);
+  });
+
+  const end = () => {
+    if (!cropping) return;
+    cropping = false;
+    root.classList.remove('cropping');
+    emit('settings'); // records + syncs the crop sliders to match
   };
   handle.addEventListener('pointerup', end);
   handle.addEventListener('pointercancel', end);
@@ -924,6 +1018,20 @@ function currentClipTransform() {
 // applied in unmirrored frame space (a negative-x mirror never flips pan).
 function applyClipTransform() {
   const { width: frameW, height: frameH } = frameSize();
+  // Face-tracking reframe: the clip fills the frame (object-fit cover) and pans
+  // LEFT/RIGHT only via object-position, following the tracked face; object-fit
+  // cover guarantees it's always fully filled (no black bars). Depth zoom (z)
+  // scales in for a tighter shot. This overrides the normal pan-over-blur.
+  if (faceTrackActive()) {
+    const ft = faceTrackAt(fgVideo.currentTime || 0) || { x: 0.5 };
+    const posX = Math.max(0, Math.min(100, ft.x * 100));
+    fgVideo.style.objectFit = 'cover';
+    fgVideo.style.objectPosition = `${posX.toFixed(2)}% 50%`;
+    fgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
+    return;
+  }
+  fgVideo.style.objectFit = '';
+  fgVideo.style.objectPosition = '';
   const { zoom, panX, panY } = currentClipTransform();
   const tx = (panX / 100) * (frameW / 2);
   const ty = (panY / 100) * (frameH / 2);
@@ -934,7 +1042,8 @@ function updateAll() {
   applyClipTransform();
   bgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
 
-  if (state.blur > 0) {
+  // The reframe fills the frame, so no background shows behind it.
+  if (!faceTrackActive() && state.blur > 0) {
     bgVideo.classList.remove('hidden');
     bgVideo.style.filter = `blur(${(state.blur * PREVIEW_BLUR_CSS_SCALE).toFixed(1)}px)`;
   } else {
@@ -944,12 +1053,161 @@ function updateAll() {
   fgVideo.playbackRate = state.speed;
   bgVideo.playbackRate = state.speed;
 
+  updateClipOutline();
+
   syncOverlayEls();
   syncLayerEls();
 }
 
+// Outlines the main clip while it's selected — around the actual footage
+// content rect (the video's own bounds after object-fit + zoom + pan), NOT the
+// whole canvas, so it reads like selecting any other element. Recomputed on
+// every transform change since it tracks zoom/pan.
+let clipOutline = null;
+
+// The footage's on-screen rect (object-fit contain + zoom + pan), in frame px.
+function clipContentRect() {
+  const { width: frameW, height: frameH } = frameSize();
+  const srcW = (state.source && state.source.width) || fgVideo.videoWidth || frameW;
+  const srcH = (state.source && state.source.height) || fgVideo.videoHeight || frameH;
+  const { zoom, panX, panY } = currentClipTransform();
+  const videoAspect = srcW / srcH;
+  const frameAspect = frameW / frameH;
+  let contentW;
+  let contentH;
+  if (videoAspect > frameAspect) {
+    contentW = frameW;
+    contentH = frameW / videoAspect;
+  } else {
+    contentH = frameH;
+    contentW = frameH * videoAspect;
+  }
+  const w = contentW * zoom;
+  const h = contentH * zoom;
+  const cx = frameW / 2 + (panX / 100) * (frameW / 2);
+  const cy = frameH / 2 + (panY / 100) * (frameH / 2);
+  return { left: cx - w / 2, top: cy - h / 2, w, h };
+}
+
+function updateClipOutline() {
+  if (!clipOutline) return;
+  const selected = !!selectedSegment();
+  previewFrame.classList.toggle('clip-selected', selected);
+  clipOutline.style.display = selected ? 'block' : 'none';
+  if (!selected) return;
+  const r = clipContentRect();
+  clipOutline.style.left = `${r.left.toFixed(1)}px`;
+  clipOutline.style.top = `${r.top.toFixed(1)}px`;
+  clipOutline.style.width = `${r.w.toFixed(1)}px`;
+  clipOutline.style.height = `${r.h.toFixed(1)}px`;
+}
+
+// Face-selection: resolves with the source-normalised { x, y } of the point the
+// user taps on the preview (or null on Escape). Used to pick which face to
+// track. Runs in the normal (contain) view, so the content rect maps cleanly.
+export function beginFaceSelect() {
+  return new Promise((resolve) => {
+    previewFrame.classList.add('face-selecting');
+    const done = (value) => {
+      previewFrame.classList.remove('face-selecting');
+      previewFrame.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const onDown = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const fr = previewFrame.getBoundingClientRect();
+      const rect = clipContentRect();
+      const x = Math.max(0, Math.min(1, (e.clientX - fr.left - rect.left) / rect.w));
+      const y = Math.max(0, Math.min(1, (e.clientY - fr.top - rect.top) / rect.h));
+      done({ x, y });
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') done(null);
+    };
+    // Capture phase so it beats the clip-drag / overlay handlers.
+    previewFrame.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+// Direct-manipulation reposition of the main clip: pointerdown on the video
+// selects the clip (the piece under the playhead) and drags to pan it, in the
+// same select-then-drag style overlays use. The pan is written the same way
+// the Position sliders do — into a keyframe at the playhead when keyframes
+// exist, otherwise the static panX/panY.
+function attachClipDrag() {
+  let dragging = false;
+  let startPointer = null;
+  let startPan = null;
+
+  const onDown = (e) => {
+    // Let overlay/text elements (higher z-index, their own handlers) win.
+    if (e.target !== fgVideo && e.target !== bgVideo) return;
+    const t = fgVideo.currentTime || 0;
+    const seg = state.segments.find((s) => t >= s.start && t < s.end) || state.segments[0];
+    if (seg) selectSegment(seg.id);
+    dragging = true;
+    startPointer = { x: e.clientX, y: e.clientY };
+    startPan = { x: state.panX, y: state.panY };
+    fgVideo.setPointerCapture?.(e.pointerId);
+    previewFrame.classList.add('clip-dragging');
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    const { width: frameW, height: frameH } = frameSize();
+    const dpanX = ((e.clientX - startPointer.x) / (frameW / 2)) * 100;
+    const dpanY = ((e.clientY - startPointer.y) / (frameH / 2)) * 100;
+    let panX = Math.max(-100, Math.min(100, Math.round(startPan.x + dpanX)));
+    let panY = Math.max(-100, Math.min(100, Math.round(startPan.y + dpanY)));
+    // Snap to centered (pan 0) the same way text/overlay drags snap to the
+    // frame center, showing the same guide lines. Threshold in frame pixels.
+    const snappedX = Math.abs((panX / 100) * (frameW / 2)) < POSITION_SNAP_PX;
+    const snappedY = Math.abs((panY / 100) * (frameH / 2)) < POSITION_SNAP_PX;
+    if (snappedX) panX = 0;
+    if (snappedY) panY = 0;
+    guideX.classList.toggle('visible', snappedX);
+    guideY.classList.toggle('visible', snappedY);
+    state.panX = panX;
+    state.panY = panY;
+    // When the clip is keyframed, dragging edits the keyframe at the playhead
+    // (same as nudging the Position sliders); otherwise it's the static pan.
+    if (state.keyframes.length) {
+      addKeyframe(fgVideo.currentTime || 0, { zoom: state.zoom, panX: state.panX, panY: state.panY });
+    }
+    emit('settings');
+  };
+
+  const onUp = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    try {
+      fgVideo.releasePointerCapture?.(e.pointerId);
+    } catch {}
+    previewFrame.classList.remove('clip-dragging');
+    guideX.classList.remove('visible');
+    guideY.classList.remove('visible');
+  };
+
+  fgVideo.addEventListener('pointerdown', onDown);
+  bgVideo.addEventListener('pointerdown', onDown);
+  fgVideo.addEventListener('pointermove', onMove);
+  fgVideo.addEventListener('pointerup', onUp);
+  fgVideo.addEventListener('pointercancel', onUp);
+}
+
 export function initPreview() {
   fitPreviewFrame();
+
+  // Selection outline for the main clip's footage rect (see updateClipOutline).
+  clipOutline = document.createElement('div');
+  clipOutline.className = 'clip-outline';
+  clipOutline.style.display = 'none';
+  previewFrame.appendChild(clipOutline);
 
   playBtn.addEventListener('click', togglePlay);
 
@@ -1004,9 +1262,9 @@ export function initPreview() {
     tickOverlays(outT);
     if (outT !== lastOutTime) {
       lastOutTime = outT;
-      // Keyframes animate zoom/pan, so the fg transform has to be re-applied
-      // as the playhead moves (playing or scrubbing), not just on settings.
-      if (state.keyframes.length) applyClipTransform();
+      // Keyframes / face-tracking animate the transform, so re-apply it as the
+      // playhead moves (playing or scrubbing), not just on settings.
+      if (state.keyframes.length || faceTrackActive()) applyClipTransform();
       seekSlider.value = outT;
       updateTimeLabel();
       updateLayerVisibility();
@@ -1037,21 +1295,30 @@ export function initPreview() {
     muteBtn.textContent = fgVideo.muted ? '🔇' : '🔊';
   });
 
-  // Clicking empty preview space deselects, dropping the panel back to
-  // video settings — same interaction CapCut uses.
+  // Clicking the video itself selects the main clip (for framing) and lets
+  // you drag it to reposition — same select-then-drag interaction overlays
+  // use. Clicking the bare frame padding deselects.
+  attachClipDrag();
   previewFrame.addEventListener('pointerdown', (e) => {
-    if (e.target === previewFrame || e.target === fgVideo || e.target === bgVideo) {
-      selectLayer(null);
-    }
+    if (e.target === previewFrame) selectLayer(null);
   });
 
   on('settings', () => {
     fitPreviewFrame();
     updateAll();
   });
+  on('facetrack', updateAll);
   on('layers', syncLayerEls);
-  on('selection', syncLayerEls);
-  on('time', updateLayerVisibility);
+  on('selection', () => {
+    syncLayerEls();
+    updateClipOutline();
+  });
+  on('time', () => {
+    updateLayerVisibility();
+    // Keep the animated transform in step when the playhead moves via a seek
+    // (not just the rAF tick), so keyframes / face-tracking track scrubbing.
+    if (state.keyframes.length || faceTrackActive()) applyClipTransform();
+  });
   window.addEventListener('resize', () => {
     fitPreviewFrame();
     updateAll();

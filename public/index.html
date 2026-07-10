@@ -116,9 +116,20 @@
             <span class="field-label">Zoom &amp; position keyframes</span>
             <button type="button" id="kf-add-btn" class="secondary-btn kf-diamond" title="Add / update a keyframe at the playhead">◆</button>
           </div>
-          <button type="button" id="face-track-btn" class="secondary-btn kf-track-btn">🎯 Track a face (auto-reframe)</button>
           <p class="field-hint" id="kf-status">No keyframes — the clip holds still. Drop one here, move the playhead, change zoom or position to animate a punch-in.</p>
           <button type="button" id="kf-clear-btn" class="link-btn hidden">Clear keyframes</button>
+        </div>
+
+        <div class="field-group" id="facetrack-group">
+          <button type="button" id="face-track-btn" class="secondary-btn kf-track-btn">🎯 Select a face to track</button>
+          <label class="switch-row hidden" id="facetrack-toggle-row" for="facetrack-toggle">
+            <span class="field-label switch-label">Face tracking</span>
+            <span class="switch">
+              <input type="checkbox" id="facetrack-toggle" />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <p class="field-hint" id="facetrack-status">Auto-reframe: follows a chosen face left/right, keeping the frame filled. Works best on face-forward clips.</p>
         </div>
 
         <div class="field-group">
@@ -138,6 +149,17 @@
       </div>
 
       <div id="panel-captions" class="panel-body hidden">
+        <div class="field-group">
+          <label class="switch-row" for="captions-visible-toggle">
+            <span class="field-label switch-label">Show captions</span>
+            <span class="switch">
+              <input type="checkbox" id="captions-visible-toggle" checked />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <p class="field-hint">Hide every caption at once without deleting them — flip it back on to restore them exactly.</p>
+        </div>
+
         <div class="field-group">
           <label class="field-label">Caption mode</label>
           <div class="toggle-group">
@@ -361,6 +383,12 @@
       <button type="button" id="tl-delete" class="secondary-btn" disabled>🗑 Delete</button>
       <input id="overlay-file" type="file" accept="image/*,video/*" hidden />
       <input id="audio-file" type="file" accept="audio/*" hidden />
+      <span class="toolbar-sep"></span>
+      <div class="tl-zoom" title="Zoom the timeline in/out for finer editing">
+        <button type="button" id="tl-zoom-out" class="secondary-btn" aria-label="Zoom out">−</button>
+        <span id="tl-zoom-label" class="tl-zoom-label">100%</span>
+        <button type="button" id="tl-zoom-in" class="secondary-btn" aria-label="Zoom in">+</button>
+      </div>
       <label class="switch-row snap-toggle" for="snap-toggle" title="Snap: pieces always close up (CapCut). Off: free placement, gaps play as black (Premiere).">
         <span class="field-label switch-label">Snap</span>
         <span class="switch">
@@ -371,9 +399,11 @@
     </div>
     <div id="tl-body" class="tl-body">
       <p id="tl-empty" class="tl-empty">Load a clip to start editing</p>
-      <div class="tl-grid">
+      <div id="tl-grid" class="tl-grid">
         <div class="tl-label"></div>
         <div id="tl-ruler" class="tl-ruler"></div>
+        <div class="tl-label tl-kf-label hidden" id="tl-kf-label">◆</div>
+        <div id="tl-keyframe-row" class="tl-keyframe-row hidden"></div>
         <div class="tl-label">Video</div>
         <div id="tl-video-track" class="tl-video-track"></div>
         <div class="tl-label hidden">Overlay</div>
