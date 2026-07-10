@@ -12,6 +12,10 @@ import {
   removeLayer,
   selectedSegment,
   removeSegment,
+  selectedSound,
+  removeSound,
+  selectedOverlay,
+  removeOverlay,
   sourceDuration,
   setTimelineMode,
   undo,
@@ -167,13 +171,21 @@ function wireShortcuts() {
       e.preventDefault();
       togglePlay();
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      // Deletes whatever is selected — a text layer or a video segment —
-      // mirroring the timeline toolbar's Delete button.
+      // Deletes whatever is selected — a text layer, sound, overlay, or a
+      // video segment — mirroring the timeline toolbar's Delete button.
       const layer = selectedLayer();
+      const sound = selectedSound();
+      const overlay = selectedOverlay();
       const segment = selectedSegment();
       if (layer) {
         e.preventDefault();
         removeLayer(layer.id);
+      } else if (sound) {
+        e.preventDefault();
+        removeSound(sound.id);
+      } else if (overlay) {
+        e.preventDefault();
+        removeOverlay(overlay.id);
       } else if (segment) {
         e.preventDefault();
         removeSegment(segment.id);

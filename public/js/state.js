@@ -32,6 +32,13 @@ export const state = {
   panX: 0,
   panY: 0,
 
+  // Zoom/position keyframes for the main clip — animate a punch-in or a
+  // slow push/pan. Each is { id, t, zoom, panX, panY } where t is a SOURCE
+  // second. Empty = no animation (the static zoom/panX/panY above are used).
+  // When non-empty, the transform at any time is interpolated between the
+  // surrounding keyframes (see keyframeTransformAt).
+  keyframes: [],
+
   // The KEPT pieces of the source — source-ordered, non-overlapping in
   // both domains. { id, start, end, outStart }: start/end are the source
   // in/out points (trim handles pull them back out over cut footage —
@@ -221,7 +228,9 @@ export function resetSegments() {
   state.segments = duration > 0 ? [newSegment(0, duration, 0)] : [];
   state.sel = null;
   state.transitions = [];
+  state.keyframes = [];
   emit('segments');
+  emit('keyframes');
 }
 
 // Splits whichever piece contains this SOURCE time into two touching
@@ -526,6 +535,74 @@ export function splitOverlayAt(id, srcTime) {
   return right;
 }
 
+// --- zoom/position keyframes --------------------------------------------------
+// Keyframes hold a full {zoom, panX, panY} snapshot at a source time. The
+// transform at any moment is interpolated (ease-in-out) between the two
+// surrounding keyframes, so a couple of keyframes make a punch-in or push.
+
+const KEYFRAME_EPSILON = 0.04; // s — keyframes closer than this share a slot
+let keyframeCounter = 0;
+
+// Adds (or, if one already sits at this time, updates) a keyframe capturing
+// the given transform — defaults to the current live zoom/panX/panY.
+export function addKeyframe(t, values) {
+  const v = values || { zoom: state.zoom, panX: state.panX, panY: state.panY };
+  const existing = state.keyframes.find((k) => Math.abs(k.t - t) <= KEYFRAME_EPSILON);
+  if (existing) {
+    existing.zoom = v.zoom;
+    existing.panX = v.panX;
+    existing.panY = v.panY;
+    emit('keyframes');
+    return existing;
+  }
+  const kf = { id: `kf-${Date.now()}-${keyframeCounter++}`, t, zoom: v.zoom, panX: v.panX, panY: v.panY };
+  state.keyframes.push(kf);
+  state.keyframes.sort((a, b) => a.t - b.t);
+  emit('keyframes');
+  return kf;
+}
+
+export function removeKeyframe(id) {
+  const i = state.keyframes.findIndex((k) => k.id === id);
+  if (i === -1) return;
+  state.keyframes.splice(i, 1);
+  emit('keyframes');
+}
+
+export function clearKeyframes() {
+  if (state.keyframes.length === 0) return;
+  state.keyframes = [];
+  emit('keyframes');
+}
+
+// The keyframe sitting at this time, if any (used to light up the ◆ button).
+export function keyframeAt(t) {
+  return state.keyframes.find((k) => Math.abs(k.t - t) <= KEYFRAME_EPSILON) || null;
+}
+
+// Interpolated {zoom, panX, panY} at time t, or null when there are no
+// keyframes (caller then uses the static state values). Clamps to the first/
+// last keyframe outside the keyframed range (hold, don't extrapolate).
+export function keyframeTransformAt(t) {
+  const kf = state.keyframes;
+  if (kf.length === 0) return null;
+  const pick = (k) => ({ zoom: k.zoom, panX: k.panX, panY: k.panY });
+  if (t <= kf[0].t) return pick(kf[0]);
+  if (t >= kf[kf.length - 1].t) return pick(kf[kf.length - 1]);
+  let i = 0;
+  while (i < kf.length - 1 && kf[i + 1].t <= t) i++;
+  const a = kf[i];
+  const b = kf[i + 1];
+  const span = b.t - a.t;
+  const raw = span > 0 ? (t - a.t) / span : 0;
+  const e = raw * raw * (3 - 2 * raw); // smoothstep ease-in-out
+  return {
+    zoom: a.zoom + (b.zoom - a.zoom) * e,
+    panX: a.panX + (b.panX - a.panX) * e,
+    panY: a.panY + (b.panY - a.panY) * e,
+  };
+}
+
 // Pushes the Captions tab's shared style onto every caption layer at once.
 export function applyCaptionStyle() {
   const s = state.captionSettings;
@@ -575,7 +652,7 @@ export function defaultFontId() {
 // through the 'segments'/'layers' events; recording is debounced so a
 // continuous drag or a typing burst collapses into one history entry.
 
-const HISTORY_EVENTS = new Set(['segments', 'layers']);
+const HISTORY_EVENTS = new Set(['segments', 'layers', 'keyframes']);
 const HISTORY_LIMIT = 100;
 const HISTORY_DEBOUNCE_MS = 350;
 
@@ -590,6 +667,7 @@ function historySnapshot() {
     timelineMode: state.timelineMode,
     transitions: state.transitions,
     layers: state.layers,
+    keyframes: state.keyframes,
   });
 }
 
@@ -620,10 +698,12 @@ function restoreSnapshot(snap) {
     state.timelineMode = data.timelineMode;
     state.transitions = data.transitions;
     state.layers = data.layers;
+    state.keyframes = data.keyframes || [];
     state.sel = null;
     emit('selection');
     emit('segments');
     emit('layers');
+    emit('keyframes');
   } finally {
     restoring = false;
   }

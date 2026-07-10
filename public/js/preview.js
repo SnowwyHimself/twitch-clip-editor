@@ -29,6 +29,7 @@ import {
   sourceToOutput,
   outputToSourceClamped,
   pieceAtOutput,
+  keyframeTransformAt,
 } from './state.js';
 
 const previewArea = document.getElementById('preview-area');
@@ -59,15 +60,20 @@ const POSITION_SNAP_PX = 8;
 // actual font files server-side (see caption.js). The *Preview families
 // are @font-face'd from the same bundled TTFs.
 const PREVIEW_FONT_CSS_FAMILY = {
-  'proxima-nova': '"Proxima Nova", sans-serif',
   montserrat: '"Montserrat SemiBold Preview", sans-serif',
-  manrope: '"Manrope ExtraBold Preview", sans-serif',
   poppins: '"Poppins ExtraBold Preview", sans-serif',
+  manrope: '"Manrope ExtraBold Preview", sans-serif',
   'archivo-black': '"Archivo Black Preview", sans-serif',
-  'bebas-neue': '"Bebas Neue Preview", sans-serif',
   anton: '"Anton Preview", sans-serif',
-  'burbank-condensed': '"Burbank Big Condensed", sans-serif',
-  'burbank-condensed-bold': '"Burbank Big Condensed Black", "Burbank Big Condensed", sans-serif',
+  'bebas-neue': '"Bebas Neue Preview", sans-serif',
+  'fjalla-one': '"Fjalla One Preview", sans-serif',
+  kanit: '"Kanit Bold Preview", sans-serif',
+  'alfa-slab-one': '"Alfa Slab One Preview", serif',
+  'titan-one': '"Titan One Preview", sans-serif',
+  'paytone-one': '"Paytone One Preview", sans-serif',
+  righteous: '"Righteous Preview", sans-serif',
+  bangers: '"Bangers Preview", cursive',
+  'luckiest-guy': '"Luckiest Guy Preview", cursive',
 };
 
 let previewObjectUrl = null;
@@ -157,51 +163,36 @@ function mergeSameRowRects(rects) {
 
 function applyBoxPills(captionEl, innerEl, fillersEl, scale, paddingXPx, paddingYPx, radiusPx, boxColor) {
   fillersEl.innerHTML = '';
+  // One unified rounded box behind the whole wrapped block, sized to the
+  // union of the line rects (widest line sets the width, first/last line the
+  // height). Per-line pills used to leave a visible gap between lines of
+  // different widths; a single box can't — it's always one solid shape.
   const range = document.createRange();
   range.selectNodeContents(innerEl);
   const rects = mergeSameRowRects(Array.from(range.getClientRects()));
   if (rects.length === 0) return;
 
   const containerRect = captionEl.getBoundingClientRect();
-  const n = rects.length;
-  const pillWidths = rects.map((r) => r.width + paddingXPx * 2);
-
-  const tops = [];
-  const bottoms = [];
-  for (let i = 0; i < n; i++) {
-    tops.push(i === 0 ? rects[i].top - paddingYPx : (rects[i - 1].bottom + rects[i].top) / 2);
-    bottoms.push(i === n - 1 ? rects[i].bottom + paddingYPx : (rects[i].bottom + rects[i + 1].top) / 2);
+  let left = Infinity;
+  let right = -Infinity;
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const r of rects) {
+    left = Math.min(left, r.left);
+    right = Math.max(right, r.right);
+    top = Math.min(top, r.top);
+    bottom = Math.max(bottom, r.bottom);
   }
 
-  for (let i = 0; i < n; i++) {
-    const width = pillWidths[i];
-    const centerX = (rects[i].left + rects[i].right) / 2 - containerRect.left;
-    const pill = document.createElement('div');
-    pill.style.position = 'absolute';
-    pill.style.left = `${(centerX - width / 2).toFixed(2)}px`;
-    pill.style.top = `${(tops[i] - containerRect.top).toFixed(2)}px`;
-    pill.style.width = `${width.toFixed(2)}px`;
-    pill.style.height = `${(bottoms[i] - tops[i] + 1).toFixed(2)}px`; // +1: antialiasing-seam margin, same as caption.js ROW_OVERLAP
-    pill.style.background = boxColor;
-    pill.style.borderRadius = `${radiusPx.toFixed(2)}px`;
-    fillersEl.appendChild(pill);
-  }
-
-  const tolerance = 3 * scale;
-  for (let i = 0; i < n - 1; i++) {
-    if (Math.abs(pillWidths[i] - pillWidths[i + 1]) > tolerance) continue;
-    const fillerWidth = Math.min(pillWidths[i], pillWidths[i + 1]);
-    const centerX = (rects[i].left + rects[i].right) / 2 - containerRect.left;
-    const seamY = bottoms[i] - containerRect.top;
-    const filler = document.createElement('div');
-    filler.style.position = 'absolute';
-    filler.style.left = `${(centerX - fillerWidth / 2).toFixed(2)}px`;
-    filler.style.top = `${(seamY - radiusPx).toFixed(2)}px`;
-    filler.style.width = `${fillerWidth.toFixed(2)}px`;
-    filler.style.height = `${(radiusPx * 2).toFixed(2)}px`;
-    filler.style.background = boxColor;
-    fillersEl.appendChild(filler);
-  }
+  const box = document.createElement('div');
+  box.style.position = 'absolute';
+  box.style.left = `${(left - containerRect.left - paddingXPx).toFixed(2)}px`;
+  box.style.top = `${(top - containerRect.top - paddingYPx).toFixed(2)}px`;
+  box.style.width = `${(right - left + paddingXPx * 2).toFixed(2)}px`;
+  box.style.height = `${(bottom - top + paddingYPx * 2).toFixed(2)}px`;
+  box.style.background = boxColor;
+  box.style.borderRadius = `${radiusPx.toFixed(2)}px`;
+  fillersEl.appendChild(box);
 }
 
 // --- frame sizing ----------------------------------------------------------
@@ -428,6 +419,15 @@ function createOverlayEl(o) {
   );
   media.src = url;
   root.appendChild(media);
+  // Corner resize handles — shown only while the overlay is selected (see the
+  // .selected toggle in tickOverlays). Dragging one scales the overlay from
+  // its center, so you size it by grabbing a corner instead of the slider.
+  for (const corner of ['nw', 'ne', 'sw', 'se']) {
+    const handle = document.createElement('div');
+    handle.className = `overlay-handle overlay-handle-${corner}`;
+    root.appendChild(handle);
+    attachOverlayResize(handle, root, o.id);
+  }
   overlaysContainer.appendChild(root);
   attachOverlayDrag(root, o.id);
   overlayEls.set(o.id, entry);
@@ -499,7 +499,9 @@ function tickOverlays(outT) {
     const startOut = sourceToOutput(o.start);
     const endOut = sourceToOutput(o.end);
     const inRange = !gap && outT >= startOut && outT < endOut;
-    entry.root.classList.toggle('overlay-hidden', !(inRange || isSelected('overlay', o.id)));
+    const selected = isSelected('overlay', o.id);
+    entry.root.classList.toggle('overlay-hidden', !(inRange || selected));
+    entry.root.classList.toggle('selected', selected); // shows the resize handles
 
     if (!entry.isVideo) continue;
     if (inRange) {
@@ -572,6 +574,62 @@ function attachOverlayDrag(root, id) {
   };
   root.addEventListener('pointerup', end);
   root.addEventListener('pointercancel', end);
+}
+
+// Corner-handle resize: scales the overlay from its (fixed) center, so
+// dragging any corner grows/shrinks the box with its aspect ratio locked
+// (height follows from the media's cropped aspect in layoutOverlayEl). The
+// visual center is captured on grab and re-planted every move, so resizing
+// never nudges the overlay's position.
+function attachOverlayResize(handle, root, id) {
+  let resizing = false;
+  let center = null; // { x, y } in frame-relative px, fixed for the gesture
+
+  handle.addEventListener('pointerdown', (e) => {
+    if (root.classList.contains('overlay-hidden')) return;
+    e.stopPropagation(); // don't also start a move-drag on the root
+    selectOverlay(id);
+    resizing = true;
+    handle.setPointerCapture(e.pointerId);
+    root.classList.add('resizing');
+    const frameRect = previewFrame.getBoundingClientRect();
+    const rect = root.getBoundingClientRect();
+    center = {
+      x: (rect.left + rect.right) / 2 - frameRect.left,
+      y: (rect.top + rect.bottom) / 2 - frameRect.top,
+    };
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!resizing) return;
+    const o = state.overlays.find((x) => x.id === id);
+    if (!o) return;
+    const { width: frameWidth, height: frameHeight } = frameSize();
+    const frameRect = previewFrame.getBoundingClientRect();
+    const pointerX = e.clientX - frameRect.left;
+    // Center-anchored: half the box width is the pointer's distance from the
+    // center, so the grabbed corner tracks the cursor horizontally.
+    const halfW = Math.abs(pointerX - center.x);
+    let sizePercent = Math.round(((halfW * 2) / frameWidth) * 100);
+    sizePercent = Math.min(100, Math.max(5, sizePercent));
+    o.sizePercent = sizePercent;
+    // Lay out at the new size, then re-plant the captured center and store
+    // the position percents that correspond to it at this size.
+    layoutOverlayEl(o);
+    o.xPercent = Math.round(resolvePreviewPercent(center.x, root.offsetWidth, frameWidth));
+    o.yPercent = Math.round(resolvePreviewPercent(center.y, root.offsetHeight, frameHeight));
+    setCenterTransform(root, center.x, center.y, frameWidth, frameHeight);
+  });
+
+  const end = () => {
+    if (!resizing) return;
+    resizing = false;
+    root.classList.remove('resizing');
+    emit('settings'); // records history + refreshes the Overlay panel slider
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
 }
 
 // --- playback ----------------------------------------------------------------
@@ -737,6 +795,12 @@ export function togglePlay() {
   setLogicalPlaying(!logicalPlaying);
 }
 
+// Stops logical playback so a task (e.g. face tracking) can seek the video
+// frame-by-frame without the rAF loop fighting it with boundary seeks.
+export function pausePlayback() {
+  setLogicalPlaying(false);
+}
+
 // --- white flash (dip-to-white transition) preview -----------------------------
 
 // Triangle ramp centered on the boundary: fade to white over the first
@@ -846,15 +910,28 @@ export function setPlaceholder(text) {
 
 // --- global refresh -------------------------------------------------------------
 
-function updateAll() {
-  // Pan translates the foreground clip over the (blurred/black) background,
-  // in frame pixels: panX/panY are % of half the frame. The translate is
-  // listed before scale so it's applied in unmirrored frame space (a
-  // negative-x mirror scale never flips the pan direction).
+// The clip's live transform: the interpolated keyframe value at the current
+// source time when keyframes exist, otherwise the static slider values.
+function currentClipTransform() {
+  const kf = keyframeTransformAt(fgVideo.currentTime || 0);
+  return kf || { zoom: state.zoom, panX: state.panX, panY: state.panY };
+}
+
+// Applies just the foreground zoom/pan transform (called every frame while
+// keyframes drive it, and once per settings/scrub otherwise). Pan translates
+// the foreground over the (blurred/black) background, in frame pixels: panX/
+// panY are % of half the frame. translate is listed before scale so it's
+// applied in unmirrored frame space (a negative-x mirror never flips pan).
+function applyClipTransform() {
   const { width: frameW, height: frameH } = frameSize();
-  const tx = (state.panX / 100) * (frameW / 2);
-  const ty = (state.panY / 100) * (frameH / 2);
-  fgVideo.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${(state.mirror ? -1 : 1) * state.zoom}, ${state.zoom})`;
+  const { zoom, panX, panY } = currentClipTransform();
+  const tx = (panX / 100) * (frameW / 2);
+  const ty = (panY / 100) * (frameH / 2);
+  fgVideo.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${(state.mirror ? -1 : 1) * zoom}, ${zoom})`;
+}
+
+function updateAll() {
+  applyClipTransform();
   bgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
 
   if (state.blur > 0) {
@@ -927,6 +1004,9 @@ export function initPreview() {
     tickOverlays(outT);
     if (outT !== lastOutTime) {
       lastOutTime = outT;
+      // Keyframes animate zoom/pan, so the fg transform has to be re-applied
+      // as the playhead moves (playing or scrubbing), not just on settings.
+      if (state.keyframes.length) applyClipTransform();
       seekSlider.value = outT;
       updateTimeLabel();
       updateLayerVisibility();

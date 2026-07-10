@@ -74,6 +74,23 @@ function buildFormData() {
   formData.append('speed', state.speed);
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));
 
+  // Zoom/position keyframes, timed in OUTPUT seconds (mapped across cuts +
+  // speed, same as captions) so the server's zoompan expressions line up with
+  // the render's stream clock. Empty when the clip has no animation.
+  if (state.keyframes.length > 0) {
+    formData.append(
+      'keyframes',
+      JSON.stringify(
+        state.keyframes.map((k) => ({
+          t: Number(mapToOutput(k.t).toFixed(3)),
+          zoom: k.zoom,
+          panX: k.panX,
+          panY: k.panY,
+        }))
+      )
+    );
+  }
+
   const kept = keptSegments();
   if (sourceDuration() > 0 && kept.length > 0) {
     // outStart carries the free-mode placement — the server inserts black

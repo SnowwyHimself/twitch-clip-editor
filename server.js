@@ -156,6 +156,31 @@ function normalizeMirror(value) {
 // skips every trim/concat step entirely. Source ranges are never clamped
 // against the real duration here — ffmpeg itself simply stops at EOF if a
 // range asks for more than exists.
+// Zoom/position keyframes for the animated main-clip transform. Times arrive
+// already in OUTPUT seconds (the frontend maps source→output across cuts/speed
+// before sending), so the server just validates/clamps and sorts them.
+function buildKeyframes(body) {
+  let raw = body.keyframes;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const cleaned = raw
+    .map((k) => ({
+      t: parseFloat(k && k.t),
+      zoom: clampZoom(k && k.zoom),
+      panX: clampPan(k && k.panX),
+      panY: clampPan(k && k.panY),
+    }))
+    .filter((k) => Number.isFinite(k.t) && k.t >= 0)
+    .sort((a, b) => a.t - b.t);
+  return cleaned;
+}
+
 function buildSegments(body) {
   let raw = body.segments;
   if (typeof raw === 'string') {
@@ -301,7 +326,11 @@ function probeSource(inputPath) {
       const duration = durationMatch
         ? parseInt(durationMatch[1], 10) * 3600 + parseInt(durationMatch[2], 10) * 60 + parseFloat(durationMatch[3])
         : null;
-      resolve({ width: parseInt(videoMatch[1], 10), height: parseInt(videoMatch[2], 10), hasAudio, duration });
+      // Frame rate — only needed to drive keyframed zoom/pan (zoompan works in
+      // frame indices). Falls back to 30 when the token isn't present.
+      const fpsMatch = stderr.match(/(\d+(?:\.\d+)?)\s*fps/);
+      const fps = fpsMatch ? parseFloat(fpsMatch[1]) : 30;
+      resolve({ width: parseInt(videoMatch[1], 10), height: parseInt(videoMatch[2], 10), hasAudio, duration, fps });
     });
   });
 }
@@ -394,8 +423,51 @@ function buildSourcePrefix(sourceLabel, speed, mirror, consumerCount) {
 // after segment trims and speed changes — which is exactly the domain the
 // frontend maps layer times into before submitting (see export payload
 // notes in public/js/export.js).
-function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel) {
-  const fgWidth = Math.round((canvasW * zoom) / 2) * 2;
+// Builds an ffmpeg expression (in terms of zoompan's output-frame counter
+// `on`) that interpolates one keyframe property over time with the same
+// smoothstep ease the live preview uses. Keyframe times are OUTPUT seconds
+// (the frontend already mapped them across cuts/speed), so time = on/fps.
+function buildKeyframeExpr(keyframes, prop, fps) {
+  const T = `(on/${fps})`;
+  const n = keyframes.length;
+  if (n === 1) return `${keyframes[0][prop]}`;
+  let expr = `${keyframes[n - 1][prop]}`; // past the last keyframe: hold it
+  for (let i = n - 2; i >= 0; i--) {
+    const ta = keyframes[i].t;
+    const tb = keyframes[i + 1].t;
+    const va = keyframes[i][prop];
+    const vb = keyframes[i + 1][prop];
+    const span = tb - ta || 1e-6;
+    const u = `clip((${T}-${ta})/${span},0,1)`;
+    const seg = `(${va})+(${vb - va})*((${u})*(${u})*(3-2*(${u})))`;
+    expr = `if(lt(${T},${tb}),${seg},${expr})`;
+  }
+  return expr;
+}
+
+// Time-varying zoom+pan for the main clip, applied to the finished (blur-bg +
+// fg) composite via zoompan. Pan is % of half-canvas in OUTPUT px; dividing
+// by zoom converts to input px (zoompan scales its window up by zoom). x/y are
+// clamped to the valid window range so zoom=1 (no room) simply doesn't pan.
+function buildKeyframeZoompan(canvasW, canvasH, keyframes, fps) {
+  const zExpr = buildKeyframeExpr(keyframes, 'zoom', fps);
+  const pxExpr = buildKeyframeExpr(keyframes, 'panX', fps);
+  const pyExpr = buildKeyframeExpr(keyframes, 'panY', fps);
+  const x = `clip((iw/2)*(1-1/zoom)-((${pxExpr})/100)*(iw/2)/zoom,0,iw-iw/zoom)`;
+  const y = `clip((ih/2)*(1-1/zoom)-((${pyExpr})/100)*(ih/2)/zoom,0,ih-ih/zoom)`;
+  return `zoompan=z='${zExpr}':x='${x}':y='${y}':d=1:s=${canvasW}x${canvasH}:fps=${fps}`;
+}
+
+function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps) {
+  // With keyframes, zoom/pan are animated per-frame by a zoompan applied to
+  // the finished composite (below), so the base is built neutral (zoom 1, no
+  // pan) and zoompan does the moving. Without keyframes it's the static look.
+  const hasKeyframes = Array.isArray(keyframes) && keyframes.length >= 1;
+  const baseZoom = hasKeyframes ? 1 : zoom;
+  const basePanX = hasKeyframes ? 0 : panX;
+  const basePanY = hasKeyframes ? 0 : panY;
+
+  const fgWidth = Math.round((canvasW * baseZoom) / 2) * 2;
   const fgChain = `scale=${fgWidth}:-2,crop=${canvasW}:ih:(iw-${canvasW})/2:0`;
 
   // pan moves the sharp foreground over the background, in canvas pixels
@@ -404,8 +476,8 @@ function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlaySta
   // or a black frame DERIVED FROM THE SOURCE via drawbox — never a `color`
   // filter source, whose fps/timebase mismatch makes concat/overlay
   // misbehave) so panning works identically at any blur.
-  const panXpx = Math.round((panX / 100) * (canvasW / 2));
-  const panYpx = Math.round((panY / 100) * (canvasH / 2));
+  const panXpx = Math.round((basePanX / 100) * (canvasW / 2));
+  const panYpx = Math.round((basePanY / 100) * (canvasH / 2));
   const panXExpr = panXpx !== 0 ? `+(${panXpx})` : '';
   const panYExpr = panYpx !== 0 ? `+(${panYpx})` : '';
 
@@ -418,6 +490,12 @@ function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlaySta
   let graph = `${stage}${bg};${fg};${overlay}`;
 
   let current = '[c0]';
+  // Animate zoom/pan over the composite (captions/overlays are added AFTER,
+  // so they don't get zoomed with the clip).
+  if (hasKeyframes) {
+    graph += `;[c0]${buildKeyframeZoompan(canvasW, canvasH, keyframes, fps)}[c0z]`;
+    current = '[c0z]';
+  }
   overlayStages.forEach((stage, i) => {
     const next = `[c${i + 1}]`;
     if (stage.pre) graph += `;${stage.pre}`;
@@ -511,7 +589,7 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, onProgress) {
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
   // straight [0:v]/[0:a]. A single kept range starting at output 0 (the
@@ -601,7 +679,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
 
   let filterComplex =
     segmentPrefix +
-    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel);
+    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed));
 
   // atempo only accepts 0.5-2.0 per instance, which matches the slider's
   // own range exactly, so a single atempo call always suffices — no need
@@ -869,7 +947,7 @@ function buildSection(body) {
   return { start, end };
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -901,7 +979,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -916,7 +994,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -924,7 +1002,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -1053,7 +1131,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildSegments(req.body || {}),
     buildTransitions(req.body || {}),
     buildMediaOverlays(req.body || {}, req.files.overlay),
-    buildAudioOverlays(req.body || {}, req.files.audioTrack)
+    buildAudioOverlays(req.body || {}, req.files.audioTrack),
+    buildKeyframes(req.body || {})
   );
 });
 
@@ -1086,7 +1165,8 @@ app.post(
       buildSegments(req.body),
       buildTransitions(req.body),
       buildMediaOverlays(req.body, req.files.overlay),
-      buildAudioOverlays(req.body, req.files.audioTrack)
+      buildAudioOverlays(req.body, req.files.audioTrack),
+      buildKeyframes(req.body)
     );
   }
 );

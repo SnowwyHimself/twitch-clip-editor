@@ -11,8 +11,10 @@ dist/
 resources/bin-mac/*
 resources/bin-win/*
 .legacy-ui/
-# Whisper model (~148MB) — fetched by `npm run fetch-whisper-model`, not committed
-models/
+# Whisper model (~148MB) — fetched by `npm run fetch-whisper-model`, not committed.
+# Anchored to the repo root so it doesn't also swallow the bundled face-api
+# detector weights under public/vendor/face-api/models/ (those DO ship).
+/models/
 # Whisper transcription scratch (extracted wav + json), created at runtime
 transcribe-cache/*
 # Compiled emoji rasterizer — built by scripts/fetch-binaries-mac.sh; source (main.swift) is committed

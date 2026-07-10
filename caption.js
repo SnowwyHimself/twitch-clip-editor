@@ -20,22 +20,28 @@ const DATA_ROOT = process.env.CLIP_EDITOR_DATA_DIR || __dirname;
 const EMOJI_CACHE_DIR = path.join(DATA_ROOT, 'emoji-cache');
 const TWEMOJI_DIR = path.join(__dirname, 'assets', 'emoji', 'twemoji');
 
-// Bundled fonts, all free/open-licensed (SIL OFL) and downloaded from Google
-// Fonts — see fonts/OFL-<name>.txt for each one's license text. "system:
-// true" means the file isn't bundled at all; it's resolved from wherever
-// the user's own copy actually lives on disk (see SYSTEM_FONT_SEARCH_DIRS),
-// via that entry's "match" function — used for commercially-licensed fonts
-// (Proxima Nova, Burbank Big Condensed) that can't legally be redistributed.
+// Bundled fonts, all free/open-licensed (SIL OFL or Apache) and downloaded
+// from Google Fonts — see fonts/OFL-<name>.txt / fonts/LICENSE-<name>.txt for
+// each one's license text. Every font here ships inside the app, so there's
+// nothing for the user to install and nothing that can show up as "not
+// installed". The list leans toward the fonts most used for clipping /
+// short-form video captions (bold, condensed, and meme/impact styles).
+const bundledFont = (label, file) => ({ label, path: path.join(__dirname, 'fonts', file) });
 const FONT_REGISTRY = {
-  'proxima-nova': { label: 'Proxima Nova', system: true, match: isProximaNovaSemibold },
-  montserrat: { label: 'Montserrat SemiBold', path: path.join(__dirname, 'fonts', 'Montserrat-SemiBold.ttf') },
-  manrope: { label: 'Manrope ExtraBold', path: path.join(__dirname, 'fonts', 'Manrope-ExtraBold.ttf') },
-  poppins: { label: 'Poppins ExtraBold', path: path.join(__dirname, 'fonts', 'Poppins-ExtraBold.ttf') },
-  'archivo-black': { label: 'Archivo Black', path: path.join(__dirname, 'fonts', 'ArchivoBlack-Regular.ttf') },
-  'bebas-neue': { label: 'Bebas Neue', path: path.join(__dirname, 'fonts', 'BebasNeue-Regular.ttf') },
-  anton: { label: 'Anton', path: path.join(__dirname, 'fonts', 'Anton-Regular.ttf') },
-  'burbank-condensed': { label: 'Burbank Big Condensed', system: true, match: isBurbankBigCondensed(false) },
-  'burbank-condensed-bold': { label: 'Burbank Big Condensed Bold', system: true, match: isBurbankBigCondensed(true) },
+  montserrat: bundledFont('Montserrat SemiBold', 'Montserrat-SemiBold.ttf'),
+  poppins: bundledFont('Poppins ExtraBold', 'Poppins-ExtraBold.ttf'),
+  manrope: bundledFont('Manrope ExtraBold', 'Manrope-ExtraBold.ttf'),
+  'archivo-black': bundledFont('Archivo Black', 'ArchivoBlack-Regular.ttf'),
+  anton: bundledFont('Anton', 'Anton-Regular.ttf'),
+  'bebas-neue': bundledFont('Bebas Neue', 'BebasNeue-Regular.ttf'),
+  'fjalla-one': bundledFont('Fjalla One', 'FjallaOne-Regular.ttf'),
+  kanit: bundledFont('Kanit Bold', 'Kanit-Bold.ttf'),
+  'alfa-slab-one': bundledFont('Alfa Slab One', 'AlfaSlabOne-Regular.ttf'),
+  'titan-one': bundledFont('Titan One', 'TitanOne-Regular.ttf'),
+  'paytone-one': bundledFont('Paytone One', 'PaytoneOne-Regular.ttf'),
+  righteous: bundledFont('Righteous', 'Righteous-Regular.ttf'),
+  bangers: bundledFont('Bangers', 'Bangers-Regular.ttf'),
+  'luckiest-guy': bundledFont('Luckiest Guy', 'LuckiestGuy-Regular.ttf'),
 };
 const DEFAULT_FONT_ID = 'montserrat';
 
@@ -171,54 +177,38 @@ function getSystemFontPath(fontId) {
   return systemFontPathCache.get(fontId);
 }
 
-// Legacy default-resolution path, kept only for the one-line boot log in
-// server.js — actual per-render font choice now goes through
-// resolveFontEntry() below, driven by the caption font dropdown.
+// Kept only for the one-line boot log in server.js — actual per-render font
+// choice now goes through resolveFontEntry() below, driven by the caption
+// font dropdown. Every font is bundled, so this is always the default file.
 let resolvedFontPath = null;
 function resolveFontPath() {
   if (resolvedFontPath) return resolvedFontPath;
-  const systemProxima = getSystemFontPath('proxima-nova');
-  if (systemProxima) {
-    console.log(`[caption] Using system Proxima Nova Semibold: ${systemProxima}`);
-  } else {
-    console.log('[caption] Proxima Nova Semibold not found on this system — falling back to bundled Montserrat SemiBold.');
-  }
-  resolvedFontPath = systemProxima || FONT_REGISTRY[DEFAULT_FONT_ID].path;
+  resolvedFontPath = FONT_REGISTRY[DEFAULT_FONT_ID].path;
+  console.log(`[caption] Default caption font: ${FONT_REGISTRY[DEFAULT_FONT_ID].label} (bundled).`);
   return resolvedFontPath;
 }
 
-// Proxima Nova is TikTok's actual caption font, so it's the preferred
-// default whenever it's genuinely installed — falling back to bundled
-// Montserrat (DEFAULT_FONT_ID) only when it isn't, never silently
-// substituting a different font for one the user explicitly picked.
+// All fonts are bundled now, so the default is simply DEFAULT_FONT_ID.
 function resolveDefaultFontId() {
-  return getSystemFontPath('proxima-nova') ? 'proxima-nova' : DEFAULT_FONT_ID;
+  return DEFAULT_FONT_ID;
 }
 
-// Reports every selectable caption font, whether it's actually usable on
-// this machine right now (the frontend uses this to gray out system fonts
-// like Proxima Nova or Burbank Big Condensed when they aren't installed,
-// instead of silently substituting another font), and which one should be
-// pre-selected by default.
+// Reports every selectable caption font. They're all bundled with the app,
+// so every one is always usable (available: true) — nothing to gray out as
+// "not installed" anymore.
 function getFontOptions() {
   const defaultId = resolveDefaultFontId();
   return Object.entries(FONT_REGISTRY).map(([id, entry]) => ({
     id,
     label: entry.label,
-    available: entry.system ? !!getSystemFontPath(id) : true,
+    available: true,
     isDefault: id === defaultId,
   }));
 }
 
 function resolveFontEntry(fontId) {
   const id = FONT_REGISTRY[fontId] ? fontId : resolveDefaultFontId();
-  const entry = FONT_REGISTRY[id];
-  if (entry.system) {
-    const systemPath = getSystemFontPath(id);
-    if (systemPath) return { id, path: systemPath };
-    return { id: DEFAULT_FONT_ID, path: FONT_REGISTRY[DEFAULT_FONT_ID].path };
-  }
-  return { id, path: entry.path };
+  return { id, path: FONT_REGISTRY[id].path };
 }
 
 const fontCache = new Map(); // resolved file path -> parsed opentype Font
@@ -241,7 +231,22 @@ function escapeXml(value) {
 }
 
 function measureWidth(font, text, fontSize) {
-  return font.getAdvanceWidth(text, fontSize);
+  try {
+    return font.getAdvanceWidth(text, fontSize);
+  } catch (err) {
+    // Some display fonts (e.g. Bangers, Paytone One) carry GSUB tables
+    // opentype.js can't apply and throw while shaping. This width only feeds
+    // wrap/positioning math — the actual glyph rendering is done by resvg
+    // straight from the TTF — so fall back to summing per-glyph advance
+    // widths (cmap lookup only, no shaping), which never throws.
+    const scale = fontSize / font.unitsPerEm;
+    let width = 0;
+    for (const ch of text) {
+      const glyph = font.charToGlyph(ch);
+      width += (glyph.advanceWidth || 0) * scale;
+    }
+    return width;
+  }
 }
 
 // Matches a single emoji character (optionally followed by the U+FE0F
@@ -409,15 +414,12 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
 // attributes appear anywhere in this function. The drop shadow (when on)
 // sits under the box itself, not the text — matching how CapCut's classic
 // box caption casts one shadow for the whole bubble.
-// Box style: unlike a single rectangle sized to the widest line, TikTok's
-// own box caption gives EACH line its own rounded pill sized to that
-// line's own text width, stacked together — so a short line under a long
-// one reads as a visibly narrower, separately-rounded step, not centered
-// inside one shared-width rectangle. Rendered as N independently-rounded
-// <rect>s (one per line, same fill, touching with a 1px overlap to avoid
-// any antialiasing seam) rather than a single path: at the seam between
-// two differently-sized rows, each row's own corner rounding naturally
-// produces the notched/connected look, with no custom path math needed.
+// Box style: text on a single rounded box sized to the widest line and
+// centered, so every line shares one continuous bubble. (An earlier version
+// drew a separate per-line pill for each row; lines of different widths then
+// left a visible gap between them — a short line floated in its own detached
+// bubble under a long one — which read as broken. One shared box removes any
+// seam.) The drop shadow (when on) sits under the box, not the text.
 function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color }) {
   const boxColor = color || '#ffffff';
   const textColor = getContrastTextColor(boxColor);
@@ -428,7 +430,6 @@ function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color }) {
 
   const boxY = OUTER_PADDING;
   const lineCount = lines.length;
-  const ROW_OVERLAP = 1;
 
   // A single consistent radius for every row (derived from what a lone
   // single-line box's height would be), rather than each row's own actual
@@ -457,27 +458,16 @@ function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color }) {
 
   const height = Math.ceil(rows[lineCount - 1].bottom + OUTER_PADDING);
 
-  let boxRects = '';
-  rows.forEach((row, i) => {
-    const rectHeight = row.bottom - row.top + (i < lineCount - 1 ? ROW_OVERLAP : 0);
-    boxRects += `<rect x="${row.rectX.toFixed(2)}" y="${row.top.toFixed(2)}" width="${row.rectWidth.toFixed(2)}" height="${rectHeight.toFixed(2)}" rx="${boxRadius.toFixed(2)}" ry="${boxRadius.toFixed(2)}" fill="${boxColor}"/>`;
-  });
-
-  // Two adjacent rows of (near-)equal width would otherwise each round
-  // their touching corners away from the seam, pinching the connection
-  // into a visible waist even though there's no real width change to
-  // justify a notch there. A small square filler patch spanning the seam
-  // flattens that into one continuous edge — matching how TikTok's own
-  // same-width stacked lines connect with no notch at all.
-  const SAME_WIDTH_TOLERANCE = 3;
-  for (let i = 0; i < lineCount - 1; i++) {
-    if (Math.abs(rows[i].rectWidth - rows[i + 1].rectWidth) <= SAME_WIDTH_TOLERANCE) {
-      const fillerWidth = Math.min(rows[i].rectWidth, rows[i + 1].rectWidth);
-      const fillerX = width / 2 - fillerWidth / 2;
-      const seamY = rows[i].bottom;
-      boxRects += `<rect x="${fillerX.toFixed(2)}" y="${(seamY - boxRadius).toFixed(2)}" width="${fillerWidth.toFixed(2)}" height="${(boxRadius * 2).toFixed(2)}" fill="${boxColor}"/>`;
-    }
-  }
+  // One unified rounded box wrapping the whole stack, sized to the widest
+  // row, rather than a per-line pill for each row. Per-line pills left a
+  // visible gap/step between lines of different widths (a short line under a
+  // long one floated in its own separate bubble); a single box reads as one
+  // solid caption bubble with no seams to break — matching the live preview.
+  const boxWidth = Math.max(...rectWidths);
+  const boxX = width / 2 - boxWidth / 2;
+  const boxTop = rows[0].top;
+  const boxHeight = rows[lineCount - 1].bottom - boxTop;
+  const boxRects = `<rect x="${boxX.toFixed(2)}" y="${boxTop.toFixed(2)}" width="${boxWidth.toFixed(2)}" height="${boxHeight.toFixed(2)}" rx="${boxRadius.toFixed(2)}" ry="${boxRadius.toFixed(2)}" fill="${boxColor}"/>`;
 
   let elements = dropShadow ? buildDropShadowFilterDef(fontSize) : '';
   // Grouped under one filter so the connected stack casts a single unified

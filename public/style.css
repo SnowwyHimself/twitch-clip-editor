@@ -19,9 +19,8 @@
 
 /* Same bundled TTFs caption.js rasterizes with server-side (served at
    /fonts via express.static) — reused here so the live preview's text
-   matches the real render's font as closely as CSS text allows.
-   Proxima Nova has no @font-face on purpose: it's a real system font, only
-   ever referenced by name, never bundled/copied (see caption.js). */
+   matches the real render's font as closely as CSS text allows. Every font
+   is bundled; there are no system-resolved fonts anymore. */
 @font-face {
   font-family: 'Montserrat SemiBold Preview';
   src: url('/fonts/Montserrat-SemiBold.ttf') format('truetype');
@@ -50,6 +49,46 @@
 @font-face {
   font-family: 'Anton Preview';
   src: url('/fonts/Anton-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Fjalla One Preview';
+  src: url('/fonts/FjallaOne-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Kanit Bold Preview';
+  src: url('/fonts/Kanit-Bold.ttf') format('truetype');
+  font-weight: 700;
+}
+@font-face {
+  font-family: 'Alfa Slab One Preview';
+  src: url('/fonts/AlfaSlabOne-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Titan One Preview';
+  src: url('/fonts/TitanOne-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Paytone One Preview';
+  src: url('/fonts/PaytoneOne-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Righteous Preview';
+  src: url('/fonts/Righteous-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Bangers Preview';
+  src: url('/fonts/Bangers-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Luckiest Guy Preview';
+  src: url('/fonts/LuckiestGuy-Regular.ttf') format('truetype');
   font-weight: 400;
 }
 
@@ -294,6 +333,45 @@ body {
 
 .preview-overlay.dragging {
   cursor: grabbing;
+}
+
+/* Corner resize handles — hidden until the overlay is selected. The overlay
+   box is overflow:hidden (to clip the crop), so handles sit flush inside the
+   corners rather than straddling the edge. */
+.overlay-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  display: none;
+  z-index: 4;
+  touch-action: none;
+}
+.preview-overlay.selected .overlay-handle {
+  display: block;
+}
+.overlay-handle-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.overlay-handle-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.overlay-handle-sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+.overlay-handle-se {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
 }
 
 /* Hidden by the playhead being outside the overlay's clip range (kept in
@@ -567,6 +645,45 @@ input[type="range"] {
   padding: 8px 12px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+/* Keyframe controls (Video tab) */
+.kf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kf-diamond {
+  font-size: 14px;
+  line-height: 1;
+  padding: 6px 12px;
+  color: var(--text-dim, #9a9aa8);
+}
+.kf-diamond.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.kf-track-btn {
+  width: 100%;
+  margin-top: 8px;
+}
+.kf-track-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 4px 0;
+  cursor: pointer;
+  text-align: left;
+}
+.link-btn:hover {
+  text-decoration: underline;
 }
 
 .secondary-btn:hover {

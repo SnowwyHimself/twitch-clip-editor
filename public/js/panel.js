@@ -34,8 +34,14 @@ import {
   updateSound,
   removeSound,
   selectedSound,
+  addKeyframe,
+  removeKeyframe,
+  clearKeyframes,
+  keyframeAt,
+  keyframeTransformAt,
 } from './state.js';
 import { getCurrentTime, getCurrentOutputTime } from './preview.js';
+import { trackFace } from './facetrack.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile } from './api.js';
 
 const CAPTION_COLORS = [
@@ -88,6 +94,11 @@ function lookupElements() {
     panXValue: byId('pan-x-value'),
     panYSlider: byId('pan-y-slider'),
     panYValue: byId('pan-y-value'),
+    panLockToggle: byId('pan-lock-toggle'),
+    kfAddBtn: byId('kf-add-btn'),
+    kfStatus: byId('kf-status'),
+    kfClearBtn: byId('kf-clear-btn'),
+    faceTrackBtn: byId('face-track-btn'),
     speedSlider: byId('speed-slider'),
     speedValue: byId('speed-value'),
     mirrorToggle: byId('mirror-toggle'),
@@ -223,9 +234,17 @@ function buildAspectButtons() {
 }
 
 function wireVideoControls() {
+  // When keyframes exist, editing zoom/position writes into the keyframe at
+  // the playhead (creating one if needed) — the CapCut behavior — so you
+  // scrub, tweak, and it records. With no keyframes it's just the static value.
+  const keyframeEditIfActive = () => {
+    if (state.keyframes.length === 0) return;
+    addKeyframe(getCurrentTime(), { zoom: state.zoom, panX: state.panX, panY: state.panY });
+  };
   els.zoomSlider.addEventListener('input', () => {
     state.zoom = parseFloat(els.zoomSlider.value) / 100;
     els.zoomValue.textContent = `${els.zoomSlider.value}%`;
+    keyframeEditIfActive();
     emit('settings');
   });
   els.blurSlider.addEventListener('input', () => {
@@ -236,11 +255,13 @@ function wireVideoControls() {
   els.panXSlider.addEventListener('input', () => {
     state.panX = parseFloat(els.panXSlider.value);
     els.panXValue.textContent = els.panXSlider.value;
+    keyframeEditIfActive();
     emit('settings');
   });
   els.panYSlider.addEventListener('input', () => {
     state.panY = parseFloat(els.panYSlider.value);
     els.panYValue.textContent = els.panYSlider.value;
+    keyframeEditIfActive();
     emit('settings');
   });
   els.speedSlider.addEventListener('input', () => {
@@ -252,7 +273,112 @@ function wireVideoControls() {
     state.mirror = els.mirrorToggle.checked;
     emit('settings');
   });
+  // Position lock: when on, applying a preset never moves the clip (panX/panY
+  // stay put). Persisted so the choice sticks across sessions. Default on —
+  // position is per-clip framing, not something a shared "look" should hijack.
+  els.panLockToggle.checked = positionLocked();
+  els.panLockToggle.addEventListener('change', () => {
+    localStorage.setItem(PAN_LOCK_KEY, els.panLockToggle.checked ? '1' : '0');
+  });
   wirePresets();
+  wireKeyframes();
+}
+
+// --- keyframes (zoom/position animation) --------------------------------------
+
+function wireKeyframes() {
+  // ◆ toggles a keyframe at the playhead: adds/updates one using the current
+  // zoom & position, or removes the one already sitting there.
+  els.kfAddBtn.addEventListener('click', () => {
+    const t = getCurrentTime();
+    const existing = keyframeAt(t);
+    if (existing) removeKeyframe(existing.id);
+    else addKeyframe(t, { zoom: state.zoom, panX: state.panX, panY: state.panY });
+  });
+  els.kfClearBtn.addEventListener('click', () => clearKeyframes());
+  els.faceTrackBtn.addEventListener('click', runFaceTrack);
+  on('keyframes', renderKeyframeUI);
+  // As the playhead moves over a keyframed range, show the interpolated
+  // zoom/position on the sliders (read-out) and light ◆ on exact keyframes.
+  on('time', () => {
+    if (state.keyframes.length) syncKeyframeSliders();
+    renderKeyframeUI();
+  });
+  renderKeyframeUI();
+}
+
+function renderKeyframeUI() {
+  const n = state.keyframes.length;
+  const onKf = n > 0 && !!keyframeAt(getCurrentTime());
+  els.kfAddBtn.classList.toggle('active', onKf);
+  els.kfClearBtn.classList.toggle('hidden', n === 0);
+  if (n === 0) {
+    els.kfStatus.textContent =
+      'No keyframes — the clip holds still. Drop one here, move the playhead, change zoom or position to animate a punch-in.';
+  } else {
+    els.kfStatus.textContent = `${n} keyframe${n === 1 ? '' : 's'} — the clip animates zoom & position between them.${
+      onKf ? ' (a keyframe is at the playhead)' : ''
+    }`;
+  }
+}
+
+// Pushes the interpolated transform at the playhead onto the sliders so they
+// read out the current animated value (skips whichever the user is dragging).
+function syncKeyframeSliders() {
+  const tf = keyframeTransformAt(getCurrentTime());
+  if (!tf) return;
+  if (document.activeElement !== els.zoomSlider) {
+    els.zoomSlider.value = Math.round(tf.zoom * 100);
+    els.zoomValue.textContent = `${Math.round(tf.zoom * 100)}%`;
+  }
+  if (document.activeElement !== els.panXSlider) {
+    els.panXSlider.value = Math.round(tf.panX);
+    els.panXValue.textContent = String(Math.round(tf.panX));
+  }
+  if (document.activeElement !== els.panYSlider) {
+    els.panYSlider.value = Math.round(tf.panY);
+    els.panYValue.textContent = String(Math.round(tf.panY));
+  }
+  // Keep the live state values aligned with what's shown, so a subsequent
+  // slider tweak upserts a keyframe from the right baseline.
+  state.zoom = tf.zoom;
+  state.panX = tf.panX;
+  state.panY = tf.panY;
+}
+
+// Auto-reframe: scans the clip for a face and fills in follow keyframes.
+async function runFaceTrack() {
+  if (!state.source) {
+    els.kfStatus.textContent = 'Load a clip first, then track a face.';
+    return;
+  }
+  const btn = els.faceTrackBtn;
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  els.kfStatus.textContent = 'Scanning the clip for a face…';
+  try {
+    const result = await trackFace({
+      onProgress: (p) => {
+        els.kfStatus.textContent = `Scanning for a face… ${Math.round(p * 100)}%`;
+      },
+    });
+    if (result.ok) {
+      renderKeyframeUI();
+      els.kfStatus.textContent = `Tracking a face with ${result.keyframes} keyframes — tweak or clear them like any others.`;
+    } else if (result.reason === 'no-face') {
+      els.kfStatus.textContent = 'No face found — this works best on face-forward clips. You can still keyframe by hand.';
+    } else if (result.reason === 'load-failed') {
+      els.kfStatus.textContent = 'The face detector could not load. Please try again.';
+    } else {
+      els.kfStatus.textContent = 'Load a clip first, then track a face.';
+    }
+  } catch {
+    els.kfStatus.textContent = 'Face tracking hit an error — please try again.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 }
 
 // --- presets (up to 3, saved in localStorage) ---------------------------------------
@@ -262,6 +388,13 @@ function wireVideoControls() {
 
 const PRESETS_KEY = 'clipEditor.presets.v1';
 const DEFAULT_PRESET_KEY = 'clipEditor.defaultPreset.v1';
+const PAN_LOCK_KEY = 'clipEditor.lockPosition.v1';
+
+// Defaults to locked (missing key === locked) so presets don't move framing
+// out of the box — the main source of "the preset messed up my clip".
+function positionLocked() {
+  return localStorage.getItem(PAN_LOCK_KEY) !== '0';
+}
 
 function loadPresets() {
   try {
@@ -296,8 +429,12 @@ export function applyPresetSettings(s) {
   if (s.aspect) state.aspect = { ...s.aspect };
   if (Number.isFinite(s.zoom)) state.zoom = s.zoom;
   if (Number.isFinite(s.blur)) state.blur = s.blur;
-  if (Number.isFinite(s.panX)) state.panX = s.panX;
-  if (Number.isFinite(s.panY)) state.panY = s.panY;
+  // Position is per-clip framing. Unless the user has unlocked it, a preset
+  // must NOT move the clip — leaving panX/panY exactly where they are.
+  if (!positionLocked()) {
+    if (Number.isFinite(s.panX)) state.panX = s.panX;
+    if (Number.isFinite(s.panY)) state.panY = s.panY;
+  }
   if (Number.isFinite(s.speed)) state.speed = s.speed;
   if (typeof s.mirror === 'boolean') state.mirror = s.mirror;
   buildAspectButtons();
