@@ -14,6 +14,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="$ROOT/resources/bin-win"
 mkdir -p "$BIN_DIR"
 
+# @resvg/resvg-js (the caption renderer) is a native module whose real code
+# lives in a platform-specific package. When we build the Windows app on a
+# Mac, npm only installed the macOS binding, so the Windows one is absent
+# and the packaged app crashes on launch with "Cannot find module
+# '@resvg/resvg-js-win32-x64-msvc'". Force-install the Windows x64 binding
+# (matching the resvg-js version) so electron-builder can bundle it. --no-save
+# keeps package.json clean; the mac build's `files` config excludes this
+# package so it never leaks into the .dmg.
+echo "Installing Windows resvg native binding (cross-platform build fix)..."
+RESVG_VER="$(node -e "console.log(require('$ROOT/node_modules/@resvg/resvg-js/package.json').version)")"
+( cd "$ROOT" && npm install "@resvg/resvg-js-win32-x64-msvc@$RESVG_VER" --os=win32 --cpu=x64 --no-save --force >/dev/null 2>&1 )
+test -f "$ROOT/node_modules/@resvg/resvg-js-win32-x64-msvc/resvgjs.win32-x64-msvc.node" \
+  && echo "  win32 resvg binding present ✓" || { echo "  ERROR: win32 resvg binding missing"; exit 1; }
+
 FFMPEG_ZIP_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip"
 FFMPEG_ZIP_ENTRY="ffmpeg-n7.1-latest-win64-gpl-7.1/bin/ffmpeg.exe"
 
