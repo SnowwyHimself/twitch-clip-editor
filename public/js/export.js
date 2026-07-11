@@ -74,6 +74,8 @@ function buildFormData() {
   formData.append('panY', state.panY);
   formData.append('mirror', state.mirror);
   formData.append('speed', state.speed);
+  formData.append('layout', state.layout || 'fill');
+  if (state.layout === 'split') formData.append('split', JSON.stringify(state.split));
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));
 
   // Face-tracking auto-reframe: a horizontal face path (x = 0..1 of source

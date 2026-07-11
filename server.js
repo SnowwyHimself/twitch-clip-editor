@@ -206,6 +206,31 @@ function buildFaceTrack(body) {
     .sort((a, b) => a.t - b.t);
 }
 
+// Facecam split config { ratio, facecam:{cx,cy,zoom}, gameplay:{cx,cy,zoom} }.
+// Only returned when layout === 'split'.
+function buildSplit(body) {
+  if (body.layout !== 'split') return null;
+  let raw = body.split;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const region = (r) => ({
+    cx: Math.max(0, Math.min(1, parseFloat(r && r.cx))) || 0.5,
+    cy: Math.max(0, Math.min(1, parseFloat(r && r.cy))) || 0.5,
+    zoom: Math.max(1, parseFloat(r && r.zoom) || 1),
+  });
+  return {
+    ratio: Math.max(0.15, Math.min(0.85, parseFloat(raw.ratio) || 0.34)),
+    facecam: region(raw.facecam),
+    gameplay: region(raw.gameplay),
+  };
+}
+
 function buildSegments(body) {
   let raw = body.segments;
   if (typeof raw === 'string') {
@@ -514,21 +539,70 @@ function buildFaceTrackBase(canvasW, canvasH, faceTrack, sourceLabel, speed, mir
   return `${stage}${fgSource}${cover},${crop}[c0]`;
 }
 
-function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack) {
+function evenInt(n) {
+  const r = Math.round(n);
+  return r % 2 === 0 ? r : r - 1;
+}
+
+// Source-space crop window for one split region — the SAME formula the preview
+// uses (see preview.js splitCropWindow) so the render matches pixel-for-pixel.
+function splitCropWindowServer(srcW, srcH, regionAspect, region) {
+  const baseW = Math.min(srcW, srcH * regionAspect);
+  const cropW = baseW / Math.max(1, (region && region.zoom) || 1);
+  const cropH = cropW / regionAspect;
+  const cx = (region && region.cx) != null ? region.cx : 0.5;
+  const cy = (region && region.cy) != null ? region.cy : 0.5;
+  const winX = Math.max(0, Math.min(srcW - cropW, cx * srcW - cropW / 2));
+  const winY = Math.max(0, Math.min(srcH - cropH, cy * srcH - cropH / 2));
+  return { cropW, cropH, winX, winY };
+}
+
+// Facecam split base: crop the facecam window to the top region and the
+// gameplay window to the bottom region, then vstack them into the full canvas.
+function buildSplitBase(canvasW, canvasH, split, srcW, srcH, sourceLabel, speed, mirror) {
+  const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 2);
+  const [topSrc, botSrc] = labels;
+  const ratio = Math.max(0.15, Math.min(0.85, split.ratio || 0.34));
+  const topH = evenInt(canvasH * ratio);
+  const botH = canvasH - topH;
+  const regionChain = (win, w, h) => {
+    const cw = Math.max(2, evenInt(win.cropW));
+    const ch = Math.max(2, evenInt(win.cropH));
+    const wx = Math.max(0, Math.min(srcW - cw, Math.round(win.winX)));
+    const wy = Math.max(0, Math.min(srcH - ch, Math.round(win.winY)));
+    return `crop=${cw}:${ch}:${wx}:${wy},scale=${w}:${h}`;
+  };
+  const topWin = splitCropWindowServer(srcW, srcH, canvasW / topH, split.facecam);
+  const botWin = splitCropWindowServer(srcW, srcH, canvasW / botH, split.gameplay);
+  let graph = stage;
+  graph += `${topSrc}${regionChain(topWin, canvasW, topH)}[sptop]`;
+  graph += `;${botSrc}${regionChain(botWin, canvasW, botH)}[spbot]`;
+  graph += `;[sptop][spbot]vstack[c0]`;
+  return graph;
+}
+
+// Stacks the caption/media overlay stages onto a base composite and finalises.
+function composeOverlayStages(graph, overlayStages, startLabel) {
+  let current = startLabel || '[c0]';
+  overlayStages.forEach((stage, i) => {
+    const next = `[c${i + 1}]`;
+    if (stage.pre) graph += `;${stage.pre}`;
+    const enable = stage.enable ? `:enable='${stage.enable}'` : '';
+    graph += `;${current}${stage.inputLabel}overlay=${stage.x}:${stage.y}${enable}${next}`;
+    current = next;
+  });
+  return `${graph};${current}setsar=1[outv]`;
+}
+
+function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack, split, srcW, srcH) {
+  // Facecam split layout overrides the fill composite entirely.
+  if (split && srcW && srcH) {
+    return composeOverlayStages(buildSplitBase(canvasW, canvasH, split, srcW, srcH, sourceLabel, speed, mirror), overlayStages);
+  }
   // Face-tracking overrides the normal blur-bg composite with a frame-filling
   // reframe that pans to follow the chosen face.
   if (Array.isArray(faceTrack) && faceTrack.length >= 1) {
-    let graph = buildFaceTrackBase(canvasW, canvasH, faceTrack, sourceLabel, speed, mirror);
-    let current = '[c0]';
-    overlayStages.forEach((stage, i) => {
-      const next = `[c${i + 1}]`;
-      if (stage.pre) graph += `;${stage.pre}`;
-      const enable = stage.enable ? `:enable='${stage.enable}'` : '';
-      graph += `;${current}${stage.inputLabel}overlay=${stage.x}:${stage.y}${enable}${next}`;
-      current = next;
-    });
-    graph += `;${current}setsar=1[outv]`;
-    return graph;
+    return composeOverlayStages(buildFaceTrackBase(canvasW, canvasH, faceTrack, sourceLabel, speed, mirror), overlayStages);
   }
   // With keyframes, zoom/pan are animated per-frame by a zoompan applied to
   // the finished composite (below), so the base is built neutral (zoom 1, no
@@ -567,17 +641,7 @@ function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlaySta
     graph += `;[c0]${buildKeyframeZoompan(canvasW, canvasH, keyframes, fps)}[c0z]`;
     current = '[c0z]';
   }
-  overlayStages.forEach((stage, i) => {
-    const next = `[c${i + 1}]`;
-    if (stage.pre) graph += `;${stage.pre}`;
-    const enable = stage.enable ? `:enable='${stage.enable}'` : '';
-    graph += `;${current}${stage.inputLabel}overlay=${stage.x}:${stage.y}${enable}${next}`;
-    current = next;
-  });
-
-  graph += `;${current}setsar=1[outv]`;
-
-  return graph;
+  return composeOverlayStages(graph, overlayStages, current);
 }
 
 // Cutting out a middle piece (rather than just trimming the two ends)
@@ -660,7 +724,7 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, onProgress) {
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
   // straight [0:v]/[0:a]. A single kept range starting at output 0 (the
@@ -757,7 +821,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
 
   let filterComplex =
     segmentPrefix +
-    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack);
+    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height);
 
   // atempo only accepts 0.5-2.0 per instance, which matches the slider's
   // own range exactly, so a single atempo call always suffices — no need
@@ -1025,7 +1089,7 @@ function buildSection(body) {
   return { start, end };
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -1057,7 +1121,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -1072,7 +1136,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -1080,7 +1144,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -1211,7 +1275,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildMediaOverlays(req.body || {}, req.files.overlay),
     buildAudioOverlays(req.body || {}, req.files.audioTrack),
     buildKeyframes(req.body || {}),
-    buildFaceTrack(req.body || {})
+    buildFaceTrack(req.body || {}),
+    buildSplit(req.body || {})
   );
 });
 
@@ -1246,7 +1311,8 @@ app.post(
       buildMediaOverlays(req.body, req.files.overlay),
       buildAudioOverlays(req.body, req.files.audioTrack),
       buildKeyframes(req.body),
-      buildFaceTrack(req.body)
+      buildFaceTrack(req.body),
+      buildSplit(req.body)
     );
   }
 );

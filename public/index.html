@@ -44,6 +44,9 @@
       <div id="preview-frame" class="preview-frame no-source">
         <video id="preview-bg-video" class="preview-video preview-bg" muted loop playsinline></video>
         <video id="preview-fg-video" class="preview-video preview-fg" muted loop playsinline></video>
+        <div id="split-top" class="split-region hidden"><video class="split-video" muted loop playsinline></video></div>
+        <div id="split-bottom" class="split-region hidden"><video class="split-video" muted loop playsinline></video></div>
+        <div id="split-divider" class="split-divider hidden" title="Drag to change the split ratio"></div>
         <div id="preview-placeholder" class="preview-placeholder">
           <p>Paste a clip URL above, or open a video file</p>
           <div id="start-recent" class="start-recent hidden">
@@ -92,26 +95,42 @@
         </div>
 
         <div class="field-group">
+          <label class="field-label">Layout</label>
+          <div class="toggle-group" id="layout-group">
+            <button type="button" class="toggle-btn active" data-layout="fill">Fill</button>
+            <button type="button" class="toggle-btn" data-layout="split">Facecam split</button>
+          </div>
+        </div>
+
+        <div class="field-group hidden" id="split-controls">
+          <label class="field-label" for="facecam-zoom">Facecam zoom <span id="facecam-zoom-value">100%</span></label>
+          <input id="facecam-zoom" type="range" min="100" max="300" value="100" step="1" />
+          <label class="field-label" for="gameplay-zoom" style="margin-top:10px">Gameplay zoom <span id="gameplay-zoom-value">100%</span></label>
+          <input id="gameplay-zoom" type="range" min="100" max="300" value="100" step="1" />
+          <p class="field-hint">Drag inside each region to reposition it, and drag the divider to change the split.</p>
+        </div>
+
+        <div class="field-group fill-only">
           <label class="field-label" for="zoom-slider">Zoom <span id="zoom-value">100%</span></label>
           <input id="zoom-slider" type="range" min="100" max="200" value="100" step="1" />
         </div>
 
-        <div class="field-group">
+        <div class="field-group fill-only">
           <label class="field-label" for="blur-slider">Background blur <span id="blur-value">0%</span></label>
           <input id="blur-slider" type="range" min="0" max="100" value="0" step="1" />
         </div>
 
-        <div class="field-group">
+        <div class="field-group fill-only">
           <label class="field-label" for="pan-x-slider">Position X <span id="pan-x-value">0</span></label>
           <input id="pan-x-slider" type="range" min="-100" max="100" value="0" step="1" />
         </div>
 
-        <div class="field-group">
+        <div class="field-group fill-only">
           <label class="field-label" for="pan-y-slider">Position Y <span id="pan-y-value">0</span></label>
           <input id="pan-y-slider" type="range" min="-100" max="100" value="0" step="1" />
         </div>
 
-        <div class="field-group">
+        <div class="field-group fill-only">
           <label class="switch-row" for="pan-lock-toggle">
             <span class="field-label switch-label">Lock position</span>
             <span class="switch">
@@ -122,7 +141,7 @@
           <p class="field-hint">When on, presets never move the clip's position — you frame each clip yourself.</p>
         </div>
 
-        <div class="field-group" id="keyframe-group">
+        <div class="field-group fill-only" id="keyframe-group">
           <div class="kf-row">
             <span class="field-label">Zoom &amp; position keyframes</span>
             <button type="button" id="kf-add-btn" class="secondary-btn kf-diamond" title="Add / update a keyframe at the playhead">◆</button>
@@ -131,7 +150,7 @@
           <button type="button" id="kf-clear-btn" class="link-btn hidden">Clear keyframes</button>
         </div>
 
-        <div class="field-group" id="facetrack-group">
+        <div class="field-group fill-only" id="facetrack-group">
           <button type="button" id="face-track-btn" class="secondary-btn kf-track-btn">🎯 Select a face to track</button>
           <label class="switch-row hidden" id="facetrack-toggle-row" for="facetrack-toggle">
             <span class="field-label switch-label">Face tracking</span>

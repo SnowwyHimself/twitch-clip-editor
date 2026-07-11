@@ -90,6 +90,13 @@ function lookupElements() {
     transStatus: byId('trans-status'),
     transList: byId('trans-list'),
     aspectGroup: byId('aspect-ratio-group'),
+    panelVideo: byId('panel-video'),
+    layoutButtons: () => document.querySelectorAll('#layout-group [data-layout]'),
+    splitControls: byId('split-controls'),
+    facecamZoom: byId('facecam-zoom'),
+    facecamZoomValue: byId('facecam-zoom-value'),
+    gameplayZoom: byId('gameplay-zoom'),
+    gameplayZoomValue: byId('gameplay-zoom-value'),
     zoomSlider: byId('zoom-slider'),
     zoomValue: byId('zoom-value'),
     blurSlider: byId('blur-slider'),
@@ -288,8 +295,37 @@ function wireVideoControls() {
   els.panLockToggle.addEventListener('change', () => {
     localStorage.setItem(PAN_LOCK_KEY, els.panLockToggle.checked ? '1' : '0');
   });
+  // Layout: Fill vs Facecam split.
+  els.layoutButtons().forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.layout = btn.dataset.layout;
+      emit('settings');
+    });
+  });
+  els.facecamZoom.addEventListener('input', () => {
+    state.split.facecam.zoom = parseFloat(els.facecamZoom.value) / 100;
+    els.facecamZoomValue.textContent = `${els.facecamZoom.value}%`;
+    emit('settings');
+  });
+  els.gameplayZoom.addEventListener('input', () => {
+    state.split.gameplay.zoom = parseFloat(els.gameplayZoom.value) / 100;
+    els.gameplayZoomValue.textContent = `${els.gameplayZoom.value}%`;
+    emit('settings');
+  });
+
   wirePresets();
   wireKeyframes();
+}
+
+function updateLayoutUI() {
+  const split = state.layout === 'split';
+  els.panelVideo.classList.toggle('split-mode', split);
+  els.splitControls.classList.toggle('hidden', !split);
+  els.layoutButtons().forEach((b) => b.classList.toggle('active', b.dataset.layout === state.layout));
+  els.facecamZoom.value = Math.round((state.split.facecam.zoom || 1) * 100);
+  els.facecamZoomValue.textContent = `${els.facecamZoom.value}%`;
+  els.gameplayZoom.value = Math.round((state.split.gameplay.zoom || 1) * 100);
+  els.gameplayZoomValue.textContent = `${els.gameplayZoom.value}%`;
 }
 
 // --- keyframes (zoom/position animation) --------------------------------------
@@ -1053,6 +1089,7 @@ function refreshVideoPanel() {
   if (a !== els.speedSlider) els.speedSlider.value = state.speed;
   els.speedValue.textContent = `${state.speed.toFixed(2)}x`;
   els.mirrorToggle.checked = state.mirror;
+  updateLayoutUI();
 }
 
 export function initPanel() {

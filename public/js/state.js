@@ -39,6 +39,17 @@ export const state = {
   // surrounding keyframes (see keyframeTransformAt).
   keyframes: [],
 
+  // Layout: 'fill' = one clip fills the canvas (zoom/pan/blur, the default).
+  // 'split' = Twitch vertical: a facecam region stacked on top of a gameplay
+  // region. Each region is a cover-crop of the source centred at (cx,cy) with
+  // its own zoom; ratio is the facecam region's share of the canvas height.
+  layout: 'fill',
+  split: {
+    ratio: 0.34,
+    facecam: { cx: 0.17, cy: 0.34, zoom: 2.2 }, // default: zoomed into the top-left (where facecams usually sit)
+    gameplay: { cx: 0.5, cy: 0.52, zoom: 1.2 }, // default: centred gameplay
+  },
+
   // Face tracking (auto-reframe). A distinct render mode from keyframes/pan:
   // when enabled the clip is shown as a frame-filling window that pans LEFT/
   // RIGHT only to follow the chosen face, clamped to the source edges (never

@@ -47,6 +47,11 @@ const guideX = document.getElementById('preview-guide-x');
 const guideY = document.getElementById('preview-guide-y');
 const overlaysContainer = document.getElementById('preview-overlays');
 const layersContainer = document.getElementById('text-layers');
+const splitTop = document.getElementById('split-top');
+const splitBottom = document.getElementById('split-bottom');
+const splitTopVideo = splitTop.querySelector('.split-video');
+const splitBottomVideo = splitBottom.querySelector('.split-video');
+const splitDivider = document.getElementById('split-divider');
 const controls = document.getElementById('preview-controls');
 const playBtn = document.getElementById('preview-play-btn');
 const seekSlider = document.getElementById('preview-seek');
@@ -780,10 +785,16 @@ function setLogicalPlaying(playing) {
     if (!gap) {
       fgVideo.play().catch(() => {});
       bgVideo.play().catch(() => {});
+      if (splitActive()) {
+        splitTopVideo.play().catch(() => {});
+        splitBottomVideo.play().catch(() => {});
+      }
     }
   } else {
     fgVideo.pause();
     bgVideo.pause();
+    splitTopVideo.pause();
+    splitBottomVideo.pause();
   }
   updatePlayButton();
 }
@@ -1038,12 +1049,137 @@ function applyClipTransform() {
   fgVideo.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${(state.mirror ? -1 : 1) * zoom}, ${zoom})`;
 }
 
+// --- facecam split layout ---------------------------------------------------
+
+function splitActive() {
+  return state.layout === 'split' && !!state.source;
+}
+
+// Source-space crop window for one region: the largest window of the region's
+// aspect, divided by zoom, centred at (cx,cy), clamped to the source. This
+// exact formula is mirrored in the ffmpeg export so preview and render match.
+function splitCropWindow(srcW, srcH, regionAspect, region) {
+  const baseW = Math.min(srcW, srcH * regionAspect);
+  const cropW = baseW / Math.max(1, region.zoom || 1);
+  const cropH = cropW / regionAspect;
+  const winX = Math.max(0, Math.min(srcW - cropW, (region.cx || 0.5) * srcW - cropW / 2));
+  const winY = Math.max(0, Math.min(srcH - cropH, (region.cy || 0.5) * srcH - cropH / 2));
+  return { cropW, cropH, winX, winY };
+}
+
+// Lays one region's video into its overflow-hidden box so it shows exactly the
+// crop window — same absolute-size-and-offset construction the overlay crop
+// uses, which maps 1:1 to ffmpeg crop+scale. Returns the display scale.
+function layoutSplitRegion(box, video, srcW, srcH, regionW, regionH, region) {
+  box.style.width = `${regionW}px`;
+  box.style.height = `${regionH}px`;
+  if (!srcW || !srcH || regionH <= 0) return 1;
+  const { cropW, winX, winY } = splitCropWindow(srcW, srcH, regionW / regionH, region);
+  const scale = regionW / cropW;
+  video.style.width = `${(srcW * scale).toFixed(2)}px`;
+  video.style.height = `${(srcH * scale).toFixed(2)}px`;
+  video.style.left = `${(-winX * scale).toFixed(2)}px`;
+  video.style.top = `${(-winY * scale).toFixed(2)}px`;
+  return scale;
+}
+
+function syncSplit() {
+  const active = splitActive();
+  splitTop.classList.toggle('hidden', !active);
+  splitBottom.classList.toggle('hidden', !active);
+  splitDivider.classList.toggle('hidden', !active);
+  fgVideo.classList.toggle('split-hidden', active);
+  if (!active) {
+    if (!splitTopVideo.paused) splitTopVideo.pause();
+    if (!splitBottomVideo.paused) splitBottomVideo.pause();
+    return;
+  }
+  if (splitTopVideo.src !== fgVideo.src) splitTopVideo.src = fgVideo.src;
+  if (splitBottomVideo.src !== fgVideo.src) splitBottomVideo.src = fgVideo.src;
+  const { width: frameW, height: frameH } = frameSize();
+  const srcW = (state.source && state.source.width) || fgVideo.videoWidth;
+  const srcH = (state.source && state.source.height) || fgVideo.videoHeight;
+  const ratio = Math.max(0.15, Math.min(0.85, state.split.ratio));
+  const topH = Math.round(frameH * ratio);
+  splitTop.style.top = '0px';
+  layoutSplitRegion(splitTop, splitTopVideo, srcW, srcH, frameW, topH, state.split.facecam);
+  splitBottom.style.top = `${topH}px`;
+  layoutSplitRegion(splitBottom, splitBottomVideo, srcW, srcH, frameW, frameH - topH, state.split.gameplay);
+  splitDivider.style.top = `${topH}px`;
+}
+
+// Grab-and-move panning within a region (adjusts that region's cx/cy) and a
+// draggable divider (adjusts the ratio).
+function attachSplitRegionDrag(box, which) {
+  let dragging = false;
+  let start = null;
+  box.addEventListener('pointerdown', (e) => {
+    if (box.classList.contains('hidden')) return;
+    const region = state.split[which];
+    const srcW = (state.source && state.source.width) || fgVideo.videoWidth;
+    const srcH = (state.source && state.source.height) || fgVideo.videoHeight;
+    const { cropW } = splitCropWindow(srcW, srcH, box.offsetWidth / box.offsetHeight, region);
+    dragging = true;
+    start = { x: e.clientX, y: e.clientY, cx: region.cx, cy: region.cy, scale: box.offsetWidth / cropW, srcW, srcH };
+    box.classList.add('dragging');
+    try {
+      box.setPointerCapture?.(e.pointerId);
+    } catch {}
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  box.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const region = state.split[which];
+    region.cx = Math.max(0, Math.min(1, start.cx - (e.clientX - start.x) / start.scale / start.srcW));
+    region.cy = Math.max(0, Math.min(1, start.cy - (e.clientY - start.y) / start.scale / start.srcH));
+    syncSplit();
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    box.classList.remove('dragging');
+    try {
+      box.releasePointerCapture?.(e.pointerId);
+    } catch {}
+    emit('settings');
+  };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+}
+
+function attachSplitDivider() {
+  let dragging = false;
+  splitDivider.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    splitDivider.setPointerCapture?.(e.pointerId);
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  splitDivider.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const fr = previewFrame.getBoundingClientRect();
+    state.split.ratio = Math.max(0.15, Math.min(0.85, (e.clientY - fr.top) / fr.height));
+    syncSplit();
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    try {
+      splitDivider.releasePointerCapture?.(e.pointerId);
+    } catch {}
+    emit('settings');
+  };
+  splitDivider.addEventListener('pointerup', end);
+  splitDivider.addEventListener('pointercancel', end);
+}
+
 function updateAll() {
   applyClipTransform();
   bgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
 
-  // The reframe fills the frame, so no background shows behind it.
-  if (!faceTrackActive() && state.blur > 0) {
+  // The reframe / split fill the frame, so no blur background shows behind.
+  if (!faceTrackActive() && !splitActive() && state.blur > 0) {
     bgVideo.classList.remove('hidden');
     bgVideo.style.filter = `blur(${(state.blur * PREVIEW_BLUR_CSS_SCALE).toFixed(1)}px)`;
   } else {
@@ -1053,6 +1189,7 @@ function updateAll() {
   fgVideo.playbackRate = state.speed;
   bgVideo.playbackRate = state.speed;
 
+  syncSplit();
   updateClipOutline();
 
   syncOverlayEls();
@@ -1260,6 +1397,19 @@ export function initPreview() {
     updateFlash(outT);
     tickSounds(outT);
     tickOverlays(outT);
+    // Keep the two split-region videos locked to the foreground playhead.
+    if (splitActive()) {
+      const t = fgVideo.currentTime || 0;
+      for (const v of [splitTopVideo, splitBottomVideo]) {
+        if (Math.abs((v.currentTime || 0) - t) > 0.15) {
+          try {
+            v.currentTime = t;
+          } catch {}
+        }
+        if (logicalPlaying && v.paused && !gap) v.play().catch(() => {});
+        if ((!logicalPlaying || gap) && !v.paused) v.pause();
+      }
+    }
     if (outT !== lastOutTime) {
       lastOutTime = outT;
       // Keyframes / face-tracking animate the transform, so re-apply it as the
@@ -1299,6 +1449,9 @@ export function initPreview() {
   // you drag it to reposition — same select-then-drag interaction overlays
   // use. Clicking the bare frame padding deselects.
   attachClipDrag();
+  attachSplitRegionDrag(splitTop, 'facecam');
+  attachSplitRegionDrag(splitBottom, 'gameplay');
+  attachSplitDivider();
   previewFrame.addEventListener('pointerdown', (e) => {
     if (e.target === previewFrame) selectLayer(null);
   });

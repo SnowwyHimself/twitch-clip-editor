@@ -380,6 +380,62 @@ body {
   cursor: grab;
 }
 
+/* Facecam split layout — two cover-cropped regions stacked vertically, each
+   pannable, with a draggable divider setting the ratio. Sized/positioned in JS
+   (see syncSplit). Sits at the clip layer, under overlays/captions. */
+.split-region {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  cursor: grab;
+}
+.split-region.hidden {
+  display: none;
+}
+.preview-fg.split-hidden {
+  display: none;
+}
+/* In facecam-split mode, the fill-only controls (zoom/blur/pan/keyframes/
+   face-track) don't apply, so hide them and show the split controls. */
+#panel-video.split-mode .fill-only {
+  display: none;
+}
+.split-region.dragging {
+  cursor: grabbing;
+}
+.split-video {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  /* width/height/left/top set in JS so the CSS crop matches the ffmpeg one. */
+}
+.split-divider {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 12px;
+  transform: translateY(-50%);
+  cursor: row-resize;
+  z-index: 4;
+  touch-action: none;
+}
+.split-divider.hidden {
+  display: none;
+}
+.split-divider::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  transform: translate(-50%, -50%);
+}
+
 /* Main clip selected — outline the footage's own content rect (positioned in
    JS, see updateClipOutline), like selecting any other element, plus a move
    cursor on the draggable video. */
