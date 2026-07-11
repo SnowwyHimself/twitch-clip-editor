@@ -131,6 +131,128 @@ body {
   white-space: nowrap;
 }
 
+/* Project menu (Save / Save As / Open) */
+.project-menu {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.project-name {
+  font-size: 12px;
+  color: var(--text-dim, #9a9aa8);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 4px;
+}
+.project-menu .secondary-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* Open Project modal (reuses .export-modal backdrop) */
+.projects-card {
+  min-width: 420px;
+  max-width: 560px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+.projects-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.project-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.project-open-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--panel-2, #202028);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--text);
+  text-align: left;
+}
+.project-open-row:hover {
+  border-color: var(--accent);
+}
+.project-row-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.project-row-when {
+  font-size: 11px;
+  color: var(--text-dim, #9a9aa8);
+}
+.project-del {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim, #9a9aa8);
+  cursor: pointer;
+  padding: 0 10px;
+}
+.project-del:hover {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+
+/* Start-screen recent projects (inside the preview placeholder) */
+.start-recent {
+  margin-top: 18px;
+  width: 100%;
+  max-width: 300px;
+}
+.start-recent-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim, #9a9aa8);
+  margin-bottom: 8px;
+}
+.start-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.start-recent-list .project-open-row {
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+/* Restore-autosave banner */
+.restore-banner {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+.restore-banner.hidden {
+  display: none;
+}
+
 .source-input {
   display: flex;
   align-items: center;

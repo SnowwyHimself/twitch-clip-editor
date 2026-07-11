@@ -28,6 +28,17 @@ import { initPreview, attachSource, setPlaceholder, getCurrentTime, togglePlay }
 import { initTimeline } from './timeline.js';
 import { initPanel, showTab } from './panel.js';
 import { initExport } from './export.js';
+import {
+  saveProject,
+  saveProjectAs,
+  openProject,
+  listProjects,
+  deleteProject,
+  restoreAutosave,
+  startAutosave,
+  onProjectChange,
+  finishOpenWithFile,
+} from './project.js';
 
 const urlInput = document.getElementById('clip-url');
 const loadUrlBtn = document.getElementById('load-url-btn');
@@ -194,6 +205,178 @@ function wireShortcuts() {
   });
 }
 
+// --- projects (save / open / autosave / restore) ---------------------------------------
+
+const projectNameEl = document.getElementById('project-name');
+const projectSaveBtn = document.getElementById('project-save-btn');
+const projectSaveAsBtn = document.getElementById('project-saveas-btn');
+const projectOpenBtn = document.getElementById('project-open-btn');
+const projectFileInput = document.getElementById('project-file-input');
+const projectsModal = document.getElementById('projects-modal');
+const projectsList = document.getElementById('projects-list');
+const projectsEmpty = document.getElementById('projects-empty');
+const projectsCloseBtn = document.getElementById('projects-close-btn');
+const restoreBanner = document.getElementById('restore-banner');
+const restoreYesBtn = document.getElementById('restore-yes-btn');
+const restoreNoBtn = document.getElementById('restore-no-btn');
+const startRecent = document.getElementById('start-recent');
+const startRecentList = document.getElementById('start-recent-list');
+
+// When a project can't auto-resolve its (moved/renamed) source file, we hold it
+// here and let the user re-pick the video, then finish loading.
+let pendingFileOpen = null;
+
+function flashSaved() {
+  const original = projectSaveBtn.textContent;
+  projectSaveBtn.textContent = 'Saved ✓';
+  setTimeout(() => {
+    projectSaveBtn.textContent = original;
+  }, 1200);
+}
+
+async function doSave() {
+  if (!state.source) {
+    setPlaceholder('Load a clip before saving a project.');
+    return;
+  }
+  try {
+    await saveProject();
+    flashSaved();
+  } catch (err) {
+    console.error('Save failed', err);
+  }
+}
+
+async function doSaveAs() {
+  if (!state.source) return;
+  const name = window.prompt('Save project as:', '');
+  if (name === null) return;
+  try {
+    await saveProjectAs(name.trim() || 'Untitled');
+    flashSaved();
+  } catch (err) {
+    console.error('Save As failed', err);
+  }
+}
+
+function fmtWhen(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+async function handleOpen(id) {
+  projectsModal.classList.add('hidden');
+  const result = await openProject(id);
+  if (result.ok) return;
+  if (result.reason === 'need-file') {
+    pendingFileOpen = { id, data: result.data };
+    setPlaceholder('This project’s video file has moved — pick it to finish opening.');
+    projectFileInput.click();
+  } else {
+    setPlaceholder("Couldn't open that project.");
+  }
+}
+
+async function renderProjectList(container, { compact = false } = {}) {
+  const { projects } = await listProjects();
+  container.innerHTML = '';
+  if (!projects.length) return false;
+  for (const p of projects.slice(0, compact ? 6 : 50)) {
+    const row = document.createElement('div');
+    row.className = 'project-row';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'project-open-row';
+    open.innerHTML = `<span class="project-row-name">${escapeHtml(p.name)}</span><span class="project-row-when">${fmtWhen(p.savedAt)}</span>`;
+    open.addEventListener('click', () => handleOpen(p.id));
+    row.appendChild(open);
+    if (!compact) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'project-del';
+      del.textContent = '✕';
+      del.title = 'Delete project';
+      del.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await deleteProject(p.id);
+        renderProjectList(container, { compact });
+      });
+      row.appendChild(del);
+    }
+    container.appendChild(row);
+  }
+  return true;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function refreshStartRecent() {
+  if (state.source) {
+    startRecent.classList.add('hidden');
+    return;
+  }
+  const has = await renderProjectList(startRecentList, { compact: true });
+  startRecent.classList.toggle('hidden', !has);
+}
+
+function wireProjects() {
+  projectSaveBtn.addEventListener('click', doSave);
+  projectSaveAsBtn.addEventListener('click', doSaveAs);
+  projectOpenBtn.addEventListener('click', async () => {
+    const has = await renderProjectList(projectsList, { compact: false });
+    projectsEmpty.classList.toggle('hidden', has);
+    projectsModal.classList.remove('hidden');
+  });
+  projectsCloseBtn.addEventListener('click', () => projectsModal.classList.add('hidden'));
+  projectsModal.addEventListener('click', (e) => {
+    if (e.target === projectsModal) projectsModal.classList.add('hidden');
+  });
+
+  projectFileInput.addEventListener('change', async () => {
+    const file = projectFileInput.files && projectFileInput.files[0];
+    projectFileInput.value = '';
+    if (!file || !pendingFileOpen) return;
+    const { id, data } = pendingFileOpen;
+    pendingFileOpen = null;
+    await finishOpenWithFile(id, data, file);
+  });
+
+  onProjectChange(({ name }) => {
+    projectNameEl.textContent = name || 'Untitled';
+  });
+
+  // ⌘S / Ctrl+S saves.
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      doSave();
+    }
+  });
+
+  on('source', () => startRecent.classList.add('hidden'));
+
+  startAutosave();
+}
+
+async function offerRestore() {
+  const { autosave } = await listProjects();
+  if (!autosave) return;
+  restoreBanner.classList.remove('hidden');
+  restoreYesBtn.onclick = async () => {
+    restoreBanner.classList.add('hidden');
+    const result = await restoreAutosave();
+    if (!result.ok && result.reason === 'need-file') {
+      pendingFileOpen = { id: 'autosave', data: result.data };
+      setPlaceholder('Pick the video file to restore your last project.');
+      projectFileInput.click();
+    }
+  };
+  restoreNoBtn.onclick = () => restoreBanner.classList.add('hidden');
+}
+
 // --- boot ------------------------------------------------------------------------------
 
 async function boot() {
@@ -215,7 +398,11 @@ async function boot() {
   wireIngestion();
   wireToolbar();
   wireShortcuts();
+  wireProjects();
   emit('settings');
+
+  refreshStartRecent();
+  offerRestore();
 
   // Debug/scripting handle (used by automated tests; harmless in prod —
   // everything still flows through the same emit() paths).

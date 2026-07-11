@@ -133,6 +133,13 @@ export function on(event, fn) {
   listeners.get(event).push(fn);
 }
 
+export function off(event, fn) {
+  const arr = listeners.get(event);
+  if (!arr) return;
+  const i = arr.indexOf(fn);
+  if (i !== -1) arr.splice(i, 1);
+}
+
 export function emit(event, detail) {
   for (const fn of listeners.get(event) || []) fn(detail);
   if (HISTORY_EVENTS.has(event)) scheduleHistoryRecord(event);

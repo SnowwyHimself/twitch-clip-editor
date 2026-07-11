@@ -11,6 +11,13 @@
 
   <header class="topbar">
     <div class="brand">Clip Editor</div>
+    <div class="project-menu">
+      <span id="project-name" class="project-name" title="Current project">Untitled</span>
+      <button type="button" id="project-save-btn" class="secondary-btn" title="Save project (⌘S)">Save</button>
+      <button type="button" id="project-saveas-btn" class="secondary-btn" title="Save as a new project">Save As</button>
+      <button type="button" id="project-open-btn" class="secondary-btn" title="Open a saved project">Open</button>
+      <input id="project-file-input" type="file" accept="video/*" hidden />
+    </div>
     <div class="source-input">
       <input id="clip-url" type="text" placeholder="Paste a Twitch clip or VOD URL — it loads straight into the timeline" />
       <details id="vod-range" class="vod-range">
@@ -38,7 +45,11 @@
         <video id="preview-bg-video" class="preview-video preview-bg" muted loop playsinline></video>
         <video id="preview-fg-video" class="preview-video preview-fg" muted loop playsinline></video>
         <div id="preview-placeholder" class="preview-placeholder">
-          Paste a clip URL above, or open a video file
+          <p>Paste a clip URL above, or open a video file</p>
+          <div id="start-recent" class="start-recent hidden">
+            <p class="start-recent-title">Recent projects</p>
+            <div id="start-recent-list" class="start-recent-list"></div>
+          </div>
         </div>
         <div id="preview-guide-y" class="preview-guide preview-guide-y"></div>
         <div id="preview-guide-x" class="preview-guide preview-guide-x"></div>
@@ -432,6 +443,23 @@
         <a id="download-link" class="primary-btn download-btn" download>Download</a>
       </div>
     </div>
+  </div>
+
+  <div id="projects-modal" class="export-modal hidden">
+    <div class="export-card projects-card">
+      <div class="export-header">
+        <h2>Open Project</h2>
+        <button type="button" id="projects-close-btn" class="secondary-btn">Close</button>
+      </div>
+      <div id="projects-list" class="projects-list"></div>
+      <p id="projects-empty" class="field-hint hidden">No saved projects yet.</p>
+    </div>
+  </div>
+
+  <div id="restore-banner" class="restore-banner hidden">
+    <span>You have an unsaved project from your last session.</span>
+    <button type="button" id="restore-yes-btn" class="primary-btn">Restore it</button>
+    <button type="button" id="restore-no-btn" class="secondary-btn">Dismiss</button>
   </div>
 
 </div>

@@ -30,8 +30,12 @@ const PREVIEW_CACHE_DIR = path.join(DATA_ROOT, 'preview-cache');
 // extracted-wav + whisper-JSON intermediates per transcription run.
 const MODELS_DIR = path.join(DATA_ROOT, 'models');
 const TRANSCRIBE_DIR = path.join(DATA_ROOT, 'transcribe-cache');
+// Saved editor projects — one folder per project holding project.json plus a
+// media/ subfolder for any imported sound/overlay files, so a project reopens
+// self-contained. The special id 'autosave' is the rolling autosave slot.
+const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
 
-for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR]) {
+for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR, PROJECTS_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -1333,6 +1337,95 @@ app.get('/api/status/:jobId', (req, res) => {
     return res.status(404).json({ error: 'Unknown job id' });
   }
   res.json(job);
+});
+
+// --- projects (save/load/autosave) --------------------------------------------
+// A project = a JSON snapshot of the editor state + any imported sound/overlay
+// media, stored under projects/<id>/. Media rides along in the same multipart
+// request (memory storage — these are small clips, not the source video, which
+// is referenced by URL or path). Ids are validated to stay inside PROJECTS_DIR.
+const projectUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
+function projectDir(id) {
+  const safe = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safe) return null;
+  return path.join(PROJECTS_DIR, safe);
+}
+
+app.post('/api/project/save', projectUpload.array('media'), (req, res) => {
+  try {
+    const project = JSON.parse(req.body.project);
+    const id = (project.id && String(project.id).replace(/[^a-zA-Z0-9_-]/g, '')) || crypto.randomUUID();
+    const dir = projectDir(id);
+    if (!dir) return res.status(400).json({ error: 'bad project id' });
+    const mediaDir = path.join(dir, 'media');
+    fs.mkdirSync(mediaDir, { recursive: true });
+    for (const f of req.files || []) {
+      // originalname is the media id (overlay/sound id) — sanitize to a leaf.
+      const leaf = path.basename(f.originalname).replace(/[^a-zA-Z0-9_.-]/g, '');
+      if (leaf) fs.writeFileSync(path.join(mediaDir, leaf), f.buffer);
+    }
+    project.id = id;
+    project.savedAt = Date.now();
+    fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify(project));
+    res.json({ id, name: project.name || 'Untitled', savedAt: project.savedAt });
+  } catch (err) {
+    res.status(400).json({ error: String((err && err.message) || err) });
+  }
+});
+
+app.get('/api/projects', (req, res) => {
+  const projects = [];
+  let autosave = null;
+  for (const id of fs.readdirSync(PROJECTS_DIR)) {
+    const p = path.join(PROJECTS_DIR, id, 'project.json');
+    if (!fs.existsSync(p)) continue;
+    try {
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const entry = { id, name: j.name || 'Untitled', savedAt: j.savedAt || 0, sourceKind: j.source && j.source.kind };
+      if (id === 'autosave') autosave = entry;
+      else projects.push(entry);
+    } catch {}
+  }
+  projects.sort((a, b) => b.savedAt - a.savedAt);
+  res.json({ projects, autosave });
+});
+
+app.get('/api/project/:id', (req, res) => {
+  const dir = projectDir(req.params.id);
+  const p = dir && path.join(dir, 'project.json');
+  if (!p || !fs.existsSync(p)) return res.status(404).json({ error: 'not found' });
+  res.json(JSON.parse(fs.readFileSync(p, 'utf8')));
+});
+
+app.delete('/api/project/:id', (req, res) => {
+  const dir = projectDir(req.params.id);
+  if (dir && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  res.json({ ok: true });
+});
+
+// Imported media for a project, served back so the frontend can re-wrap it as
+// a File on open: /api/project/<id>/media/<leaf>
+app.get('/api/project/:id/media/:leaf', (req, res) => {
+  const dir = projectDir(req.params.id);
+  const leaf = path.basename(req.params.leaf);
+  const file = dir && path.join(dir, 'media', leaf);
+  if (!file || !fs.existsSync(file)) return res.status(404).end();
+  res.sendFile(file);
+});
+
+// Re-resolve a file-source video by its absolute path (available in the
+// packaged Electron app) — copies it into preview-cache and returns a URL, so
+// reopening a file-based project doesn't need the user to re-pick the file.
+app.post('/api/preview-file', (req, res) => {
+  const srcPath = req.body && req.body.path;
+  if (!srcPath || typeof srcPath !== 'string' || !fs.existsSync(srcPath)) {
+    return res.status(404).json({ error: 'file not found' });
+  }
+  const key = crypto.createHash('sha1').update(srcPath).digest('hex');
+  const ext = path.extname(srcPath) || '.mp4';
+  const dest = path.join(PREVIEW_CACHE_DIR, `${key}${ext}`);
+  if (!fs.existsSync(dest)) fs.copyFileSync(srcPath, dest);
+  res.json({ previewUrl: `/preview-cache/${key}${ext}` });
 });
 
 resolveFontPath(); // logs which caption font got resolved, right at boot

@@ -21,3 +21,4 @@ transcribe-cache/*
 native/emoji-render-mac/emoji-render
 # Local editor/agent tooling config
 .claude/
+/projects/
