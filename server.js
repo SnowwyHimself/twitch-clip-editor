@@ -699,9 +699,13 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     const cr = ov.cropRight / 100;
     const ct = ov.cropTop / 100;
     const cb = ov.cropBottom / 100;
+    // Keep at least a 2% sliver on each axis so a full crop never yields a
+    // zero-size window (which ffmpeg's crop would reject).
+    const keepW = Math.max(0.02, 1 - cl - cr);
+    const keepH = Math.max(0.02, 1 - ct - cb);
     const cropChain =
       cl + cr + ct + cb > 0.001
-        ? `,crop=iw*${(1 - cl - cr).toFixed(4)}:ih*${(1 - ct - cb).toFixed(4)}:iw*${cl.toFixed(4)}:ih*${ct.toFixed(4)}`
+        ? `,crop=iw*${keepW.toFixed(4)}:ih*${keepH.toFixed(4)}:iw*${cl.toFixed(4)}:ih*${ct.toFixed(4)}`
         : '';
     const enable =
       Number.isFinite(ov.start) && Number.isFinite(ov.end) && ov.end > ov.start
@@ -890,7 +894,7 @@ function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
 function clampCropPercent(value) {
   const pct = parseFloat(value);
   if (!Number.isFinite(pct)) return 0;
-  return Math.min(45, Math.max(0, pct));
+  return Math.min(100, Math.max(0, pct));
 }
 
 // Each overlay file (in the multipart 'overlay' field, order-matched to the

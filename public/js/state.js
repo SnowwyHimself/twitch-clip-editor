@@ -523,12 +523,14 @@ export function updateOverlay(id, patch) {
   emit('settings');
 }
 
-// Clamps one crop edge (0–45%) so the opposite edge always leaves ≥10% of the
-// axis — the single source of truth shared by the crop sliders AND the
-// on-canvas crop handles, so both produce identical values.
+// Clamps one crop edge (0–100%) so the two opposite edges still leave a sliver
+// of the axis (never a zero-size crop, which would break the render). The
+// single source of truth shared by the crop sliders AND the on-canvas crop
+// handles, so both produce identical values.
 const CROP_OPPOSITE = { cropTop: 'cropBottom', cropBottom: 'cropTop', cropLeft: 'cropRight', cropRight: 'cropLeft' };
+export const CROP_MIN_REMAINING = 2; // % of the axis that must survive
 export function clampCropValue(overlay, key, value) {
-  const max = Math.min(45, 90 - (overlay[CROP_OPPOSITE[key]] || 0));
+  const max = Math.min(100, 100 - CROP_MIN_REMAINING - (overlay[CROP_OPPOSITE[key]] || 0));
   return Math.max(0, Math.min(max, Math.round(value)));
 }
 

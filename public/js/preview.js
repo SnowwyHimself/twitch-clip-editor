@@ -479,8 +479,8 @@ function layoutOverlayEl(o) {
   if (!entry) return;
   const { root, media, dims } = entry;
   const { width: frameWidth, height: frameHeight } = frameSize();
-  const cropFracW = Math.max(0.1, 1 - (o.cropLeft + o.cropRight) / 100);
-  const cropFracH = Math.max(0.1, 1 - (o.cropTop + o.cropBottom) / 100);
+  const cropFracW = Math.max(0.02, 1 - (o.cropLeft + o.cropRight) / 100);
+  const cropFracH = Math.max(0.02, 1 - (o.cropTop + o.cropBottom) / 100);
   const mediaW = frameWidth * (o.sizePercent / 100); // constant w.r.t. crop
 
   let boxW;
@@ -634,7 +634,7 @@ function attachOverlayResize(handle, root, id) {
     // center, so the grabbed corner tracks the cursor horizontally. sizePercent
     // is the media width, so divide the target box width by the horizontal crop
     // fraction to recover it (a cropped overlay's box is smaller than its media).
-    const cropFracW = Math.max(0.1, 1 - (o.cropLeft + o.cropRight) / 100);
+    const cropFracW = Math.max(0.02, 1 - (o.cropLeft + o.cropRight) / 100);
     const halfW = Math.abs(pointerX - center.x);
     let sizePercent = Math.round((((halfW * 2) / cropFracW) / frameWidth) * 100);
     sizePercent = Math.min(100, Math.max(5, sizePercent));
@@ -672,8 +672,8 @@ function attachOverlayCrop(handle, root, id, edge) {
     const o = state.overlays.find((x) => x.id === id);
     if (!o) return;
     cropping = true;
-    const cropFracW = Math.max(0.1, 1 - (o.cropLeft + o.cropRight) / 100);
-    const cropFracH = Math.max(0.1, 1 - (o.cropTop + o.cropBottom) / 100);
+    const cropFracW = Math.max(0.02, 1 - (o.cropLeft + o.cropRight) / 100);
+    const cropFracH = Math.max(0.02, 1 - (o.cropTop + o.cropBottom) / 100);
     start = {
       x: e.clientX,
       y: e.clientY,
