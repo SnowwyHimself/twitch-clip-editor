@@ -1118,9 +1118,12 @@ function attachSplitRegionDrag(box, which) {
     const region = state.split[which];
     const srcW = (state.source && state.source.width) || fgVideo.videoWidth;
     const srcH = (state.source && state.source.height) || fgVideo.videoHeight;
-    const { cropW } = splitCropWindow(srcW, srcH, box.offsetWidth / box.offsetHeight, region);
+    const { cropW, cropH, winX, winY } = splitCropWindow(srcW, srcH, box.offsetWidth / box.offsetHeight, region);
     dragging = true;
-    start = { x: e.clientX, y: e.clientY, cx: region.cx, cy: region.cy, scale: box.offsetWidth / cropW, srcW, srcH };
+    // Drag the crop WINDOW directly (in source px) and derive cx/cy from it, so
+    // panning is linear right up to the source edges with no dead zone — a wide
+    // region (facecam) would otherwise accumulate cx in a clamped range and jump.
+    start = { x: e.clientX, y: e.clientY, winX, winY, cropW, cropH, scale: box.offsetWidth / cropW, srcW, srcH };
     box.classList.add('dragging');
     try {
       box.setPointerCapture?.(e.pointerId);
@@ -1131,8 +1134,12 @@ function attachSplitRegionDrag(box, which) {
   box.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const region = state.split[which];
-    region.cx = Math.max(0, Math.min(1, start.cx - (e.clientX - start.x) / start.scale / start.srcW));
-    region.cy = Math.max(0, Math.min(1, start.cy - (e.clientY - start.y) / start.scale / start.srcH));
+    const maxX = Math.max(0, start.srcW - start.cropW);
+    const maxY = Math.max(0, start.srcH - start.cropH);
+    const nwx = Math.max(0, Math.min(maxX, start.winX - (e.clientX - start.x) / start.scale));
+    const nwy = Math.max(0, Math.min(maxY, start.winY - (e.clientY - start.y) / start.scale));
+    region.cx = (nwx + start.cropW / 2) / start.srcW;
+    region.cy = (nwy + start.cropH / 2) / start.srcH;
     syncSplit();
   });
   const end = (e) => {
