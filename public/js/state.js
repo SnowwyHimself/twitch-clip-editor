@@ -384,6 +384,21 @@ export function selectedOverlay() {
 
 let layerCounter = 0;
 
+// Per-layer text-box wrap width, as a fraction of the canvas width. The legacy
+// fixed value (900/1080 ≈ 0.833) is the default so existing behaviour is
+// unchanged; the resizable text box lets each layer set its own between these
+// bounds. Preview (maxWidth) and the server (opentype word-wrap) both multiply
+// canvas width by this, so they wrap at identical words.
+export const TEXT_WRAP_DEFAULT = 900 / 1080;
+export const TEXT_WRAP_MIN = 0.15;
+export const TEXT_WRAP_MAX = 1;
+
+export function clampWrapWidth(ratio) {
+  const r = Number(ratio);
+  if (!Number.isFinite(r)) return TEXT_WRAP_DEFAULT;
+  return Math.min(TEXT_WRAP_MAX, Math.max(TEXT_WRAP_MIN, r));
+}
+
 export function addTextLayer(partial = {}, { select = true } = {}) {
   const layer = {
     id: `layer-${Date.now()}-${layerCounter++}`,
@@ -395,6 +410,7 @@ export function addTextLayer(partial = {}, { select = true } = {}) {
     dropShadow: false,
     xPercent: 50,
     yPercent: 25,
+    wrapWidth: TEXT_WRAP_DEFAULT,
     start: 0,
     end: 3,
     group: null, // 'caption' for Auto captions layers

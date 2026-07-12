@@ -316,6 +316,16 @@ function clampPositionPercent(value, fallback = 25) {
   return Math.min(100, Math.max(0, pct));
 }
 
+// Per-layer text-box wrap width, as a fraction of canvas width. Must match the
+// frontend clamp (state.js clampWrapWidth) so preview and render wrap the same;
+// undefined falls back to the legacy fixed ratio (900/1080).
+const TEXT_WRAP_DEFAULT = 900 / 1080;
+function clampWrapRatio(value) {
+  const r = parseFloat(value);
+  if (!Number.isFinite(r)) return TEXT_WRAP_DEFAULT;
+  return Math.min(1, Math.max(0.15, r));
+}
+
 // Converts a 0-100 "center position" percentage into a top-left pixel
 // coordinate, clamped so the full contentSize always stays within
 // [0, canvasSize] regardless of how large/small the caption or how far
@@ -941,6 +951,7 @@ function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
       fontSize: layer.fontSize,
       color: layer.color,
       canvasWidth: canvasW,
+      wrapWidth: layer.wrapWidth,
     });
     const x = resolvePositionCoordinate(layer.xPercent, width, canvasW);
     const y = resolvePositionCoordinate(layer.yPercent, height, canvasH);
@@ -1236,6 +1247,7 @@ function buildTextLayers(body) {
       dropShadow: normalizeDropShadow(l && l.dropShadow),
       xPercent: clampPositionPercent(l && l.xPercent, 50),
       yPercent: clampPositionPercent(l && l.yPercent, 25),
+      wrapWidth: clampWrapRatio(l && l.wrapWidth),
       start: Number.isFinite(parseFloat(l && l.start)) ? parseFloat(l.start) : null,
       end: Number.isFinite(parseFloat(l && l.end)) ? parseFloat(l.end) : null,
     }))

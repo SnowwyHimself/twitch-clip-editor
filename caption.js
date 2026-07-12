@@ -593,12 +593,16 @@ function getEmojiPngBase64(emojiChar) {
 // boundary shrinking along with the text. It IS scaled with canvasWidth
 // (defaulting to the original 1080px canvas this was tuned against) so
 // switching aspect ratios keeps the same proportional side margins.
-function renderCaptionPng({ text, style, fontId, dropShadow, fontSize, color, canvasWidth }) {
+function renderCaptionPng({ text, style, fontId, dropShadow, fontSize, color, canvasWidth, wrapWidth }) {
   const { path: fontPath } = resolveFontEntry(fontId);
   const font = loadFontFromPath(fontPath);
   const resolvedFontSize = fontSize || FONT_SIZE;
   const emojiSize = resolvedFontSize * EMOJI_SIZE_RATIO;
-  const maxTextWidth = Math.round((canvasWidth || DEFAULT_CANVAS_W) * MAX_TEXT_WIDTH_RATIO);
+  // Per-layer wrap width (fraction of canvas width); falls back to the legacy
+  // fixed ratio. Multiplying canvas width by the same ratio the preview uses
+  // keeps word-wrap identical between preview and render.
+  const wrapRatio = Number.isFinite(wrapWidth) ? wrapWidth : MAX_TEXT_WIDTH_RATIO;
+  const maxTextWidth = Math.round((canvasWidth || DEFAULT_CANVAS_W) * wrapRatio);
   const lines = wrapText(font, text.trim(), resolvedFontSize, maxTextWidth, emojiSize);
 
   const buildArgs = { lines, font, fontSize: resolvedFontSize, emojiSize, dropShadow: !!dropShadow, color };

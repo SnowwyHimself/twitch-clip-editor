@@ -34,6 +34,7 @@ import {
   keyframeTransformAt,
   addKeyframe,
   clampCropValue,
+  clampWrapWidth,
   faceTrackActive,
   faceTrackAt,
 } from './state.js';
@@ -243,6 +244,15 @@ function createLayerEl(layer) {
   inner.className = 'preview-caption-inner';
   root.appendChild(fillers);
   root.appendChild(inner);
+  // Left/right wrap-width handles (CapCut-style) — shown only while the layer
+  // is selected (via the .selected class), drag them to set this layer's own
+  // wrap width so the text wraps sooner/later.
+  for (const side of ['w', 'e']) {
+    const handle = document.createElement('div');
+    handle.className = `caption-handle caption-handle-${side}`;
+    root.appendChild(handle);
+    attachWrapResize(handle, root, layer.id);
+  }
   layersContainer.appendChild(root);
   attachLayerDrag(root, layer.id);
   const entry = { root, inner, fillers };
@@ -279,9 +289,11 @@ function updateLayerEl(layer) {
   const fontSizePx = layer.fontSize * scale;
   inner.style.fontSize = `${fontSizePx.toFixed(2)}px`;
   inner.style.lineHeight = String(PREVIEW_LINE_HEIGHT_RATIO);
-  // Same fixed wrap width the server uses (900/1080 of canvas width) so
-  // the preview wraps at the same words the real render does.
-  root.style.maxWidth = `${((frameWidth * 900) / 1080).toFixed(2)}px`;
+  // Per-layer wrap width (fraction of canvas width). The server's opentype
+  // word-wrap multiplies canvas width by the same ratio, so preview and render
+  // wrap at identical words.
+  const wrapRatio = clampWrapWidth(layer.wrapWidth);
+  root.style.maxWidth = `${(frameWidth * wrapRatio).toFixed(2)}px`;
 
   const shadowOffsetX = (fontSizePx * 0.05).toFixed(2);
   const shadowOffsetY = (fontSizePx * 0.07).toFixed(2);
@@ -392,6 +404,49 @@ function attachLayerDrag(el, layerId) {
   };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
+}
+
+// Drag a side handle to set THIS layer's wrap width. The box stays centered on
+// its position, so a handle at distance d from the center sets a full wrap
+// width of 2·d (in canvas-fraction terms). Writes layer.wrapWidth live during
+// the drag and re-renders on release (same pattern as attachLayerDrag).
+function attachWrapResize(handle, root, layerId) {
+  let dragging = false;
+  let start = null;
+
+  handle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation(); // don't start a layer-position drag
+    e.preventDefault();
+    selectLayer(layerId);
+    const rect = root.getBoundingClientRect();
+    start = { centerX: (rect.left + rect.right) / 2, frameWidth: frameSize().width };
+    dragging = true;
+    // setPointerCapture throws on synthetic test PointerEvents — real ones are
+    // fine; capture start-state first so a throw can't wedge the drag.
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const halfWidthPx = Math.abs(e.clientX - start.centerX);
+    const ratio = clampWrapWidth((halfWidthPx * 2) / Math.max(1, start.frameWidth));
+    const layer = state.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+    layer.wrapWidth = ratio; // written live; full re-render on release
+    updateLayerEl(layer);
+  });
+
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    emit('layers');
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
 }
 
 // --- media overlays (image/video, rendered above the video) ------------------

@@ -58,6 +58,7 @@ function buildTextLayersPayload() {
       dropShadow: layer.dropShadow,
       xPercent: layer.xPercent,
       yPercent: layer.yPercent,
+      wrapWidth: layer.wrapWidth,
       start,
       end,
     });

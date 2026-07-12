@@ -731,6 +731,32 @@ body {
   z-index: 1; /* text above the box style's pill backgrounds */
 }
 
+/* Wrap-width handles — shown only while a text layer is selected. */
+.caption-handle {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 34px;
+  margin-top: -17px;
+  border-radius: 4px;
+  background: var(--accent);
+  border: 1.5px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: ew-resize;
+  touch-action: none;
+  display: none;
+  z-index: 4;
+}
+.preview-caption.selected .caption-handle {
+  display: block;
+}
+.caption-handle-w {
+  left: -5px;
+}
+.caption-handle-e {
+  right: -5px;
+}
+
 /* Holds the box style's per-line pill backgrounds (see applyBoxPills in
    preview.js). Sits behind the text. */
 .preview-caption-fillers {
