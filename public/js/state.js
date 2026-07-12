@@ -32,6 +32,12 @@ export const state = {
   panX: 0,
   panY: 0,
 
+  // Main-clip audio. volumePercent 0-200 (100 = untouched, >100 boosts),
+  // muted drops it entirely from the render. fadeIn/fadeOut are seconds of
+  // afade at the clip's head/tail. Applied in the render's audio graph and,
+  // approximately, in preview (HTML media can't boost past 100%).
+  audio: { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 },
+
   // Zoom/position keyframes for the main clip — animate a punch-in or a
   // slow push/pan. Each is { id, t, zoom, panX, panY } where t is a SOURCE
   // second. Empty = no animation (the static zoom/panX/panY above are used).
@@ -259,9 +265,11 @@ export function resetSegments() {
   state.transitions = [];
   state.keyframes = [];
   state.faceTrack = { enabled: false, samples: [] };
+  state.audio = { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 };
   emit('segments');
   emit('keyframes');
   emit('facetrack');
+  emit('settings');
 }
 
 // Splits whichever piece contains this SOURCE time into two touching
@@ -462,6 +470,29 @@ export function removeCaptionLayers() {
   emit('layers');
 }
 
+// --- audio ------------------------------------------------------------------------
+
+export const VOLUME_MAX = 200;
+
+export function clampVolumePercent(value, fallback = 100) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return fallback;
+  return Math.min(VOLUME_MAX, Math.max(0, Math.round(v)));
+}
+
+// Non-negative fade length in seconds (clamped to keep it sane).
+export function clampFadeSeconds(value) {
+  const v = Number(value);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return Math.min(30, v);
+}
+
+// Patch the main-clip audio (volume/mute/fades) and notify the preview + export.
+export function setAudio(patch) {
+  Object.assign(state.audio, patch);
+  emit('settings');
+}
+
 // --- sounds -----------------------------------------------------------------------
 // Sounds/overlays hold File objects, so they stay OUT of undo history and
 // ride the 'settings' event (same as when each was a single item).
@@ -475,6 +506,9 @@ export function addSound(partial = {}, { select: doSelect = true } = {}) {
     label: 'Sound',
     url: null,
     volumePercent: 80,
+    muted: false,
+    fadeIn: 0,
+    fadeOut: 0,
     start: 0,
     end: 1,
     offset: 0,

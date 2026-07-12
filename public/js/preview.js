@@ -1003,8 +1003,23 @@ function syncSoundAudios() {
       entry = { audio: new Audio(s.url), url: s.url };
       soundAudios.set(s.id, entry);
     }
+    // Preview can't boost past 100% (HTML media caps volume at 1); the export
+    // applies the true 0-200%. Fades are layered on per-frame in tickSounds.
+    entry.audio.muted = !!s.muted;
     entry.audio.volume = Math.min(1, Math.max(0, s.volumePercent / 100));
   }
+}
+
+// The main clip's monitor mute (the 🔊 button) is independent of the exported
+// mute (state.audio.muted): the element is silenced if EITHER is on, and its
+// volume tracks the clip volume (capped at 1 for preview; export boosts).
+let monitorMuted = true; // fgVideo starts muted so autoplay works
+function clipBaseVolume() {
+  return Math.min(1, Math.max(0, state.audio.volumePercent / 100));
+}
+function syncClipAudio() {
+  fgVideo.muted = monitorMuted || state.audio.muted;
+  fgVideo.volume = clipBaseVolume();
 }
 
 function tickSounds(outT) {
@@ -1531,14 +1546,19 @@ export function initPreview() {
     syncSeekSliderRange();
     updateTimeLabel();
   });
-  on('settings', syncSoundAudios);
+  on('settings', () => {
+    syncSoundAudios();
+    syncClipAudio();
+  });
 
   // Only the foreground's mute toggles — the background copy plays the
   // same source and unmuting both would phase/echo. Starting muted keeps
-  // autoplay working; this click is itself the unmute gesture.
+  // autoplay working; this click is itself the unmute gesture. This is a
+  // preview-monitor mute only; the exported mute lives in state.audio.muted.
   muteBtn.addEventListener('click', () => {
-    fgVideo.muted = !fgVideo.muted;
-    muteBtn.textContent = fgVideo.muted ? '🔇' : '🔊';
+    monitorMuted = !monitorMuted;
+    syncClipAudio();
+    muteBtn.textContent = monitorMuted ? '🔇' : '🔊';
   });
 
   // Clicking the video itself selects the main clip (for framing) and lets

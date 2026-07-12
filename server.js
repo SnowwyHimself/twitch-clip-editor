@@ -326,6 +326,21 @@ function clampWrapRatio(value) {
   return Math.min(1, Math.max(0.15, r));
 }
 
+// Audio volume 0-200% (100 = untouched). Matches the frontend clamp so a
+// boosted clip renders at the level the user set.
+function clampVolumePercent(value, fallback = 100) {
+  const v = parseFloat(value);
+  if (!Number.isFinite(v)) return fallback;
+  return Math.min(200, Math.max(0, v));
+}
+
+// Non-negative fade length in seconds, capped so a bad value can't wedge afade.
+function clampFadeSeconds(value) {
+  const v = parseFloat(value);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return Math.min(30, v);
+}
+
 // Converts a 0-100 "center position" percentage into a top-left pixel
 // coordinate, clamped so the full contentSize always stays within
 // [0, canvasSize] regardless of how large/small the caption or how far
@@ -734,7 +749,7 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, onProgress) {
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
   // straight [0:v]/[0:a]. A single kept range starting at output 0 (the
@@ -845,6 +860,16 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   if (speed !== 1 && hasAudio) {
     filterComplex += `;${sourceAudioLabel}atempo=${speed}[outa]`;
     audioMap = '[outa]';
+  }
+
+  // Main-clip volume (0-200%, 100 = untouched, 0 = muted). Applied after any
+  // trim/speed and before sound mixing, so it scales only the source audio.
+  // '0:a?' is a CLI map, not a filter label, so swap in the real [0:a].
+  const mainVol = mainAudio ? mainAudio.volume : 100;
+  if (hasAudio && mainVol !== 100) {
+    const inLabel = audioMap === '0:a?' ? '[0:a]' : audioMap;
+    filterComplex += `;${inLabel}volume=${(mainVol / 100).toFixed(3)}[mainaud]`;
+    audioMap = '[mainaud]';
   }
 
   // Each sound clip is trimmed to its [trimStart,trimEnd] region of the
@@ -1026,14 +1051,28 @@ function buildAudioOverlays(body, audioFiles) {
     const delay = parseFloat(m.delay);
     const trimStart = parseFloat(m.trimStart);
     const trimEnd = parseFloat(m.trimEnd);
+    const playLen = parseFloat(m.playLen);
     return {
       path: file.path,
-      volume: clampPositionPercent(m.volume, 80),
+      volume: clampVolumePercent(m.volume, 80),
+      fadeIn: clampFadeSeconds(m.fadeIn),
+      fadeOut: clampFadeSeconds(m.fadeOut),
       delay: Number.isFinite(delay) && delay > 0 ? delay : 0,
+      playLen: Number.isFinite(playLen) && playLen > 0 ? playLen : null,
       trimStart: Number.isFinite(trimStart) ? trimStart : 0,
       trimEnd: Number.isFinite(trimEnd) ? trimEnd : null,
     };
   });
+}
+
+// Main-clip audio settings: volume 0-200 (0 = muted, already collapsed by the
+// frontend) and head/tail fades in seconds.
+function buildMainAudio(body) {
+  return {
+    volume: clampVolumePercent(body && body.audioVolume, 100),
+    fadeIn: clampFadeSeconds(body && body.audioFadeIn),
+    fadeOut: clampFadeSeconds(body && body.audioFadeOut),
+  };
 }
 
 function findFileWithPrefix(dir, prefix) {
@@ -1100,7 +1139,7 @@ function buildSection(body) {
   return { start, end };
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -1132,7 +1171,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -1147,7 +1186,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -1155,7 +1194,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -1288,7 +1327,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildAudioOverlays(req.body || {}, req.files.audioTrack),
     buildKeyframes(req.body || {}),
     buildFaceTrack(req.body || {}),
-    buildSplit(req.body || {})
+    buildSplit(req.body || {}),
+    buildMainAudio(req.body || {})
   );
 });
 
@@ -1324,7 +1364,8 @@ app.post(
       buildAudioOverlays(req.body, req.files.audioTrack),
       buildKeyframes(req.body),
       buildFaceTrack(req.body),
-      buildSplit(req.body)
+      buildSplit(req.body),
+      buildMainAudio(req.body)
     );
   }
 );

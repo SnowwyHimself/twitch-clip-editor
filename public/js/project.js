@@ -58,6 +58,7 @@ function serialize() {
     mirror: state.mirror,
     panX: state.panX,
     panY: state.panY,
+    audio: state.audio,
     layout: state.layout,
     split: state.split,
     keyframes: state.keyframes,
@@ -238,6 +239,9 @@ function applyStateFields(data, overlays, sounds) {
   state.mirror = !!data.mirror;
   if (Number.isFinite(data.panX)) state.panX = data.panX;
   if (Number.isFinite(data.panY)) state.panY = data.panY;
+  state.audio = data.audio && typeof data.audio === 'object'
+    ? { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0, ...data.audio }
+    : { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 };
   state.layout = data.layout === 'split' ? 'split' : 'fill';
   if (data.split) state.split = data.split;
   state.keyframes = data.keyframes || [];

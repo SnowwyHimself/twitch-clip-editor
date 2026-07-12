@@ -176,6 +176,19 @@
             </span>
           </label>
         </div>
+
+        <div class="field-group">
+          <label class="field-label" for="clip-volume-slider">Clip volume <span id="clip-volume-value">100%</span></label>
+          <input id="clip-volume-slider" type="range" min="0" max="200" value="100" step="1" />
+          <label class="switch-row" for="clip-mute-toggle">
+            <span class="field-label switch-label">Mute original audio</span>
+            <span class="switch">
+              <input type="checkbox" id="clip-mute-toggle" />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <p class="field-hint">Above 100% boosts the clip's audio in the export (preview monitors up to 100%).</p>
+        </div>
       </div>
 
       <div id="panel-captions" class="panel-body hidden">
@@ -294,7 +307,14 @@
         </div>
         <div class="field-group hidden" id="audio-volume-group">
           <label class="field-label" for="audio-volume-slider">Volume <span id="audio-volume-value">80%</span></label>
-          <input id="audio-volume-slider" type="range" min="0" max="100" value="80" step="1" />
+          <input id="audio-volume-slider" type="range" min="0" max="200" value="80" step="1" />
+          <label class="switch-row" for="audio-mute-toggle">
+            <span class="field-label switch-label">Mute</span>
+            <span class="switch">
+              <input type="checkbox" id="audio-mute-toggle" />
+              <span class="switch-track"></span>
+            </span>
+          </label>
           <p class="field-hint" id="audio-current">Sound added.</p>
           <button type="button" id="audio-remove-btn" class="danger-btn">Remove sound</button>
         </div>

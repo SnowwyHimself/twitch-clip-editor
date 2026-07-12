@@ -34,6 +34,8 @@ import {
   updateSound,
   removeSound,
   selectedSound,
+  setAudio,
+  clampVolumePercent,
   addKeyframe,
   removeKeyframe,
   clearKeyframes,
@@ -154,8 +156,13 @@ function lookupElements() {
     audioVolumeGroup: byId('audio-volume-group'),
     audioVolumeSlider: byId('audio-volume-slider'),
     audioVolumeValue: byId('audio-volume-value'),
+    audioMuteToggle: byId('audio-mute-toggle'),
     audioCurrent: byId('audio-current'),
     audioRemoveBtn: byId('audio-remove-btn'),
+    // Main-clip audio (Video tab)
+    clipVolumeSlider: byId('clip-volume-slider'),
+    clipVolumeValue: byId('clip-volume-value'),
+    clipMuteToggle: byId('clip-mute-toggle'),
     // Text tab
     textInput: byId('caption-text'),
     emojiBtn: byId('emoji-picker-btn'),
@@ -295,6 +302,13 @@ function wireVideoControls() {
   els.mirrorToggle.addEventListener('change', () => {
     state.mirror = els.mirrorToggle.checked;
     emit('settings');
+  });
+  els.clipVolumeSlider.addEventListener('input', () => {
+    setAudio({ volumePercent: clampVolumePercent(els.clipVolumeSlider.value) });
+    els.clipVolumeValue.textContent = `${els.clipVolumeSlider.value}%`;
+  });
+  els.clipMuteToggle.addEventListener('change', () => {
+    setAudio({ muted: els.clipMuteToggle.checked });
   });
   // Position lock: when on, applying a preset never moves the clip (panX/panY
   // stay put). Persisted so the choice sticks across sessions. Default on —
@@ -806,6 +820,7 @@ function refreshSoundPanel() {
   if (!s) return;
   els.audioVolumeSlider.value = s.volumePercent;
   els.audioVolumeValue.textContent = `${s.volumePercent}%`;
+  els.audioMuteToggle.checked = !!s.muted;
   els.audioCurrent.textContent = `${s.label} — drag its bar or edges on the timeline; ✂ Split cuts it.`;
 }
 
@@ -844,6 +859,10 @@ function wireSoundControls() {
     const s = selectedSound();
     if (s) updateSound(s.id, { volumePercent: parseFloat(els.audioVolumeSlider.value) });
     els.audioVolumeValue.textContent = `${els.audioVolumeSlider.value}%`;
+  });
+  els.audioMuteToggle.addEventListener('change', () => {
+    const s = selectedSound();
+    if (s) updateSound(s.id, { muted: els.audioMuteToggle.checked });
   });
   els.audioRemoveBtn.addEventListener('click', () => {
     const s = selectedSound();
@@ -1185,6 +1204,9 @@ function refreshVideoPanel() {
   if (a !== els.speedSlider) els.speedSlider.value = state.speed;
   els.speedValue.textContent = `${state.speed.toFixed(2)}x`;
   els.mirrorToggle.checked = state.mirror;
+  if (a !== els.clipVolumeSlider) els.clipVolumeSlider.value = state.audio.volumePercent;
+  els.clipVolumeValue.textContent = `${state.audio.volumePercent}%`;
+  els.clipMuteToggle.checked = !!state.audio.muted;
   updateLayoutUI();
 }
 

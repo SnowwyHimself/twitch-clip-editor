@@ -75,6 +75,10 @@ function buildFormData() {
   formData.append('panY', state.panY);
   formData.append('mirror', state.mirror);
   formData.append('speed', state.speed);
+  // Main-clip audio: volume 0-200 (or 0 when muted), plus head/tail fades.
+  formData.append('audioVolume', state.audio.muted ? 0 : state.audio.volumePercent);
+  formData.append('audioFadeIn', state.audio.fadeIn || 0);
+  formData.append('audioFadeOut', state.audio.fadeOut || 0);
   formData.append('layout', state.layout || 'fill');
   if (state.layout === 'split') formData.append('split', JSON.stringify(state.split));
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));
@@ -161,8 +165,11 @@ function buildFormData() {
     const delay = mapToOutput(s.start);
     const playLen = mapToOutput(s.end) - mapToOutput(s.start);
     sounds.push({
-      volume: s.volumePercent,
+      volume: s.muted ? 0 : s.volumePercent,
+      fadeIn: s.fadeIn || 0,
+      fadeOut: s.fadeOut || 0,
       delay: Number(delay.toFixed(3)),
+      playLen: Number(playLen.toFixed(3)),
       trimStart: Number((s.offset || 0).toFixed(3)),
       trimEnd: Number(((s.offset || 0) + playLen).toFixed(3)),
     });
