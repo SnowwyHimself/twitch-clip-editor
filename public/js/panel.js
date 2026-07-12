@@ -50,6 +50,7 @@ import {
 import {
   getCurrentTime,
   getCurrentOutputTime,
+  seek,
   beginFaceSelect,
   cancelFaceSelect,
   isFaceSelecting,
@@ -119,6 +120,7 @@ function lookupElements() {
     kfAddBtn: byId('kf-add-btn'),
     kfStatus: byId('kf-status'),
     kfClearBtn: byId('kf-clear-btn'),
+    kfPunchBtn: byId('kf-punch-btn'),
     faceTrackBtn: byId('face-track-btn'),
     facetrackToggleRow: byId('facetrack-toggle-row'),
     facetrackToggle: byId('facetrack-toggle'),
@@ -378,6 +380,7 @@ function wireKeyframes() {
     else addKeyframe(t, { zoom: state.zoom, panX: state.panX, panY: state.panY });
   });
   els.kfClearBtn.addEventListener('click', () => clearKeyframes());
+  els.kfPunchBtn.addEventListener('click', punchInAtPlayhead);
   els.faceTrackBtn.addEventListener('click', runFaceTrack);
   els.facetrackToggle.addEventListener('change', () => setFaceTrackEnabled(els.facetrackToggle.checked));
   on('facetrack', renderFaceTrackUI);
@@ -390,6 +393,24 @@ function wireKeyframes() {
     renderKeyframeUI();
   });
   renderKeyframeUI();
+}
+
+// One-click punch-in: a quick zoom-in centred on the playhead. Drops a
+// keyframe at the current framing now, then a zoomed-in one ~0.5s later that
+// holds — the signature CapCut/Reels emphasis move. Uses the same keyframe
+// engine (so preview and export already match), and keeps the current pan.
+const PUNCH_DURATION = 0.5;
+function punchInAtPlayhead() {
+  const dur = sourceDuration();
+  if (dur <= 0) return;
+  let start = Math.min(getCurrentTime(), Math.max(0, dur - 0.1));
+  let end = Math.min(dur - 0.01, start + PUNCH_DURATION);
+  // Near the clip's end there isn't room ahead — pull the ramp back instead.
+  if (end - start < 0.1) start = Math.max(0, end - PUNCH_DURATION);
+  const target = state.zoom < 1.3 ? 1.4 : Math.min(3, state.zoom + 0.2);
+  addKeyframe(start, { zoom: state.zoom, panX: state.panX, panY: state.panY });
+  addKeyframe(end, { zoom: target, panX: state.panX, panY: state.panY });
+  seek(end); // land on the punched-in framing so the effect is visible
 }
 
 function renderKeyframeUI() {

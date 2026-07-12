@@ -27,6 +27,7 @@ import {
   on,
   emit,
   isSelected,
+  removeKeyframe,
   selectLayer,
   selectSegment,
   clearSelection,
@@ -285,14 +286,60 @@ function renderKeyframeRow() {
     marker.className = 'tl-kf-marker';
     marker.dataset.t = kf.t;
     marker.textContent = '◆';
-    marker.title = `Keyframe @ ${kf.t.toFixed(2)}s — click to jump here`;
-    marker.addEventListener('click', (e) => {
-      e.stopPropagation();
-      seek(kf.t);
-    });
+    marker.title = `Keyframe @ ${kf.t.toFixed(2)}s — click to jump, drag to move, double-click to delete`;
+    attachKeyframeMarkerDrag(marker, kf);
     keyframeRow.appendChild(marker);
   }
   layoutKeyframeMarkers();
+}
+
+// Click jumps to the keyframe; a horizontal drag retimes it; double-click
+// deletes it. During the drag we mutate the keyframe's time and nudge the
+// preview via 'settings' WITHOUT re-rendering the row (which would drop the
+// element we're capturing), then commit once on release via 'keyframes' so it
+// lands as a single undo step.
+function attachKeyframeMarkerDrag(marker, kf) {
+  let startX = 0;
+  let dragging = false;
+  let moved = false;
+
+  marker.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    startX = e.clientX;
+    dragging = true;
+    moved = false;
+    try {
+      marker.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic pointers */
+    }
+  });
+  marker.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    if (!moved && Math.abs(e.clientX - startX) <= MOVE_THRESHOLD_PX) return;
+    moved = true;
+    const pps = pxPerSecond();
+    if (pps <= 0) return;
+    const rect = ruler.getBoundingClientRect();
+    const t = Math.max(0, Math.min(sourceDuration(), (e.clientX - rect.left) / pps));
+    kf.t = t;
+    state.keyframes.sort((a, b) => a.t - b.t);
+    marker.dataset.t = t;
+    marker.style.left = `${(t * pps).toFixed(1)}px`;
+    emit('settings'); // live-refresh the preview transform, no row rebuild
+  });
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    if (moved) emit('keyframes'); // finalize: re-render + one history entry
+    else seek(kf.t);
+  };
+  marker.addEventListener('pointerup', end);
+  marker.addEventListener('pointercancel', end);
+  marker.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    removeKeyframe(kf.id);
+  });
 }
 
 function layoutKeyframeMarkers() {

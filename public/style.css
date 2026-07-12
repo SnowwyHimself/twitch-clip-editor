@@ -1702,10 +1702,14 @@ img.preset-thumb {
   font-size: 11px;
   line-height: 1;
   color: var(--accent);
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
 }
 .tl-kf-marker:hover {
   color: #fff;
+}
+.tl-kf-marker:active {
+  cursor: grabbing;
 }
 
 .tl-text-bar {
