@@ -1336,6 +1336,22 @@ img.preset-thumb {
   border-color: var(--accent);
 }
 
+/* Marks a preset that also carries template text layers. */
+.preset-text-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 6px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
 .preset-del {
   flex-shrink: 0;
   width: 30px;

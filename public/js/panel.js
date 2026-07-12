@@ -535,7 +535,28 @@ function currentVideoSettings() {
   };
 }
 
-export function applyPresetSettings(s) {
+// The current hand-made text layers, captured for a preset template. Auto
+// caption layers (group:'caption') are never included — they belong to a
+// specific clip's transcript, not a reusable template. Duration is stored so
+// applied layers start at t=0 and keep their length.
+function currentPresetTextLayers() {
+  return state.layers
+    .filter((l) => l.group !== 'caption' && l.text && l.text.trim())
+    .map((l) => ({
+      text: l.text,
+      style: l.style,
+      fontId: l.fontId,
+      fontSize: l.fontSize,
+      color: l.color,
+      dropShadow: l.dropShadow,
+      xPercent: l.xPercent,
+      yPercent: l.yPercent,
+      wrapWidth: l.wrapWidth,
+      duration: Math.max(0.1, (l.end || 0) - (l.start || 0)),
+    }));
+}
+
+function applyPresetSettings(s) {
   if (!s) return;
   if (s.aspect) state.aspect = { ...s.aspect };
   if (Number.isFinite(s.zoom)) state.zoom = s.zoom;
@@ -553,10 +574,28 @@ export function applyPresetSettings(s) {
   emit('settings');
 }
 
-// The default preset, applied on clip import (main.js calls this).
-export function activePresetSettings() {
+// Adds a preset's saved text layers to the current clip — each starts at t=0
+// and keeps its saved duration, so a preset can act as a real template (a
+// styled headline already placed).
+function addPresetTextLayers(textLayers) {
+  if (!Array.isArray(textLayers)) return;
+  for (const t of textLayers) {
+    const { duration, ...fields } = t;
+    addTextLayer({ ...fields, start: 0, end: Math.max(0.1, duration || 3), group: null }, { select: false });
+  }
+}
+
+// Applies a whole preset: video settings plus any template text layers.
+export function applyPreset(preset) {
+  if (!preset) return;
+  applyPresetSettings(preset.settings);
+  addPresetTextLayers(preset.textLayers);
+}
+
+// The default (★) preset, applied on clip import (main.js/init call this).
+export function activePreset() {
   const id = getDefaultPresetId();
-  return loadPresets().find((p) => p.id === id)?.settings || null;
+  return loadPresets().find((p) => p.id === id) || null;
 }
 
 function renderPresetList() {
@@ -583,9 +622,19 @@ function renderPresetList() {
     const name = document.createElement('button');
     name.type = 'button';
     name.className = 'preset-apply';
+    const textCount = (p.textLayers && p.textLayers.length) || 0;
     name.textContent = p.name;
-    name.title = 'Apply this preset';
-    name.addEventListener('click', () => applyPresetSettings(p.settings));
+    if (textCount > 0) {
+      // Small badge so it's clear this preset is a template that also drops in
+      // text layers, not just video settings.
+      const badge = document.createElement('span');
+      badge.className = 'preset-text-badge';
+      badge.textContent = 'T';
+      badge.title = `Includes ${textCount} text layer${textCount === 1 ? '' : 's'}`;
+      name.appendChild(badge);
+    }
+    name.title = textCount > 0 ? `Apply this preset (+${textCount} text)` : 'Apply this preset';
+    name.addEventListener('click', () => applyPreset(p));
 
     const del = document.createElement('button');
     del.type = 'button';
@@ -614,15 +663,17 @@ function wirePresets() {
     const name = els.presetName.value.trim();
     if (!name) return;
     const presets = loadPresets();
+    const textLayers = currentPresetTextLayers();
     const existing = presets.find((p) => p.name.toLowerCase() === name.toLowerCase());
     if (existing) {
       existing.settings = currentVideoSettings();
+      existing.textLayers = textLayers;
     } else {
       if (presets.length >= 3) {
         els.presetName.placeholder = 'Max 3 — delete one first';
         return;
       }
-      presets.push({ id: `p-${Date.now()}`, name, settings: currentVideoSettings() });
+      presets.push({ id: `p-${Date.now()}`, name, settings: currentVideoSettings(), textLayers });
     }
     savePresets(presets);
     els.presetName.value = '';
@@ -1190,7 +1241,7 @@ export function initPanel() {
   // Auto-apply the default (★) preset whenever a clip loads, so an imported
   // clip lands in the user's template.
   on('source', () => {
-    const s = activePresetSettings();
-    if (s) applyPresetSettings(s);
+    const p = activePreset();
+    if (p) applyPreset(p);
   });
 }
