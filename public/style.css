@@ -994,6 +994,39 @@ input[type="range"] {
   background: rgba(255, 92, 92, 0.1);
 }
 
+/* Confirm dialog (destructive actions) */
+.confirm-card {
+  width: min(380px, 92vw);
+}
+.confirm-title {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+.confirm-name {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.confirm-note {
+  margin: 0 0 18px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* Filled danger for the primary destructive action, so Delete reads clearly. */
+.confirm-actions .danger-btn {
+  background: var(--error);
+  color: #fff;
+}
+.confirm-actions .danger-btn:hover {
+  background: #e04b4b;
+}
+
 /* Toggle groups (aspect ratio, caption style) */
 
 .toggle-group {

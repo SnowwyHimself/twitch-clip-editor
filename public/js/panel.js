@@ -53,6 +53,7 @@ import {
   isFaceSelecting,
 } from './preview.js';
 import { trackSelectedFace } from './facetrack.js';
+import { confirmDialog } from './confirm.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile } from './api.js';
 
 const CAPTION_COLORS = [
@@ -591,7 +592,13 @@ function renderPresetList() {
     del.className = 'preset-del';
     del.textContent = '✕';
     del.title = 'Delete preset';
-    del.addEventListener('click', () => {
+    del.addEventListener('click', async () => {
+      const ok = await confirmDialog({
+        title: 'Delete preset?',
+        itemName: p.name,
+        confirmLabel: 'Delete',
+      });
+      if (!ok) return;
       savePresets(loadPresets().filter((x) => x.id !== p.id));
       if (defId === p.id) localStorage.setItem(DEFAULT_PRESET_KEY, '');
       renderPresetList();

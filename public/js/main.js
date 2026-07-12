@@ -39,6 +39,7 @@ import {
   onProjectChange,
   finishOpenWithFile,
 } from './project.js';
+import { confirmDialog } from './confirm.js';
 
 const urlInput = document.getElementById('clip-url');
 const loadUrlBtn = document.getElementById('load-url-btn');
@@ -299,6 +300,12 @@ async function renderProjectList(container, { compact = false } = {}) {
       del.title = 'Delete project';
       del.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const ok = await confirmDialog({
+          title: 'Delete project?',
+          itemName: p.name,
+          confirmLabel: 'Delete',
+        });
+        if (!ok) return;
         await deleteProject(p.id);
         renderProjectList(container, { compact });
       });
