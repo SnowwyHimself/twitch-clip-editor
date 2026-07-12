@@ -104,12 +104,28 @@ function applyTimelineZoom() {
   renderAll();
 }
 
-function stepZoom(dir) {
+function nextZoomStep(dir) {
   const i = TL_ZOOM_STEPS.indexOf(tlZoom);
-  const next = TL_ZOOM_STEPS[Math.min(TL_ZOOM_STEPS.length - 1, Math.max(0, (i < 0 ? 0 : i) + dir))];
+  return TL_ZOOM_STEPS[Math.min(TL_ZOOM_STEPS.length - 1, Math.max(0, (i < 0 ? 0 : i) + dir))];
+}
+
+// Zoom to `next`, keeping `anchorOutTime` pinned under the same on-screen
+// position (so the timeline grows/shrinks *around* the playhead or the mouse,
+// not the left edge). ruler.offsetLeft is the constant label-gutter offset;
+// outTimeToX rescales with the new pxPerSecond after applyTimelineZoom relays
+// out the grid.
+function zoomTo(next, anchorOutTime) {
   if (next === tlZoom) return;
+  const anchorContentBefore = ruler.offsetLeft + outTimeToX(anchorOutTime);
+  const viewportX = anchorContentBefore - tlBody.scrollLeft;
   tlZoom = next;
   applyTimelineZoom();
+  const anchorContentAfter = ruler.offsetLeft + outTimeToX(anchorOutTime);
+  tlBody.scrollLeft = anchorContentAfter - viewportX;
+}
+
+function stepZoom(dir) {
+  zoomTo(nextZoomStep(dir), getCurrentOutputTime());
 }
 
 function trackWidth() {
@@ -689,6 +705,18 @@ export function initTimeline() {
   deleteBtn.addEventListener('click', deleteSelection);
   zoomInBtn.addEventListener('click', () => stepZoom(1));
   zoomOutBtn.addEventListener('click', () => stepZoom(-1));
+  // ⌘/Ctrl + scroll zooms the timeline around the cursor (CapCut-style). Plain
+  // scroll is left alone so the track still pans/scrolls normally.
+  tlBody.addEventListener(
+    'wheel',
+    (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const next = nextZoomStep(e.deltaY < 0 ? 1 : -1);
+      zoomTo(next, xToOutTime(e.clientX));
+    },
+    { passive: false }
+  );
   applyTimelineZoom();
 
   // Click-away deselect: pressing anywhere on the timeline that isn't a

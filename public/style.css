@@ -1313,6 +1313,10 @@ img.preset-thumb {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Grid item: without min-width:0 it refuses to shrink below its content, so a
+     zoomed-wider track blows the timeline out and shoves the whole page
+     sideways instead of scrolling inside .tl-body. */
+  min-width: 0;
   background: var(--panel);
   border-top: 1px solid var(--border);
 }
@@ -1382,6 +1386,7 @@ img.preset-thumb {
 .tl-body {
   position: relative;
   flex: 1;
+  min-width: 0; /* let overflow-x actually contain the zoomed-wide grid */
   overflow-y: auto;
   overflow-x: auto; /* scrolls when the timeline is zoomed wider than the pane */
   padding: 0 14px 10px;
