@@ -361,12 +361,18 @@ function wireProjects() {
   startAutosave();
 }
 
+function hideRestoreBanner() {
+  restoreBanner.classList.add('hidden');
+}
+
 async function offerRestore() {
   const { autosave } = await listProjects();
   if (!autosave) return;
+  // Launch-only prompt: if a clip is somehow already loaded, never show it.
+  if (state.source) return;
   restoreBanner.classList.remove('hidden');
   restoreYesBtn.onclick = async () => {
-    restoreBanner.classList.add('hidden');
+    hideRestoreBanner();
     const result = await restoreAutosave();
     if (!result.ok && result.reason === 'need-file') {
       pendingFileOpen = { id: 'autosave', data: result.data };
@@ -374,7 +380,11 @@ async function offerRestore() {
       projectFileInput.click();
     }
   };
-  restoreNoBtn.onclick = () => restoreBanner.classList.add('hidden');
+  restoreNoBtn.onclick = hideRestoreBanner;
+  // Auto-dismiss the moment the user starts working — loading/importing a clip,
+  // opening a project, or restoring all attach a source and fire 'source'. The
+  // banner must never sit on top of an active session.
+  on('source', hideRestoreBanner);
 }
 
 // --- boot ------------------------------------------------------------------------------
