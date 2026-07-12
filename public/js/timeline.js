@@ -54,6 +54,28 @@ import {
   MIN_LAYER_SECONDS,
 } from './state.js';
 import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './preview.js';
+import { getPeaks, drawWaveform } from './waveform.js';
+
+// Paints (or refreshes) a clip's waveform: a canvas behind the bar's label
+// showing the [offsetSec, offsetSec+lenSec] slice of its audio. Peaks are
+// cached per URL, so this is cheap to call on every relayout/zoom. Silently
+// does nothing when the URL can't be decoded (e.g. a video with no audio).
+function paintWaveform(el, url, offsetSec, lenSec) {
+  if (!url) return;
+  let canvas = el.querySelector('canvas.tl-waveform');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.className = 'tl-waveform';
+    el.insertBefore(canvas, el.firstChild);
+  }
+  getPeaks(url).then((data) => {
+    if (!data) {
+      canvas.remove();
+      return;
+    }
+    drawWaveform(canvas, data, offsetSec, lenSec, 'rgba(255,255,255,0.5)');
+  });
+}
 
 const ruler = document.getElementById('tl-ruler');
 const keyframeRow = document.getElementById('tl-keyframe-row');
@@ -193,11 +215,14 @@ function layoutClipBar(el, clip) {
 
 function layoutVideoTrack() {
   const pps = pxPerSecond();
+  const srcUrl = state.source && state.source.previewUrl;
   for (const seg of state.segments) {
     const el = segmentEls.get(seg.id);
     if (!el) continue;
     el.style.left = `${seg.outStart * pps}px`;
     el.style.width = `${Math.max(6, (seg.end - seg.start) * pps)}px`;
+    // The main clip's own audio, sliced to this piece's [start,end].
+    paintWaveform(el, srcUrl, seg.start, seg.end - seg.start);
   }
   layoutTransitionBadges();
 }
@@ -223,7 +248,9 @@ function layoutLayerBars() {
 function layoutSoundBars() {
   for (const s of state.sounds) {
     const el = soundBarEls.get(s.id);
-    if (el) layoutClipBar(el, s);
+    if (!el) continue;
+    layoutClipBar(el, s);
+    paintWaveform(el, s.url, s.offset || 0, s.end - s.start);
   }
 }
 
