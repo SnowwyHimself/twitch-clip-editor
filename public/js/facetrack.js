@@ -56,14 +56,23 @@ function seekTo(video, t) {
 }
 
 // Detection can't wedge the whole scan either — cap it and treat a slow frame
-// as "no faces this sample".
+// as "no faces this sample". NOTE: detectAllFaces() returns face-api's own
+// thenable *task* object, not a real Promise — it's awaitable but has no
+// .catch(), so we adopt it into a genuine Promise (via the async wrapper)
+// before racing/catching. Calling .catch() on the raw task throws
+// "detectAllFaces(...).catch is not a function" and aborts the whole scan.
 async function detectWithTimeout(faceapi, video, opts) {
-  return Promise.race([
-    faceapi.detectAllFaces(video, opts).catch(() => []),
-    // Generous cap: catches a truly wedged frame without cutting off a
-    // slow-but-working detection on a modest machine.
-    new Promise((r) => setTimeout(() => r([]), 4000)),
-  ]);
+  const detect = (async () => {
+    try {
+      return await faceapi.detectAllFaces(video, opts);
+    } catch {
+      return [];
+    }
+  })();
+  // Generous cap: catches a truly wedged frame without cutting off a
+  // slow-but-working detection on a modest machine.
+  const timeout = new Promise((r) => setTimeout(() => r([]), 4000));
+  return Promise.race([detect, timeout]);
 }
 
 // target = { x, y } normalized (0..1) point on a face the user picked. Scans

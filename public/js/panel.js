@@ -393,63 +393,80 @@ function syncKeyframeSliders() {
   state.panY = tf.panY;
 }
 
+// Status line helper — writes the message and flags real failures so they're
+// visibly distinct (styled red) instead of blending into the hint text.
+function setFaceStatus(text, isError = false) {
+  els.facetrackStatus.textContent = text;
+  els.facetrackStatus.classList.toggle('error', !!isError);
+}
+
+// Syncs ONLY the toggle row + checkbox to the current state — deliberately
+// leaves the status line alone so a just-set outcome/error message survives
+// (renderFaceTrackUI, which also rewrites the status, would clobber it).
+function syncFaceTrackToggle() {
+  els.facetrackToggleRow.classList.toggle('hidden', state.faceTrack.samples.length === 0);
+  els.facetrackToggle.checked = faceTrackActive();
+}
+
 // Auto-reframe: user picks a face on the preview, then we scan + follow it.
 async function runFaceTrack() {
   if (!state.source) {
-    els.facetrackStatus.textContent = 'Load a clip first, then select a face.';
+    setFaceStatus('Load a clip first, then select a face.');
     return;
   }
   const btn = els.faceTrackBtn;
   const originalLabel = btn.textContent;
   clearFaceTrack(); // show the plain view so the tap maps cleanly to the footage
-  els.facetrackStatus.textContent = 'Click the face you want to follow in the preview (Esc to cancel).';
+  setFaceStatus('Click the face you want to follow in the preview (Esc to cancel).');
   const target = await beginFaceSelect();
   if (!target) {
-    renderFaceTrackUI();
-    els.facetrackStatus.textContent = 'Cancelled. Select a face to start auto-reframing.';
+    syncFaceTrackToggle();
+    setFaceStatus('Cancelled. Select a face to start auto-reframing.');
     return;
   }
   btn.disabled = true;
   btn.textContent = 'Scanning…';
-  els.facetrackStatus.textContent = 'Scanning the clip and locking onto that face…';
+  setFaceStatus('Scanning the clip and locking onto that face…');
   try {
     const result = await trackSelectedFace(target, {
-      onProgress: (p) => {
-        els.facetrackStatus.textContent = `Following that face… ${Math.round(p * 100)}%`;
-      },
+      onProgress: (p) => setFaceStatus(`Following that face… ${Math.round(p * 100)}%`),
     });
     if (result.ok) {
-      els.facetrackStatus.textContent = 'Tracking that face — the clip follows it left/right. Turn off to revert.';
+      setFaceStatus('Tracking that face — the clip follows it left/right. Turn off to revert.');
     } else if (result.reason === 'no-face') {
-      els.facetrackStatus.textContent = 'Couldn’t find a face to follow — try a clearer, more face-forward clip.';
+      setFaceStatus('Couldn’t find a face to follow — try a clearer, more face-forward clip.', true);
     } else if (result.reason === 'load-failed') {
-      els.facetrackStatus.textContent = 'The face detector could not load. Please try again.';
+      setFaceStatus('The face detector could not load. Check your connection and try again.', true);
     } else {
-      els.facetrackStatus.textContent = 'Load a clip first, then select a face.';
+      setFaceStatus('Couldn’t start tracking — load a clip and try again.', true);
     }
-  } catch {
-    els.facetrackStatus.textContent = 'Face tracking hit an error — please try again.';
+  } catch (err) {
+    setFaceStatus(`Face tracking hit an error: ${(err && err.message) || 'unknown'}. Please try again.`, true);
   } finally {
     btn.disabled = false;
     btn.textContent = originalLabel;
-    renderFaceTrackUI();
+    // Only re-sync the toggle here — NOT the full renderFaceTrackUI — so the
+    // success/error message set just above stays on screen.
+    syncFaceTrackToggle();
   }
 }
 
-// Reflects the current face-track state in the toggle + status line.
+// Reflects the current face-track state in the toggle + status line. Called on
+// the 'facetrack' event and at init; runFaceTrack uses syncFaceTrackToggle
+// instead so its own outcome message isn't overwritten.
 function renderFaceTrackUI() {
-  const active = faceTrackActive();
+  syncFaceTrackToggle();
   const hasSamples = state.faceTrack.samples.length > 0;
-  els.facetrackToggleRow.classList.toggle('hidden', !hasSamples);
-  els.facetrackToggle.checked = active;
-  if (active) {
-    els.facetrackStatus.textContent =
-      'Tracking a face — the clip follows it left/right. Turn off to revert, or select a different face.';
+  if (faceTrackActive()) {
+    setFaceStatus(
+      'Tracking a face — the clip follows it left/right. Turn off to revert, or select a different face.'
+    );
   } else if (hasSamples) {
-    els.facetrackStatus.textContent = 'Face tracking is off (kept). Turn it back on, or select a new face.';
+    setFaceStatus('Face tracking is off (kept). Turn it back on, or select a new face.');
   } else {
-    els.facetrackStatus.textContent =
-      'Auto-reframe: follows a chosen face left/right, keeping the frame filled. Works best on face-forward clips.';
+    setFaceStatus(
+      'Auto-reframe: follows a chosen face left/right, keeping the frame filled. Works best on face-forward clips.'
+    );
   }
 }
 
