@@ -42,9 +42,16 @@ import {
   clampCropValue,
   setFaceTrackEnabled,
   clearFaceTrack,
+  restoreFaceTrack,
   faceTrackActive,
 } from './state.js';
-import { getCurrentTime, getCurrentOutputTime, beginFaceSelect } from './preview.js';
+import {
+  getCurrentTime,
+  getCurrentOutputTime,
+  beginFaceSelect,
+  cancelFaceSelect,
+  isFaceSelecting,
+} from './preview.js';
 import { trackSelectedFace } from './facetrack.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile } from './api.js';
 
@@ -414,14 +421,28 @@ async function runFaceTrack() {
     setFaceStatus('Load a clip first, then select a face.');
     return;
   }
+  // A second click on the button (while "Click a face to follow" is up) cancels
+  // the selection — the in-flight beginFaceSelect resolves null and the branch
+  // below restores whatever was there before.
+  if (isFaceSelecting()) {
+    cancelFaceSelect();
+    return;
+  }
   const btn = els.faceTrackBtn;
   const originalLabel = btn.textContent;
+  // Snapshot before clearing, so cancelling leaves any prior tracking untouched.
+  const priorFaceTrack = { enabled: state.faceTrack.enabled, samples: state.faceTrack.samples.slice() };
   clearFaceTrack(); // show the plain view so the tap maps cleanly to the footage
   setFaceStatus('Click the face you want to follow in the preview (Esc to cancel).');
   const target = await beginFaceSelect();
   if (!target) {
+    restoreFaceTrack(priorFaceTrack);
     syncFaceTrackToggle();
-    setFaceStatus('Cancelled. Select a face to start auto-reframing.');
+    setFaceStatus(
+      priorFaceTrack.samples.length
+        ? 'Cancelled — kept the previous tracking. Turn it on/off below or select a new face.'
+        : 'Cancelled. Select a face to start auto-reframing.'
+    );
     return;
   }
   btn.disabled = true;

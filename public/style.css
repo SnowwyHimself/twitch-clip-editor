@@ -455,20 +455,40 @@ body {
 .preview-frame.face-selecting {
   cursor: crosshair;
 }
-.preview-frame.face-selecting::after {
-  content: 'Click a face to follow';
+.face-select-pill {
   position: absolute;
   top: 8px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: var(--accent);
   color: #fff;
   font-size: 11px;
   font-weight: 600;
-  padding: 4px 10px;
+  padding: 4px 6px 4px 10px;
   border-radius: 999px;
-  pointer-events: none;
+  white-space: nowrap;
   z-index: 7;
+}
+.face-select-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.face-select-cancel:hover {
+  background: rgba(255, 255, 255, 0.45);
 }
 
 .preview-frame.no-source .preview-bg,

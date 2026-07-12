@@ -665,6 +665,16 @@ export function clearFaceTrack() {
   emit('facetrack');
 }
 
+// Puts back a snapshot taken before a (possibly cancelled) selection, so
+// cancelling face-select leaves any prior tracking exactly as it was.
+export function restoreFaceTrack(snapshot) {
+  state.faceTrack =
+    snapshot && Array.isArray(snapshot.samples)
+      ? { enabled: !!snapshot.enabled, samples: snapshot.samples }
+      : { enabled: false, samples: [] };
+  emit('facetrack');
+}
+
 export function faceTrackActive() {
   return state.faceTrack.enabled && state.faceTrack.samples.length > 0;
 }

@@ -1249,11 +1249,39 @@ function updateClipOutline() {
 // Face-selection: resolves with the source-normalised { x, y } of the point the
 // user taps on the preview (or null on Escape). Used to pick which face to
 // track. Runs in the normal (contain) view, so the content rect maps cleanly.
+// Tracks the in-flight face selection so it can be cancelled from outside
+// (Escape, a second click on the Select button). Null when not selecting.
+let faceSelectHandle = null;
+
+export function isFaceSelecting() {
+  return !!faceSelectHandle;
+}
+
+export function cancelFaceSelect() {
+  if (faceSelectHandle) faceSelectHandle();
+}
+
 export function beginFaceSelect() {
   return new Promise((resolve) => {
     previewFrame.classList.add('face-selecting');
+    // A real (clickable) pill with a ✕ cancel affordance — the old ::after
+    // pseudo-element couldn't hold an interactive control.
+    const pill = document.createElement('div');
+    pill.className = 'face-select-pill';
+    const label = document.createElement('span');
+    label.textContent = 'Click a face to follow';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'face-select-cancel';
+    cancelBtn.setAttribute('aria-label', 'Cancel face selection');
+    cancelBtn.textContent = '✕';
+    pill.append(label, cancelBtn);
+    previewFrame.appendChild(pill);
+
     const done = (value) => {
+      faceSelectHandle = null;
       previewFrame.classList.remove('face-selecting');
+      pill.remove();
       previewFrame.removeEventListener('pointerdown', onDown, true);
       document.removeEventListener('keydown', onKey);
       resolve(value);
@@ -1261,6 +1289,11 @@ export function beginFaceSelect() {
     const onDown = (e) => {
       e.stopPropagation();
       e.preventDefault();
+      // Clicking the pill / its ✕ cancels instead of picking a face.
+      if (e.target.closest('.face-select-pill')) {
+        done(null);
+        return;
+      }
       const fr = previewFrame.getBoundingClientRect();
       const rect = clipContentRect();
       const x = Math.max(0, Math.min(1, (e.clientX - fr.left - rect.left) / rect.w));
@@ -1270,6 +1303,7 @@ export function beginFaceSelect() {
     const onKey = (e) => {
       if (e.key === 'Escape') done(null);
     };
+    faceSelectHandle = () => done(null);
     // Capture phase so it beats the clip-drag / overlay handlers.
     previewFrame.addEventListener('pointerdown', onDown, true);
     document.addEventListener('keydown', onKey);
