@@ -862,13 +862,27 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     audioMap = '[outa]';
   }
 
-  // Main-clip volume (0-200%, 100 = untouched, 0 = muted). Applied after any
-  // trim/speed and before sound mixing, so it scales only the source audio.
-  // '0:a?' is a CLI map, not a filter label, so swap in the real [0:a].
+  // Main-clip volume (0-200%, 100 = untouched, 0 = muted) + head/tail fades.
+  // Applied after any trim/speed and before sound mixing, so they act only on
+  // the source audio. '0:a?' is a CLI map, not a filter label — swap in [0:a].
   const mainVol = mainAudio ? mainAudio.volume : 100;
-  if (hasAudio && mainVol !== 100) {
+  const mainFadeIn = mainAudio ? mainAudio.fadeIn : 0;
+  const mainFadeOut = mainAudio ? mainAudio.fadeOut : 0;
+  // Output audio duration (post trim + speed) — where the fade-out must land.
+  const outSpan =
+    segments && segments.length > 0
+      ? segments.reduce((m, s) => Math.max(m, s.outStart + (s.end - s.start)), 0)
+      : mediaInfo.duration || 0;
+  const outDur = outSpan / speed;
+  if (hasAudio && (mainVol !== 100 || mainFadeIn > 0 || mainFadeOut > 0)) {
+    const filters = [];
+    if (mainVol !== 100) filters.push(`volume=${(mainVol / 100).toFixed(3)}`);
+    if (mainFadeIn > 0) filters.push(`afade=t=in:st=0:d=${mainFadeIn.toFixed(3)}`);
+    if (mainFadeOut > 0 && outDur > mainFadeOut) {
+      filters.push(`afade=t=out:st=${(outDur - mainFadeOut).toFixed(3)}:d=${mainFadeOut.toFixed(3)}`);
+    }
     const inLabel = audioMap === '0:a?' ? '[0:a]' : audioMap;
-    filterComplex += `;${inLabel}volume=${(mainVol / 100).toFixed(3)}[mainaud]`;
+    filterComplex += `;${inLabel}${filters.join(',')}[mainaud]`;
     audioMap = '[mainaud]';
   }
 
@@ -883,14 +897,22 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     const sfxLabels = [];
     audioInputs.forEach((au, i) => {
       const volume = (au.volume / 100).toFixed(3);
-      const trimChain =
-        Number.isFinite(au.trimStart) && Number.isFinite(au.trimEnd) && au.trimEnd > au.trimStart
-          ? `atrim=start=${au.trimStart.toFixed(3)}:end=${au.trimEnd.toFixed(3)},asetpts=PTS-STARTPTS,`
-          : '';
+      const hasTrim = Number.isFinite(au.trimStart) && Number.isFinite(au.trimEnd) && au.trimEnd > au.trimStart;
+      const trimChain = hasTrim
+        ? `atrim=start=${au.trimStart.toFixed(3)}:end=${au.trimEnd.toFixed(3)},asetpts=PTS-STARTPTS,`
+        : '';
+      // Fades act on the sound's own timeline (0 = its start), before the delay
+      // that positions it. playLen is the sound's on-timeline length.
+      const playLen = Number.isFinite(au.playLen) ? au.playLen : hasTrim ? au.trimEnd - au.trimStart : null;
+      let fadeChain = '';
+      if (au.fadeIn > 0) fadeChain += `afade=t=in:st=0:d=${au.fadeIn.toFixed(3)},`;
+      if (au.fadeOut > 0 && playLen && playLen > au.fadeOut) {
+        fadeChain += `afade=t=out:st=${(playLen - au.fadeOut).toFixed(3)}:d=${au.fadeOut.toFixed(3)},`;
+      }
       const delayMs = Math.round((au.delay || 0) * 1000);
       const delayChain = delayMs > 0 ? `adelay=${delayMs}:all=1,` : '';
       const label = `[sfx${i}]`;
-      filterComplex += `;[${au.idx}:a]${trimChain}${delayChain}volume=${volume}${label}`;
+      filterComplex += `;[${au.idx}:a]${trimChain}${fadeChain}${delayChain}volume=${volume}${label}`;
       sfxLabels.push(label);
     });
     if (hasAudio) {

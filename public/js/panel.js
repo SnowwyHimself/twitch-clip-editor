@@ -157,12 +157,20 @@ function lookupElements() {
     audioVolumeSlider: byId('audio-volume-slider'),
     audioVolumeValue: byId('audio-volume-value'),
     audioMuteToggle: byId('audio-mute-toggle'),
+    audioFadeInSlider: byId('audio-fadein-slider'),
+    audioFadeInValue: byId('audio-fadein-value'),
+    audioFadeOutSlider: byId('audio-fadeout-slider'),
+    audioFadeOutValue: byId('audio-fadeout-value'),
     audioCurrent: byId('audio-current'),
     audioRemoveBtn: byId('audio-remove-btn'),
     // Main-clip audio (Video tab)
     clipVolumeSlider: byId('clip-volume-slider'),
     clipVolumeValue: byId('clip-volume-value'),
     clipMuteToggle: byId('clip-mute-toggle'),
+    clipFadeInSlider: byId('clip-fadein-slider'),
+    clipFadeInValue: byId('clip-fadein-value'),
+    clipFadeOutSlider: byId('clip-fadeout-slider'),
+    clipFadeOutValue: byId('clip-fadeout-value'),
     // Text tab
     textInput: byId('caption-text'),
     emojiBtn: byId('emoji-picker-btn'),
@@ -309,6 +317,14 @@ function wireVideoControls() {
   });
   els.clipMuteToggle.addEventListener('change', () => {
     setAudio({ muted: els.clipMuteToggle.checked });
+  });
+  els.clipFadeInSlider.addEventListener('input', () => {
+    setAudio({ fadeIn: parseFloat(els.clipFadeInSlider.value) });
+    els.clipFadeInValue.textContent = `${parseFloat(els.clipFadeInSlider.value).toFixed(1)}s`;
+  });
+  els.clipFadeOutSlider.addEventListener('input', () => {
+    setAudio({ fadeOut: parseFloat(els.clipFadeOutSlider.value) });
+    els.clipFadeOutValue.textContent = `${parseFloat(els.clipFadeOutSlider.value).toFixed(1)}s`;
   });
   // Position lock: when on, applying a preset never moves the clip (panX/panY
   // stay put). Persisted so the choice sticks across sessions. Default on —
@@ -821,6 +837,10 @@ function refreshSoundPanel() {
   els.audioVolumeSlider.value = s.volumePercent;
   els.audioVolumeValue.textContent = `${s.volumePercent}%`;
   els.audioMuteToggle.checked = !!s.muted;
+  els.audioFadeInSlider.value = s.fadeIn || 0;
+  els.audioFadeInValue.textContent = `${(s.fadeIn || 0).toFixed(1)}s`;
+  els.audioFadeOutSlider.value = s.fadeOut || 0;
+  els.audioFadeOutValue.textContent = `${(s.fadeOut || 0).toFixed(1)}s`;
   els.audioCurrent.textContent = `${s.label} — drag its bar or edges on the timeline; ✂ Split cuts it.`;
 }
 
@@ -863,6 +883,16 @@ function wireSoundControls() {
   els.audioMuteToggle.addEventListener('change', () => {
     const s = selectedSound();
     if (s) updateSound(s.id, { muted: els.audioMuteToggle.checked });
+  });
+  els.audioFadeInSlider.addEventListener('input', () => {
+    const s = selectedSound();
+    if (s) updateSound(s.id, { fadeIn: parseFloat(els.audioFadeInSlider.value) });
+    els.audioFadeInValue.textContent = `${parseFloat(els.audioFadeInSlider.value).toFixed(1)}s`;
+  });
+  els.audioFadeOutSlider.addEventListener('input', () => {
+    const s = selectedSound();
+    if (s) updateSound(s.id, { fadeOut: parseFloat(els.audioFadeOutSlider.value) });
+    els.audioFadeOutValue.textContent = `${parseFloat(els.audioFadeOutSlider.value).toFixed(1)}s`;
   });
   els.audioRemoveBtn.addEventListener('click', () => {
     const s = selectedSound();
@@ -1207,6 +1237,10 @@ function refreshVideoPanel() {
   if (a !== els.clipVolumeSlider) els.clipVolumeSlider.value = state.audio.volumePercent;
   els.clipVolumeValue.textContent = `${state.audio.volumePercent}%`;
   els.clipMuteToggle.checked = !!state.audio.muted;
+  if (a !== els.clipFadeInSlider) els.clipFadeInSlider.value = state.audio.fadeIn || 0;
+  els.clipFadeInValue.textContent = `${(state.audio.fadeIn || 0).toFixed(1)}s`;
+  if (a !== els.clipFadeOutSlider) els.clipFadeOutSlider.value = state.audio.fadeOut || 0;
+  els.clipFadeOutValue.textContent = `${(state.audio.fadeOut || 0).toFixed(1)}s`;
   updateLayoutUI();
 }
 

@@ -1010,16 +1010,29 @@ function syncSoundAudios() {
   }
 }
 
+// Linear fade envelope (matches ffmpeg afade's default 'tri' curve): ramps
+// 0->1 over the first `fadeIn` s and 1->0 over the last `fadeOut` s.
+function fadeGain(t, duration, fadeIn, fadeOut) {
+  let g = 1;
+  if (fadeIn > 0 && t < fadeIn) g = Math.max(0, t / fadeIn);
+  if (fadeOut > 0 && duration > 0 && t > duration - fadeOut) {
+    g = Math.min(g, Math.max(0, (duration - t) / fadeOut));
+  }
+  return g;
+}
+
 // The main clip's monitor mute (the 🔊 button) is independent of the exported
 // mute (state.audio.muted): the element is silenced if EITHER is on, and its
-// volume tracks the clip volume (capped at 1 for preview; export boosts).
+// volume tracks the clip volume (capped at 1 for preview; export boosts) with
+// the head/tail fade envelope layered on at the current time.
 let monitorMuted = true; // fgVideo starts muted so autoplay works
 function clipBaseVolume() {
   return Math.min(1, Math.max(0, state.audio.volumePercent / 100));
 }
 function syncClipAudio() {
   fgVideo.muted = monitorMuted || state.audio.muted;
-  fgVideo.volume = clipBaseVolume();
+  const env = fadeGain(getCurrentOutputTime(), outputDuration(), state.audio.fadeIn || 0, state.audio.fadeOut || 0);
+  fgVideo.volume = Math.min(1, Math.max(0, clipBaseVolume() * env));
 }
 
 function tickSounds(outT) {
@@ -1036,6 +1049,9 @@ function tickSounds(outT) {
           entry.audio.currentTime = target;
         } catch {}
       }
+      // Layer the fade envelope on the base volume, over the sound's own span.
+      const env = fadeGain(outT - startOut, endOut - startOut, s.fadeIn || 0, s.fadeOut || 0);
+      entry.audio.volume = Math.min(1, Math.max(0, (s.volumePercent / 100) * env));
       if (entry.audio.paused) entry.audio.play().catch(() => {});
     } else if (!entry.audio.paused) {
       entry.audio.pause();
@@ -1506,6 +1522,7 @@ export function initPreview() {
 
     const outT = getCurrentOutputTime();
     updateFlash(outT);
+    syncClipAudio(); // re-apply the fade envelope at the current time
     tickSounds(outT);
     tickOverlays(outT);
     // Keep the two split-region videos locked to the foreground playhead.
