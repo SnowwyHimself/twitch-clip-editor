@@ -2,6 +2,7 @@
   --bg: #0e0e12;
   --panel: #17171d;
   --panel-2: #1d1d25;
+  --panel-3: #24242e; /* one step lighter — secondary-btn hover */
   --border: #26262f;
   --border-light: #33333f; /* top-edge, light-from-above illusion */
   --text: #e8e8ec;
@@ -289,6 +290,22 @@ input[type="text"] {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ===== Depth & surfaces ===== */
+/* Popovers get a lighter top edge (light from above). */
+.emoji-panel,
+.vod-range-fields {
+  border-top-color: var(--border-light);
+}
+/* Timeline pieces read as physical chips (inner top highlight). Selected
+   pieces override box-shadow with their ring. */
+.tl-segment,
+.tl-sound-bar,
+.tl-overlay-bar,
+.tl-text-bar,
+.tl-appended-clip {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }
 
 /* ===== App shell: topbar / workspace / timeline ===== */
@@ -1195,10 +1212,16 @@ input[type="range"] {
   cursor: pointer;
   text-decoration: none;
   text-align: center;
+  /* barely-visible top-edge highlight (light from above) + a resting lift */
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
 .primary-btn:hover {
   background: var(--accent-hover);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.primary-btn:active:not(:disabled) {
+  filter: brightness(0.9); /* pressed reads darker (with the :active scale) */
 }
 
 .primary-btn:disabled {
@@ -1258,7 +1281,8 @@ input[type="range"] {
 }
 
 .secondary-btn:hover {
-  border-color: var(--accent);
+  background: var(--panel-3); /* raise one step, never changes size */
+  border-color: var(--border-light);
 }
 
 .secondary-btn:disabled {
@@ -2207,8 +2231,10 @@ img.preset-thumb {
   overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border);
+  border-top-color: var(--border-light); /* light from above */
   border-radius: var(--radius-lg);
   padding: var(--space-5);
+  box-shadow: var(--shadow-lg);
 }
 
 .export-header {
