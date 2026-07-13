@@ -683,8 +683,19 @@ input[type="text"] {
 }
 
 /* While picking a face to track, the whole preview is a crosshair target. */
-.preview-frame.face-selecting {
-  cursor: crosshair;
+/* Targeting cursor for face-select mode: a viewfinder square with a face
+   reticle in the centre (inline SVG, white on a black underlay so it reads on
+   any footage). Forced over the video children too, which otherwise show a
+   drag/grab cursor. Hotspot at the reticle centre (16,16). */
+.preview-frame.face-selecting,
+.preview-frame.face-selecting * {
+  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><g fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round' opacity='0.55'><path d='M5 11V5h6'/><path d='M21 5h6v6'/><path d='M27 21v6h-6'/><path d='M11 27H5v-6'/><circle cx='16' cy='16' r='4'/><path d='M16 5v3'/><path d='M16 24v3'/><path d='M5 16h3'/><path d='M24 16h3'/></g><g fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M5 11V5h6'/><path d='M21 5h6v6'/><path d='M27 21v6h-6'/><path d='M11 27H5v-6'/><circle cx='16' cy='16' r='4'/><path d='M16 5v3'/><path d='M16 24v3'/><path d='M5 16h3'/><path d='M24 16h3'/></g></svg>") 16 16, crosshair;
+}
+/* The pill + its cancel button stay clickable. */
+.preview-frame.face-selecting .face-select-pill,
+.preview-frame.face-selecting .face-select-pill *,
+.preview-frame.face-selecting .face-select-cancel {
+  cursor: pointer;
 }
 .face-select-pill {
   position: absolute;
