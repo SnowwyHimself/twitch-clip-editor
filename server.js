@@ -1292,8 +1292,20 @@ function runFfmpegWithProgress(args, onProgress) {
 // they only appear during their own slice of the output timeline; layers
 // without one span the whole video.
 function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
-  return textLayers.map((layer, i) => {
-    const { buffer, width, height } = renderCaptionPng({
+  const overlays = [];
+  textLayers.forEach((layer, i) => {
+    const hasRange = Number.isFinite(layer.start) && Number.isFinite(layer.end) && layer.end > layer.start;
+    // Entrance params, shared by a karaoke layer's base + word variants so they
+    // move together and the coloured word stays aligned with the base.
+    const animBase = {
+      animation: hasRange ? layer.animation || 'none' : 'none',
+      start: hasRange ? layer.start : null,
+      end: hasRange ? layer.end : null,
+      slidePx: Math.round(canvasH * CAP_SLIDE_FRAC),
+      bouncePx: Math.round(canvasH * CAP_BOUNCE_FRAC),
+      shakePx: Math.round(canvasH * CAP_SHAKE_FRAC),
+    };
+    const common = {
       text: layer.text,
       style: layer.style,
       fontId: layer.fontId,
@@ -1302,31 +1314,43 @@ function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
       color: layer.color,
       canvasWidth: canvasW,
       wrapWidth: layer.wrapWidth,
-      strokeWidth: layer.strokeWidth, // % of font size; null/undefined = style default
+      strokeWidth: layer.strokeWidth,
       strokeColor: layer.strokeColor,
       uppercase: layer.uppercase,
       opacity: layer.opacity,
-    });
-    const x = resolvePositionCoordinate(layer.xPercent, width, canvasW);
-    const y = resolvePositionCoordinate(layer.yPercent, height, canvasH);
-    const pngPath = path.join(CAPTIONS_DIR, `${jobId}-${i}.png`);
-    fs.writeFileSync(pngPath, buffer);
-    const hasRange = Number.isFinite(layer.start) && Number.isFinite(layer.end) && layer.end > layer.start;
-    return {
-      pngPath,
-      x,
-      y,
-      enable: hasRange ? `between(t,${layer.start.toFixed(3)},${layer.end.toFixed(3)})` : null,
-      // Entrance animation needs a real time range; slidePx is a fraction of
-      // canvas height, matching the preview (CAP_SLIDE_FRAC).
-      animation: hasRange ? layer.animation || 'none' : 'none',
-      start: hasRange ? layer.start : null,
-      end: hasRange ? layer.end : null,
-      slidePx: Math.round(canvasH * CAP_SLIDE_FRAC),
-      bouncePx: Math.round(canvasH * CAP_BOUNCE_FRAC),
-      shakePx: Math.round(canvasH * CAP_SHAKE_FRAC),
+      karaoke: !!layer.karaoke,
+      karaokeColor: layer.karaokeColor,
     };
+    let pngIdx = 0;
+    // Renders one caption PNG (a base with emphasizeWordIndex=-1, or a word
+    // variant) and pushes it as an overlay enabled over `enable`.
+    const emit = (emphasizeWordIndex, enable) => {
+      const { buffer, width, height } = renderCaptionPng({ ...common, emphasizeWordIndex });
+      const pngPath = path.join(CAPTIONS_DIR, `${jobId}-${i}-${pngIdx++}.png`);
+      fs.writeFileSync(pngPath, buffer);
+      overlays.push({
+        pngPath,
+        x: resolvePositionCoordinate(layer.xPercent, width, canvasW),
+        y: resolvePositionCoordinate(layer.yPercent, height, canvasH),
+        enable,
+        ...animBase,
+      });
+    };
+    const baseEnable = hasRange ? `between(t,${layer.start.toFixed(3)},${layer.end.toFixed(3)})` : null;
+    emit(-1, baseEnable); // base caption (no word emphasised)
+    // Karaoke: one extra overlay per word, coloured, enabled during that word's
+    // output window (start + rel time). Sits on top of the base — same layout,
+    // only the spoken word's fill differs. Word times are source-relative; the
+    // common case (1x speed, block within one piece) is exact.
+    if (layer.karaoke && Array.isArray(layer.words) && hasRange) {
+      layer.words.forEach((w, wi) => {
+        const ws = layer.start + (Number(w.rs) || 0);
+        const we = layer.start + (Number(w.re) || 0);
+        if (we > ws) emit(wi, `between(t,${ws.toFixed(3)},${we.toFixed(3)})`);
+      });
+    }
   });
+  return overlays;
 }
 
 // Overlay edge crop, 0-45% off each side — clamped so the two opposite
@@ -1709,6 +1733,7 @@ function buildTextLayers(body) {
     }
   }
   if (!Array.isArray(raw)) return [];
+  const num = (v) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : null);
   return raw
     .map((l) => ({
       text: typeof (l && l.text) === 'string' ? l.text : '',
@@ -1717,12 +1742,24 @@ function buildTextLayers(body) {
       fontSize: clampFontSize(l && l.fontSize),
       color: normalizeColor(l && l.color),
       dropShadow: normalizeDropShadow(l && l.dropShadow),
+      // D1 text options (null strokeWidth = style default; opacity 0-1).
+      strokeWidth: l && l.strokeWidth != null && Number.isFinite(parseFloat(l.strokeWidth)) ? Math.max(0, Math.min(40, parseFloat(l.strokeWidth))) : null,
+      strokeColor: l && typeof l.strokeColor === 'string' ? l.strokeColor : '#000000',
+      uppercase: !!(l && l.uppercase),
+      opacity: l && Number.isFinite(parseFloat(l.opacity)) ? Math.max(0, Math.min(1, parseFloat(l.opacity))) : 1,
+      // D2 karaoke: emphasis + per-word rel timings.
+      karaoke: !!(l && l.karaoke),
+      karaokeColor: l && typeof l.karaokeColor === 'string' ? l.karaokeColor : '#ffe600',
+      words:
+        l && Array.isArray(l.words)
+          ? l.words.map((w) => ({ rs: num(w && w.rs) || 0, re: num(w && w.re) || 0 })).filter((w) => w.re > w.rs)
+          : null,
       xPercent: clampPositionPercent(l && l.xPercent, 50),
       yPercent: clampPositionPercent(l && l.yPercent, 25),
       wrapWidth: clampWrapRatio(l && l.wrapWidth),
-      animation: ['fade', 'slide'].includes(l && l.animation) ? l.animation : 'none',
-      start: Number.isFinite(parseFloat(l && l.start)) ? parseFloat(l.start) : null,
-      end: Number.isFinite(parseFloat(l && l.end)) ? parseFloat(l.end) : null,
+      animation: ['fade', 'slide', 'bounce', 'shake'].includes(l && l.animation) ? l.animation : 'none',
+      start: num(l && l.start),
+      end: num(l && l.end),
     }))
     .filter((l) => l.text.trim());
 }

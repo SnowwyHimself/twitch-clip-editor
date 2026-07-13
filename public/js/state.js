@@ -118,6 +118,9 @@ export const state = {
     strokeWidth: null,
     strokeColor: '#000000',
     uppercase: false,
+    // Karaoke emphasis (D2): the word being spoken takes karaokeColor.
+    karaoke: false,
+    karaokeColor: '#ffe600',
     fontId: null, // null -> default font, resolved at generation time
     fontSize: 58,
     color: '#ffffff',
@@ -1165,6 +1168,8 @@ export function applyCaptionStyle() {
       strokeWidth: s.strokeWidth != null ? s.strokeWidth : null,
       strokeColor: s.strokeColor || '#000000',
       uppercase: !!s.uppercase,
+      karaoke: !!s.karaoke,
+      karaokeColor: s.karaokeColor || '#ffe600',
       yPercent: s.yPercent,
       animation: s.animation || 'none',
     });

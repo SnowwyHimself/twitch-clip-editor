@@ -236,6 +236,8 @@ function lookupElements() {
     capSizeSlider: byId('cap-size-slider'),
     capSizeValue: byId('cap-size-value'),
     capShadowToggle: byId('cap-shadow-toggle'),
+    capKaraokeToggle: byId('cap-karaoke-toggle'),
+    capKaraokeColor: byId('cap-karaoke-color'),
     capYSlider: byId('cap-y-slider'),
     capYValue: byId('cap-y-value'),
     capTimingSlider: byId('cap-timing-slider'),
@@ -1167,11 +1169,14 @@ function groupCaptionWords(words, maxWords, cleanup) {
     const dur = end - start;
     if (dur < CAP_MIN_BLOCK) end = start + CAP_MIN_BLOCK;
     else if (dur > CAP_MAX_BLOCK) end = start + CAP_MAX_BLOCK;
-    const text = chunk
-      .map((w) => (cleanup ? cleanCaptionWord(w.text) : w.text))
-      .filter(Boolean)
-      .join(' ');
-    if (text) blocks.push({ start, end, text });
+    // Keep each word's text + timing RELATIVE to the block start (rs/re) for
+    // karaoke emphasis (D2). Relative times ride the timing-nudge automatically
+    // (word window = layer.start + rs .. layer.start + re).
+    const wordItems = chunk
+      .map((w) => ({ text: cleanup ? cleanCaptionWord(w.text) : w.text, rs: w.start - start, re: w.end - start }))
+      .filter((w) => w.text);
+    const text = wordItems.map((w) => w.text).join(' ');
+    if (text) blocks.push({ start, end, text, words: wordItems });
   }
   return blocks;
 }
@@ -1216,6 +1221,9 @@ async function generateCaptions() {
           fontSize: s.fontSize,
           color: s.color,
           dropShadow: s.dropShadow,
+          strokeWidth: s.strokeWidth,
+          strokeColor: s.strokeColor,
+          uppercase: s.uppercase,
           animation: s.animation || 'none',
           xPercent: 50,
           yPercent: s.yPercent,
@@ -1225,6 +1233,7 @@ async function generateCaptions() {
           // re-derive from the original (see applyCaptionTiming).
           baseStart: seg.start,
           baseEnd: seg.end,
+          words: seg.words, // per-word rel timings for karaoke
           group: 'caption',
         },
         { select: false }
@@ -1264,6 +1273,16 @@ function wireCaptionControls() {
       els.capAnimButtons().forEach((b) => b.classList.toggle('active', b === btn));
       applyCaptionStyle();
     });
+  });
+
+  els.capKaraokeToggle.addEventListener('change', () => {
+    state.captionSettings.karaoke = els.capKaraokeToggle.checked;
+    applyCaptionStyle();
+  });
+  buildColorPicker(els.capKaraokeColor, (hex) => {
+    state.captionSettings.karaokeColor = hex;
+    markActiveSwatch(els.capKaraokeColor, hex);
+    applyCaptionStyle();
   });
 
   els.capFontSelect.addEventListener('change', () => {
@@ -1335,6 +1354,8 @@ function syncCaptionControls() {
   els.capSizeSlider.value = s.fontSize;
   els.capSizeValue.textContent = `${s.fontSize}px`;
   els.capShadowToggle.checked = !!s.dropShadow;
+  els.capKaraokeToggle.checked = !!s.karaoke;
+  markActiveSwatch(els.capKaraokeColor, s.karaokeColor || '#ffe600');
   els.capYSlider.value = s.yPercent;
   els.capYValue.textContent = `${s.yPercent}%`;
 }

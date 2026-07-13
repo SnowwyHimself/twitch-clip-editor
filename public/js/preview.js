@@ -159,6 +159,32 @@ function captionHtml(text) {
     .join('');
 }
 
+// Karaoke mode: each whitespace-word wrapped in a span so the one being spoken
+// can be recoloured per frame (see applyKaraoke). Word count matches layer.words
+// (both are the text split on whitespace).
+function captionHtmlKaraoke(text) {
+  let wi = 0;
+  return text
+    .split(/(\s+)/)
+    .map((part) => {
+      if (part === '' || /^\s+$/.test(part)) return part;
+      const escaped = part.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<span class="kw" data-i="${wi++}">${escaped}</span>`;
+    })
+    .join('');
+}
+
+// Recolours the word currently being spoken to karaokeColor (others inherit).
+function applyKaraoke(layer, entry, srcT) {
+  if (!layer.karaoke || !Array.isArray(layer.words)) return;
+  const rel = srcT - layer.start;
+  const spans = entry.inner.querySelectorAll('.kw');
+  layer.words.forEach((w, i) => {
+    const span = spans[i];
+    if (span) span.style.color = rel >= w.rs && rel < w.re ? layer.karaokeColor || '#ffe600' : '';
+  });
+}
+
 // Box style pills: one rounded rect per rendered line, measured off the
 // browser's own wrap via Range.getClientRects() (merged per visual row —
 // wrapped text can report an extra near-zero rect for the collapsed
@@ -291,7 +317,7 @@ function updateLayerEl(layer) {
   root.classList.toggle('selected', isSelected('layer', layer.id));
   root.classList.toggle('style-box', layer.style === 'box');
   inner.style.fontFamily = PREVIEW_FONT_CSS_FAMILY[layer.fontId] || PREVIEW_FONT_CSS_FAMILY.montserrat;
-  inner.innerHTML = captionHtml(layer.text);
+  inner.innerHTML = layer.karaoke && Array.isArray(layer.words) ? captionHtmlKaraoke(layer.text) : captionHtml(layer.text);
 
   const fontSizePx = layer.fontSize * scale;
   inner.style.fontSize = `${fontSizePx.toFixed(2)}px`;
@@ -413,6 +439,7 @@ function updateLayerVisibility() {
     if (visible && layer.group === 'caption' && (layer.animation || 'none') !== 'none') {
       applyCaptionEntrance(layer, entry, t);
     }
+    if (visible && layer.karaoke) applyKaraoke(layer, entry, t);
   }
 }
 

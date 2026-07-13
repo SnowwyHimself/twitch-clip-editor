@@ -362,7 +362,7 @@ function buildDropShadowFilterDef(fontSize) {
 // differ only in whether a black stroke is drawn around the text at all,
 // so a single builder with stroke=false covers "Plain" instead of
 // duplicating the whole line-layout/drop-shadow-grouping logic.
-function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, strokePct = OUTLINE_THICKNESS, strokeColor = 'black', opacity = 1 }) {
+function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, strokePct = OUTLINE_THICKNESS, strokeColor = 'black', opacity = 1, karaoke = false, emphasizeWordIndex = -1, karaokeColor = '#ffe600' }) {
   const textColor = color || '#ffffff';
   const ascenderPx = (font.ascender / font.unitsPerEm) * fontSize;
   const descenderPx = (Math.abs(font.descender) / font.unitsPerEm) * fontSize;
@@ -380,7 +380,13 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
   const height = Math.ceil(textBlockHeight + OUTER_PADDING * 2);
   const textTop = OUTER_PADDING;
 
+  const strokeAttrs = stroke
+    ? ` stroke="${strokeColor}" stroke-width="${strokeWidth.toFixed(2)}" stroke-linejoin="round" style="paint-order:stroke"`
+    : '';
+  const textEl = (x, y, fill, value) =>
+    `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="600" fill="${fill}"${strokeAttrs} text-anchor="start">${escapeXml(value)}</text>`;
   let elements = dropShadow ? buildDropShadowFilterDef(fontSize) : '';
+  let wordCounter = 0; // global word index across lines (karaoke)
   lines.forEach((line, i) => {
     const baselineY = textTop + i * lineHeight + ascenderPx;
     const lineTop = textTop + i * lineHeight;
@@ -397,10 +403,23 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
           lineContent += `<image x="${segX.toFixed(2)}" y="${emojiY.toFixed(2)}" width="${emojiSize}" height="${emojiSize}" href="data:image/png;base64,${emojiBase64}"/>`;
         }
       } else if (seg.value) {
-        const strokeAttrs = stroke
-          ? ` stroke="${strokeColor}" stroke-width="${strokeWidth.toFixed(2)}" stroke-linejoin="round" style="paint-order:stroke"`
-          : '';
-        lineContent += `<text x="${segX.toFixed(2)}" y="${baselineY.toFixed(2)}" font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="600" fill="${textColor}"${strokeAttrs} text-anchor="start">${escapeXml(seg.value)}</text>`;
+        if (karaoke) {
+          // Render word-by-word so the spoken word can take karaokeColor while
+          // every other word (and the layout) stays identical to the base PNG.
+          const parts = seg.value.split(' ');
+          let wx = segX;
+          parts.forEach((word, k) => {
+            if (word) {
+              const fill = wordCounter === emphasizeWordIndex ? karaokeColor : textColor;
+              lineContent += textEl(wx, baselineY, fill, word);
+              wx += measureWidth(font, word, fontSize);
+              wordCounter += 1;
+            }
+            if (k < parts.length - 1) wx += measureWidth(font, ' ', fontSize);
+          });
+        } else {
+          lineContent += textEl(segX, baselineY, textColor, seg.value);
+        }
       }
     });
 
@@ -609,6 +628,9 @@ function renderCaptionPng({
   strokeColor,
   uppercase,
   opacity,
+  karaoke,
+  emphasizeWordIndex,
+  karaokeColor,
 }) {
   const { path: fontPath } = resolveFontEntry(fontId);
   const font = loadFontFromPath(fontPath);
@@ -638,9 +660,14 @@ function renderCaptionPng({
     strokePct,
     strokeColor: strokeColor || 'black',
     opacity: groupOpacity,
+    karaoke: !!karaoke,
+    emphasizeWordIndex: Number.isFinite(emphasizeWordIndex) ? emphasizeWordIndex : -1,
+    karaokeColor: karaokeColor || '#ffe600',
   };
   let svg, width, height;
   if (style === 'box') {
+    // Box karaoke falls back to normal box rendering (word-level pills would
+    // shift the bubble); outline/plain carry the word emphasis.
     ({ svg, width, height } = buildBoxSvg(buildArgs));
   } else {
     ({ svg, width, height } = buildOutlineSvg(buildArgs));
