@@ -1641,6 +1641,31 @@ img.preset-thumb {
   background: rgba(124, 92, 255, 0.4);
 }
 
+/* Appended (stitched) clips — a distinct teal so they read as a different
+   source than the purple primary segments. */
+.tl-appended-clip {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 8px;
+  cursor: grab;
+  overflow: hidden;
+  touch-action: none;
+  background: rgba(45, 190, 165, 0.28);
+  border: 1px solid rgba(45, 190, 165, 0.6);
+}
+.tl-appended-clip:hover {
+  background: rgba(45, 190, 165, 0.4);
+}
+.tl-appended-clip.selected {
+  border-color: #2dbea5;
+  box-shadow: 0 0 0 1px #2dbea5;
+}
+.tl-appended-clip.dragging {
+  opacity: 0.85;
+  z-index: 8;
+}
+
 .tl-segment.selected {
   border-color: #fff;
   background: rgba(124, 92, 255, 0.45);

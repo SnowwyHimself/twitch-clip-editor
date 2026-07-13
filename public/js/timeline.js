@@ -49,6 +49,10 @@ import {
   removeTransition,
   sourceDuration,
   outputDuration,
+  primaryOutputDuration,
+  appendedLayout,
+  selectClip,
+  moveAppendedClip,
   sourceToOutput,
   outputToSource,
   MIN_SEGMENT_SECONDS,
@@ -93,7 +97,7 @@ const tlBody = document.getElementById('tl-body');
 // Selectable elements on the timeline — a pointerdown anywhere that ISN'T one
 // of these clears the selection (click-away deselect).
 const SELECTABLE_SELECTOR =
-  '.tl-segment, .tl-seg-edge, .tl-text-bar, .tl-sound-bar, .tl-overlay-bar, .tl-kf-marker, .tl-transition-badge';
+  '.tl-segment, .tl-seg-edge, .tl-text-bar, .tl-sound-bar, .tl-overlay-bar, .tl-appended-clip, .tl-kf-marker, .tl-transition-badge';
 const splitBtn = document.getElementById('tl-split');
 const deleteBtn = document.getElementById('tl-delete');
 const tlGrid = document.getElementById('tl-grid');
@@ -204,6 +208,7 @@ const segmentEls = new Map(); // seg.id -> element
 const layerBarEls = new Map(); // layer.id -> element
 const soundBarEls = new Map(); // sound.id -> element
 const overlayBarEls = new Map(); // overlay.id -> element
+const appendedClipEls = new Map(); // appended clip.id -> element
 
 // Positions any start/end clip bar (layer/sound/overlay) in output coords.
 function layoutClipBar(el, clip) {
@@ -225,7 +230,65 @@ function layoutVideoTrack() {
     // The main clip's own audio, sliced to this piece's [start,end].
     paintWaveform(el, srcUrl, seg.start, seg.end - seg.start);
   }
+  for (const item of appendedLayout()) {
+    const el = appendedClipEls.get(item.clip.id);
+    if (!el) continue;
+    el.style.left = `${item.outStart * pps}px`;
+    el.style.width = `${Math.max(6, (item.outEnd - item.outStart) * pps)}px`;
+    paintWaveform(el, item.clip.source.previewUrl, item.clip.start, item.outEnd - item.outStart);
+  }
   layoutTransitionBadges();
+}
+
+// Appended-clip bar interaction. Click selects it; a horizontal drag reorders it
+// among the other appended clips (drop position by its centre). Trim handles
+// come with the edge grips added in buildClipBar-style later.
+function attachAppendedClipDrag(el, clip) {
+  let startX = 0;
+  let dragging = false;
+  let moved = false;
+  el.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    selectClip(clip.id);
+    startX = e.clientX;
+    dragging = true;
+    moved = false;
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic pointers */
+    }
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    if (!moved && Math.abs(e.clientX - startX) <= MOVE_THRESHOLD_PX) return;
+    moved = true;
+    el.classList.add('dragging');
+    el.style.transform = `translateX(${e.clientX - startX}px)`;
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    el.classList.remove('dragging');
+    el.style.transform = '';
+    if (!moved) return;
+    // Reorder by where the bar's centre landed among the appended clips.
+    const pps = pxPerSecond();
+    const centerOut = (parseFloat(el.style.left) + (e.clientX - startX) + el.offsetWidth / 2) / (pps || 1);
+    const order = state.appendedClips.map((c) => c.id).filter((id) => id !== clip.id);
+    let idx = 0;
+    let cursor = primaryOutputDuration();
+    for (const id of order) {
+      const c = state.appendedClips.find((x) => x.id === id);
+      const len = Math.max(0, (c.end ?? c.duration) - (c.start || 0));
+      if (centerOut < cursor + len / 2) break;
+      cursor += len;
+      idx += 1;
+    }
+    moveAppendedClip(clip.id, idx);
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
 }
 
 function layoutTransitionBadges() {
@@ -355,6 +418,7 @@ function renderVideoTrack() {
   const duration = sourceDuration();
   videoTrack.innerHTML = '';
   segmentEls.clear();
+  appendedClipEls.clear();
   if (duration <= 0) return;
 
   state.segments.forEach((seg, i) => {
@@ -379,6 +443,22 @@ function renderVideoTrack() {
     segmentEls.set(seg.id, el);
     videoTrack.appendChild(el);
   });
+
+  // Appended clips (sequential multi-source) render as their own bars after the
+  // primary segments, in output order.
+  for (const item of appendedLayout()) {
+    const el = document.createElement('div');
+    el.className = 'tl-appended-clip';
+    el.dataset.clipId = item.clip.id;
+    el.classList.toggle('selected', isSelected('clip', item.clip.id));
+    const label = document.createElement('span');
+    label.className = 'tl-text-label';
+    label.textContent = `🎬 ${item.clip.source.name || 'Clip'}`;
+    el.appendChild(label);
+    attachAppendedClipDrag(el, item.clip);
+    appendedClipEls.set(item.clip.id, el);
+    videoTrack.appendChild(el);
+  }
 
   // Transition badges at boundaries that have one.
   for (const tr of state.transitions) {

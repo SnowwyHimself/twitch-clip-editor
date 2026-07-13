@@ -132,6 +132,13 @@ export const state = {
   //   offset, duration }
   sounds: [],
 
+  // Additional source clips stitched AFTER the primary clip, in order (Phase 6,
+  // sequential multi-source). Each is a trimmed [start,end] range of its OWN
+  // source. Kept separate from state.segments (the primary clip's pieces) so
+  // every single-source code path stays byte-identical when this is empty.
+  // { id, source: {kind,url,previewUrl,file,name,path,width,height,duration,section}, start, end, duration }
+  appendedClips: [],
+
   // Server-provided option lists, loaded once at boot
   fonts: [],
   aspectRatios: [],
@@ -178,8 +185,91 @@ export function keptSegments() {
 
 // --- output-time mapping ----------------------------------------------------
 
-export function outputDuration() {
+// Output length of the PRIMARY clip's timeline (its kept pieces + free-mode
+// gaps). Single-source consumers that must NOT see appended clips use this.
+export function primaryOutputDuration() {
   return state.segments.reduce((max, seg) => Math.max(max, seg.outStart + (seg.end - seg.start)), 0);
+}
+
+// Total output length, including the appended clips stitched after the primary.
+export function outputDuration() {
+  return primaryOutputDuration() + appendedTotalDuration();
+}
+
+// --- appended clips (sequential multi-source) --------------------------------------
+
+let appendedCounter = 0;
+
+export function appendedClipLength(clip) {
+  return Math.max(0, (clip.end ?? clip.duration ?? 0) - (clip.start || 0));
+}
+
+export function appendedTotalDuration() {
+  return state.appendedClips.reduce((sum, c) => sum + appendedClipLength(c), 0);
+}
+
+// Each appended clip's placement on the OUTPUT timeline: it starts where the
+// primary ends and they accumulate in order. Returns [{ clip, outStart, outEnd }].
+export function appendedLayout() {
+  let cursor = primaryOutputDuration();
+  return state.appendedClips.map((clip) => {
+    const outStart = cursor;
+    const len = appendedClipLength(clip);
+    cursor += len;
+    return { clip, outStart, outEnd: outStart + len };
+  });
+}
+
+// The appended clip playing at an output time (or null when the time is inside
+// the primary region or a gap between clips).
+export function appendedAtOutput(outT) {
+  for (const item of appendedLayout()) {
+    if (outT >= item.outStart - 0.001 && outT < item.outEnd) return item;
+  }
+  return null;
+}
+
+export function addAppendedClip(source) {
+  const clip = {
+    id: `clip-${Date.now()}-${appendedCounter++}`,
+    source,
+    start: 0,
+    end: Number.isFinite(source.duration) ? source.duration : 0,
+    duration: Number.isFinite(source.duration) ? source.duration : 0,
+  };
+  state.appendedClips.push(clip);
+  emit('segments'); // the video track + output duration change
+  return clip;
+}
+
+export function removeAppendedClip(id) {
+  const i = state.appendedClips.findIndex((c) => c.id === id);
+  if (i === -1) return;
+  state.appendedClips.splice(i, 1);
+  if (isSelected('clip', id)) clearSelection();
+  emit('segments');
+}
+
+export function updateAppendedClip(id, patch) {
+  const clip = state.appendedClips.find((c) => c.id === id);
+  if (!clip) return;
+  Object.assign(clip, patch);
+  emit('segments');
+}
+
+export function moveAppendedClip(id, toIndex) {
+  const from = state.appendedClips.findIndex((c) => c.id === id);
+  if (from === -1) return;
+  const [clip] = state.appendedClips.splice(from, 1);
+  const dest = Math.max(0, Math.min(state.appendedClips.length, toIndex));
+  state.appendedClips.splice(dest, 0, clip);
+  emit('segments');
+}
+
+export function selectedAppendedClip() {
+  return state.sel && state.sel.kind === 'clip'
+    ? state.appendedClips.find((c) => c.id === state.sel.id) || null
+    : null;
 }
 
 // Source position -> output position. Footage that's currently cut (in no
@@ -270,6 +360,7 @@ export function resetSegments() {
   state.keyframes = [];
   state.faceTrack = { enabled: false, samples: [] };
   state.audio = { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 };
+  state.appendedClips = []; // a fresh primary clip starts with no stitched clips
   emit('segments');
   emit('keyframes');
   emit('facetrack');
@@ -377,6 +468,9 @@ export function selectSound(id) {
 }
 export function selectOverlay(id) {
   select('overlay', id);
+}
+export function selectClip(id) {
+  select('clip', id);
 }
 
 export function selectedLayer() {

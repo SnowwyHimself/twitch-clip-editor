@@ -16,6 +16,9 @@ import {
   removeSound,
   selectedOverlay,
   removeOverlay,
+  addAppendedClip,
+  selectedAppendedClip,
+  removeAppendedClip,
   sourceDuration,
   setTimelineMode,
   undo,
@@ -109,8 +112,73 @@ function loadFromFile(file) {
   attachSource(URL.createObjectURL(file), { kind: 'file', file }, { isObjectUrl: true });
 }
 
+// --- append clips (sequential multi-source) ------------------------------------------
+
+const appendClipFileInput = document.getElementById('append-clip-file');
+const addClipBtn = document.getElementById('tl-add-clip');
+
+// Reads a media file's dimensions + duration off a throwaway <video>.
+function probeMedia(url) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    const done = () => resolve({ width: v.videoWidth, height: v.videoHeight, duration: v.duration || 0 });
+    v.addEventListener('loadedmetadata', done, { once: true });
+    v.addEventListener('error', () => reject(new Error('Could not read that video.')), { once: true });
+    v.src = url;
+  });
+}
+
+async function appendClipFromUrl(url, section) {
+  addClipBtn.disabled = true;
+  const label = addClipBtn.textContent;
+  addClipBtn.textContent = 'Adding…';
+  try {
+    const { previewUrl } = await fetchPreviewSource(url, section);
+    const dims = await probeMedia(previewUrl);
+    addAppendedClip({ kind: 'url', url, section: section || null, previewUrl, ...dims });
+  } catch (err) {
+    setPlaceholder(`Couldn't add clip: ${err.message}`);
+  } finally {
+    addClipBtn.disabled = false;
+    addClipBtn.textContent = label;
+  }
+}
+
+async function appendClipFromFile(file) {
+  const previewUrl = URL.createObjectURL(file);
+  try {
+    const dims = await probeMedia(previewUrl);
+    addAppendedClip({ kind: 'file', file, name: file.name, previewUrl, ...dims });
+  } catch (err) {
+    setPlaceholder(`Couldn't add clip: ${err.message}`);
+  }
+}
+
+// "+ Clip": append the URL in the bar if one's there, otherwise pick a file.
+async function addClip() {
+  if (!state.source) {
+    setPlaceholder('Load a clip first, then stitch more after it.');
+    return;
+  }
+  const url = urlInput.value.trim();
+  if (isValidHttpUrl(url)) {
+    await appendClipFromUrl(url, currentSection());
+    urlInput.value = '';
+  } else {
+    appendClipFileInput.click();
+  }
+}
+
 function wireIngestion() {
   loadUrlBtn.addEventListener('click', loadFromUrl);
+  addClipBtn.addEventListener('click', addClip);
+  appendClipFileInput.addEventListener('change', () => {
+    const file = appendClipFileInput.files[0];
+    if (file) appendClipFromFile(file);
+    appendClipFileInput.value = '';
+  });
   urlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') loadFromUrl();
   });
