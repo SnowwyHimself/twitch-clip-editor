@@ -203,6 +203,8 @@ function lookupElements() {
     capYValue: byId('cap-y-value'),
     capTimingSlider: byId('cap-timing-slider'),
     capTimingValue: byId('cap-timing-value'),
+    transcriptGroup: byId('transcript-group'),
+    transcriptList: byId('transcript-list'),
     captionsVisibleToggle: byId('captions-visible-toggle'),
   };
 }
@@ -1103,6 +1105,48 @@ function wireCaptionControls() {
     state.captionsHidden = !els.captionsVisibleToggle.checked;
     emit('layers'); // re-evaluate caption visibility in the preview + timeline
   });
+  on('layers', renderTranscript);
+  renderTranscript();
+}
+
+function clockLabel(sec) {
+  const s = Math.max(0, sec || 0);
+  const m = Math.floor(s / 60);
+  const r = Math.floor(s % 60);
+  return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+// Transcript editor: one editable row per caption block (time order), so
+// Whisper mistakes can be fixed in place. Edits write straight to the layer's
+// text (preview updates live); clearing a block's text on blur deletes it.
+// While a row is focused we skip the rebuild so typing isn't interrupted — the
+// DOM already shows what was typed and the layer is already updated.
+function renderTranscript() {
+  const caps = state.layers.filter((l) => l.group === 'caption');
+  els.transcriptGroup.classList.toggle('hidden', caps.length === 0);
+  if (document.activeElement && document.activeElement.classList.contains('transcript-input')) return;
+  els.transcriptList.innerHTML = '';
+  for (const layer of caps.slice().sort((a, b) => a.start - b.start)) {
+    const row = document.createElement('div');
+    row.className = 'transcript-row';
+    const time = document.createElement('button');
+    time.type = 'button';
+    time.className = 'transcript-time';
+    time.textContent = clockLabel(layer.start);
+    time.title = 'Jump to this caption';
+    time.addEventListener('click', () => seek(layer.start));
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'transcript-input';
+    input.value = layer.text;
+    input.dataset.capId = layer.id;
+    input.addEventListener('input', () => updateLayer(layer.id, { text: input.value }));
+    input.addEventListener('change', () => {
+      if (!input.value.trim()) removeLayer(layer.id);
+    });
+    row.append(time, input);
+    els.transcriptList.appendChild(row);
+  }
 }
 
 // --- text tab -------------------------------------------------------------------------

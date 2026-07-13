@@ -878,6 +878,41 @@ body {
   color: var(--text-dim);
 }
 
+/* Transcript editor (Captions tab) */
+.transcript-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.transcript-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.transcript-time {
+  flex: 0 0 auto;
+  min-width: 34px;
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  cursor: pointer;
+}
+.transcript-time:hover {
+  color: var(--accent);
+}
+.transcript-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
 /* Face-track status flips to a warning colour when a scan fails, so the
    feedback is unmistakable instead of blending into the hint text. */
 #facetrack-status.error {

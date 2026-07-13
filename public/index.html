@@ -267,6 +267,12 @@
           <input id="cap-y-slider" type="range" min="0" max="100" value="75" step="1" />
           <p class="field-hint">Styling applies to all caption blocks at once. Select a single block on the timeline to fine-tune it in the Text tab.</p>
         </div>
+
+        <div class="field-group hidden" id="transcript-group">
+          <label class="field-label">Transcript</label>
+          <div id="transcript-list" class="transcript-list"></div>
+          <p class="field-hint">Fix any words Whisper misheard — edits update the caption on the timeline. Clear a block's text to delete it.</p>
+        </div>
       </div>
 
       <div id="panel-overlay" class="panel-body hidden">
