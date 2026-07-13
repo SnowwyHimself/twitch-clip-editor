@@ -435,8 +435,8 @@ input[type="text"] {
   padding: 0 10px;
 }
 .project-del:hover {
-  color: #ff6b6b;
-  border-color: #ff6b6b;
+  color: var(--error);
+  border-color: var(--error);
 }
 
 /* Start-screen recent projects (inside the preview placeholder) */
@@ -1217,7 +1217,7 @@ input[type="text"] {
 /* Face-track status flips to a warning colour when a scan fails, so the
    feedback is unmistakable instead of blending into the hint text. */
 #facetrack-status.error {
-  color: #ff6b6b;
+  color: var(--error);
 }
 
 input[type="text"],
