@@ -2041,6 +2041,11 @@ img.preset-thumb {
   font-size: var(--fs-md);
 }
 
+/* Animation toggle group wraps to a second row when it has many options. */
+.toggle-group-wrap {
+  flex-wrap: wrap;
+}
+
 /* D1 text style presets: a compact grid of styled sample thumbnails. */
 .text-style-presets {
   display: grid;

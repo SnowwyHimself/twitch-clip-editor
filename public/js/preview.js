@@ -365,6 +365,12 @@ function updateLayerEl(layer) {
 // when selected for editing) it sits settled at full opacity.
 const CAP_ANIM_DURATION = 0.25;
 const CAP_SLIDE_FRAC = 0.04;
+const CAP_BOUNCE_FRAC = 0.06; // bounce drop distance (fraction of canvas height)
+const CAP_SHAKE_FRAC = 0.018; // shake amplitude (fraction of canvas height)
+const CAP_SHAKE_CYCLES = 3; // shake oscillations over the entrance
+// easeOutBack overshoot constants (must match server.js).
+const BACK_C1 = 1.70158;
+const BACK_C3 = BACK_C1 + 1;
 function applyCaptionEntrance(layer, entry, srcT) {
   const base = entry.baseCenter;
   if (!base) return;
@@ -377,8 +383,18 @@ function applyCaptionEntrance(layer, entry, srcT) {
   }
   const p = Math.min(1, (srcT - layer.start) / CAP_ANIM_DURATION);
   entry.root.style.opacity = p.toFixed(3);
-  const slide = anim === 'slide' ? (1 - p) * height * CAP_SLIDE_FRAC : 0;
-  setCenterTransform(entry.root, base.x, base.y + slide, width, height);
+  let dx = 0;
+  let dy = 0;
+  if (anim === 'slide') {
+    dy = (1 - p) * height * CAP_SLIDE_FRAC;
+  } else if (anim === 'bounce') {
+    const u = p - 1;
+    const easeOutBack = 1 + BACK_C3 * u * u * u + BACK_C1 * u * u;
+    dy = (1 - easeOutBack) * height * CAP_BOUNCE_FRAC;
+  } else if (anim === 'shake') {
+    dx = Math.sin(p * CAP_SHAKE_CYCLES * 2 * Math.PI) * (1 - p) * height * CAP_SHAKE_FRAC;
+  }
+  setCenterTransform(entry.root, base.x + dx, base.y + dy, width, height);
 }
 
 // Shown while the playhead is inside the layer's range, or while selected

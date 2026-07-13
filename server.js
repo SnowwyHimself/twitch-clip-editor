@@ -348,10 +348,15 @@ function clampFadeSeconds(value) {
   return Math.min(30, v);
 }
 
-// Caption entrance animation params — MUST match preview.js (CAP_ANIM_DURATION,
-// CAP_SLIDE_FRAC) so the fade/slide look identical in preview and render.
+// Caption entrance animation params — MUST match preview.js so every entrance
+// looks identical in preview and render.
 const CAP_ANIM_DURATION = 0.25;
 const CAP_SLIDE_FRAC = 0.04;
+const CAP_BOUNCE_FRAC = 0.06;
+const CAP_SHAKE_FRAC = 0.018;
+const CAP_SHAKE_CYCLES = 3;
+const BACK_C1 = 1.70158;
+const BACK_C3 = BACK_C1 + 1;
 
 // Converts a 0-100 "center position" percentage into a top-left pixel
 // coordinate, clamped so the full contentSize always stays within
@@ -1043,7 +1048,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     nextInputIndex += 1;
   }
   for (const cap of captionOverlays) {
-    const animated = cap.animation === 'fade' || cap.animation === 'slide';
+    const animated = ['fade', 'slide', 'bounce', 'shake'].includes(cap.animation);
     // An animated caption needs a continuous stream to ramp alpha over time, so
     // it's looped — but BOUNDED with -t (to its end + a margin) so the input
     // EOFs instead of looping forever, which otherwise wedges ffmpeg at the
@@ -1060,10 +1065,21 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
       // appears (st is on the main timeline; a -loop 1 image shares that clock).
       stage.pre = `${rawLabel}format=yuva420p,fade=t=in:st=${st}:d=${d}:alpha=1${faded}`;
       stage.inputLabel = faded;
+      // Progress p over the entrance window (0→1), commas escaped for overlay.
+      const P = `clip((t-${st})/${d}\\,0\\,1)`;
       if (cap.animation === 'slide') {
-        // Ease the caption up from slidePx below its resting y over the same
-        // window — matches the preview's per-frame translate.
-        stage.y = `${cap.y}+${cap.slidePx}*(1-clip((t-${st})/${d}\\,0\\,1))`;
+        // Ease the caption up from slidePx below its resting y — matches the
+        // preview's per-frame translate.
+        stage.y = `${cap.y}+${cap.slidePx}*(1-${P})`;
+      } else if (cap.animation === 'bounce') {
+        // easeOutBack overshoot on y: starts bouncePx below, springs past 0,
+        // settles. u = p-1; 1-easeOutBack = -(C3*u^3 + C1*u^2).
+        const U = `(${P}-1)`;
+        stage.y = `${cap.y}+${cap.bouncePx}*(0-(${BACK_C3}*${U}*${U}*${U}+${BACK_C1}*${U}*${U}))`;
+      } else if (cap.animation === 'shake') {
+        // Damped horizontal sine over the entrance, matching preview.
+        const omega = (CAP_SHAKE_CYCLES * 2 * Math.PI).toFixed(4);
+        stage.x = `${cap.x}+${cap.shakePx}*sin(${P}*${omega})*(1-${P})`;
       }
     }
     overlayStages.push(stage);
@@ -1307,6 +1323,8 @@ function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
       start: hasRange ? layer.start : null,
       end: hasRange ? layer.end : null,
       slidePx: Math.round(canvasH * CAP_SLIDE_FRAC),
+      bouncePx: Math.round(canvasH * CAP_BOUNCE_FRAC),
+      shakePx: Math.round(canvasH * CAP_SHAKE_FRAC),
     };
   });
 }
