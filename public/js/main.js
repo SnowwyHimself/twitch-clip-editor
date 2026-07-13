@@ -53,7 +53,7 @@ import {
   onProjectChange,
   finishOpenWithFile,
 } from './project.js';
-import { confirmDialog } from './confirm.js';
+import { confirmDialog, addClipDialog } from './confirm.js';
 
 const urlInput = document.getElementById('clip-url');
 const loadUrlBtn = document.getElementById('load-url-btn');
@@ -149,16 +149,19 @@ async function appendClipFromFile(file) {
   }
 }
 
-// "+ Clip": append the URL in the bar if one's there, otherwise pick a file.
+// "+ Clip": opens a chooser offering a pasted URL or a file, both appended
+// after the current footage. Pre-fills the URL box if the top bar has one.
 async function addClip() {
   if (!state.source) {
     setPlaceholder('Load a clip first, then stitch more after it.');
     return;
   }
-  const url = urlInput.value.trim();
-  if (isValidHttpUrl(url)) {
-    await appendClipFromUrl(url);
-    urlInput.value = '';
+  const prefill = isValidHttpUrl(urlInput.value.trim()) ? urlInput.value.trim() : '';
+  const choice = await addClipDialog({ prefillUrl: prefill });
+  if (!choice) return;
+  if (choice.mode === 'url') {
+    await appendClipFromUrl(choice.url);
+    if (urlInput.value.trim() === choice.url) urlInput.value = '';
   } else {
     appendClipFileInput.click();
   }

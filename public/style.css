@@ -2005,6 +2005,18 @@ img.preset-thumb {
   background: rgba(124, 92, 255, 0.4);
 }
 
+/* Add-clip chooser: URL input sits between the note and the actions. */
+.add-clip-card {
+  width: min(440px, 92vw);
+  text-align: left;
+}
+.add-clip-input {
+  width: 100%;
+  margin: var(--space-2) 0 var(--space-3);
+  padding: 9px 11px;
+  font-size: var(--fs-md);
+}
+
 /* Timing-nudge label + numeric input on one row. */
 .cap-timing-row {
   display: flex;

@@ -4,6 +4,89 @@
 // cancelled. Escape or a click on the backdrop cancels; Enter confirms. Built
 // on demand so there's no always-present markup to keep in sync.
 
+// "Add clip" chooser: offers pasting a clip URL or picking a file, matching the
+// same modal chrome. Resolves { mode: 'url', url } | { mode: 'file' } | null
+// (cancelled). prefillUrl seeds the input (e.g. from the top URL bar).
+export function addClipDialog({ prefillUrl = '' } = {}) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'export-modal confirm-modal';
+    const card = document.createElement('div');
+    card.className = 'export-card confirm-card add-clip-card';
+
+    const h = document.createElement('h2');
+    h.className = 'confirm-title';
+    h.textContent = 'Add a clip';
+    card.appendChild(h);
+
+    const note = document.createElement('p');
+    note.className = 'confirm-note';
+    note.textContent = 'Paste another Twitch clip link, or choose a video file. It’s appended after the current footage.';
+    card.appendChild(note);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'add-clip-input';
+    input.placeholder = 'Paste a Twitch clip link…';
+    input.value = prefillUrl || '';
+    card.appendChild(input);
+
+    const actions = document.createElement('div');
+    actions.className = 'confirm-actions';
+    const fileBtn = document.createElement('button');
+    fileBtn.type = 'button';
+    fileBtn.className = 'secondary-btn';
+    fileBtn.textContent = 'Choose file…';
+    const urlBtn = document.createElement('button');
+    urlBtn.type = 'button';
+    urlBtn.className = 'primary-btn';
+    urlBtn.textContent = 'Add from URL';
+    actions.append(fileBtn, urlBtn);
+    card.appendChild(actions);
+
+    backdrop.appendChild(card);
+    document.body.appendChild(backdrop);
+
+    const isUrl = (v) => {
+      try {
+        const u = new URL(v);
+        return u.protocol === 'http:' || u.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    };
+    const syncUrlBtn = () => {
+      urlBtn.disabled = !isUrl(input.value.trim());
+    };
+    syncUrlBtn();
+    input.addEventListener('input', syncUrlBtn);
+
+    const close = (result) => {
+      document.removeEventListener('keydown', onKey, true);
+      backdrop.remove();
+      resolve(result);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close(null);
+      } else if (e.key === 'Enter' && isUrl(input.value.trim())) {
+        e.stopPropagation();
+        close({ mode: 'url', url: input.value.trim() });
+      }
+    };
+    backdrop.addEventListener('pointerdown', (e) => {
+      if (e.target === backdrop) close(null);
+    });
+    fileBtn.addEventListener('click', () => close({ mode: 'file' }));
+    urlBtn.addEventListener('click', () => {
+      if (isUrl(input.value.trim())) close({ mode: 'url', url: input.value.trim() });
+    });
+    document.addEventListener('keydown', onKey, true);
+    input.focus();
+  });
+}
+
 export function confirmDialog({
   title = 'Are you sure?',
   itemName = '',
