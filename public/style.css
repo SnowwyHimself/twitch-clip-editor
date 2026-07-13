@@ -2079,20 +2079,6 @@ img.preset-thumb {
   line-height: 1;
 }
 
-/* Per-clip settings header (B6): label + "Apply to all" on one row. */
-.perclip-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-bottom: 4px;
-}
-.perclip-apply {
-  flex: none;
-  padding: 4px 8px;
-  font-size: var(--fs-xs);
-}
-
 /* Timing-nudge label + numeric input on one row. Both sides are fixed-width so
    changing the value (via slider or typing) never reflows the row and shifts the
    panel horizontally. */

@@ -257,7 +257,10 @@ export function addAppendedClip(source) {
     start: 0,
     end: Number.isFinite(source.duration) ? source.duration : 0,
     duration: Number.isFinite(source.duration) ? source.duration : 0,
-    settings: defaultPieceSettings(), // its own reframe/blur/grade (B6)
+    // Inherit the current whole-video framing/blur/grade so a stitched clip
+    // matches the rest without a manual step (settings are global — see
+    // commitVideoSettings).
+    settings: cloneSettings(currentVideoSettings()),
   };
   state.appendedClips.push(clip);
   emit('segments'); // the video track + output duration change
@@ -660,22 +663,15 @@ export function loadEditTargetIntoGlobals(playheadOutTime) {
   state.color = { ...s.color };
 }
 
-// Write the current global edit-mirror values onto every edit-target piece —
-// called after a Video-panel slider changes. Emits 'settings' so preview +
-// timeline refresh.
-export function commitVideoSettings(playheadOutTime) {
+// Write the current global edit-mirror values onto EVERY piece (all segments +
+// appended clips), so zoom/position/blur/colour are applied to the whole video
+// at once — a split or a stitched-in clip always matches the framing you set,
+// with no per-clip step. Called after a Video-panel slider changes; emits
+// 'settings' so preview + timeline refresh.
+export function commitVideoSettings() {
   const snapshot = currentVideoSettings();
-  for (const piece of editTargetPieces(playheadOutTime)) {
-    piece.settings = cloneSettings(snapshot);
-  }
-  emit('settings');
-}
-
-// "Apply to all clips": copy one piece's settings to every piece.
-export function applyVideoSettingsToAllPieces(sourceSettings) {
-  const snap = cloneSettings(sourceSettings);
-  for (const seg of state.segments) seg.settings = cloneSettings(snap);
-  for (const clip of state.appendedClips) clip.settings = cloneSettings(snap);
+  for (const seg of state.segments) seg.settings = cloneSettings(snapshot);
+  for (const clip of state.appendedClips) clip.settings = cloneSettings(snapshot);
   emit('settings');
 }
 
