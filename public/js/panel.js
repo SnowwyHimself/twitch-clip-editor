@@ -197,8 +197,6 @@ function lookupElements() {
     colorSaturation: byId('color-saturation'),
     colorSaturationValue: byId('color-saturation-value'),
     colorResetBtn: byId('color-reset-btn'),
-    safeZoneToggle: byId('safe-zone-toggle'),
-    safeZone: byId('safe-zone'),
     // Text tab
     textInput: byId('caption-text'),
     emojiBtn: byId('emoji-picker-btn'),
@@ -242,7 +240,6 @@ function lookupElements() {
     capYValue: byId('cap-y-value'),
     capTimingSlider: byId('cap-timing-slider'),
     capTimingInput: byId('cap-timing-input'),
-    capTimingValue: byId('cap-timing-value'),
     transcriptGroup: byId('transcript-group'),
     transcriptList: byId('transcript-list'),
     capPresetList: byId('cap-preset-list'),
@@ -467,17 +464,6 @@ function wireVideoControls() {
     commitVideo();
     refreshVideoPanel();
   });
-  // Safe-zone guides — a preview aid, persisted (not in the project/export).
-  const SAFE_ZONE_KEY = 'clipEditor.safeZones.v1';
-  const applySafeZone = (on) => {
-    els.safeZone.classList.toggle('hidden', !on);
-    els.safeZoneToggle.checked = on;
-  };
-  els.safeZoneToggle.addEventListener('change', () => {
-    localStorage.setItem(SAFE_ZONE_KEY, els.safeZoneToggle.checked ? '1' : '0');
-    applySafeZone(els.safeZoneToggle.checked);
-  });
-  applySafeZone(localStorage.getItem(SAFE_ZONE_KEY) === '1');
   // Position lock: when on, applying a preset never moves the clip (panX/panY
   // stay put). Persisted so the choice sticks across sessions. Default on —
   // position is per-clip framing, not something a shared "look" should hijack.
@@ -1160,10 +1146,14 @@ function wireTransitionControls() {
 
 // --- captions tab -------------------------------------------------------------------
 
-// Duration guardrails (seconds) for a caption block, layered on top of the A2
-// silence clamp: a block never flashes shorter than MIN or lingers past MAX.
+// Duration guardrails (seconds) for a caption block. A block never flashes
+// shorter than MIN. Rather than a hard MAX we extend each block to hold until
+// the next one starts (so captions are continuous — no flicker gaps between
+// normally-spaced words), but cap how far a block lingers past its own last
+// word so it clears during a long pause instead of hanging on screen.
 const CAP_MIN_BLOCK = 0.4;
-const CAP_MAX_BLOCK = 4;
+const CAP_LINGER_BASE = 0.8; // s a block may hold past its last word...
+const CAP_LINGER_PER_WORD = 1.2; // ...plus this much per word (long lines read slower)
 
 // Strips trailing commas/periods (keeps ? and !), used for punctuation cleanup.
 function cleanCaptionWord(text) {
@@ -1171,18 +1161,16 @@ function cleanCaptionWord(text) {
 }
 
 // Groups word-level whisper segments into N-word caption blocks, optionally
-// cleaning punctuation, and applies the duration guardrails. Each block keeps
-// baseStart/baseEnd (its own span) so the timing-nudge slider stays re-derivable.
+// cleaning punctuation, then decides display timing so captions run continuously
+// without lingering through silences. Each block keeps its own word timings
+// (rs/re, relative to start) so karaoke + the timing-nudge stay re-derivable.
 function groupCaptionWords(words, maxWords, cleanup) {
   const n = Math.max(1, Math.min(5, maxWords || 1));
-  const blocks = [];
+  const raw = [];
   for (let i = 0; i < words.length; i += n) {
     const chunk = words.slice(i, i + n);
     const start = chunk[0].start;
-    let end = chunk[chunk.length - 1].end;
-    const dur = end - start;
-    if (dur < CAP_MIN_BLOCK) end = start + CAP_MIN_BLOCK;
-    else if (dur > CAP_MAX_BLOCK) end = start + CAP_MAX_BLOCK;
+    const spokenEnd = chunk[chunk.length - 1].end;
     // Keep each word's text + timing RELATIVE to the block start (rs/re) for
     // karaoke emphasis (D2). Relative times ride the timing-nudge automatically
     // (word window = layer.start + rs .. layer.start + re).
@@ -1190,7 +1178,21 @@ function groupCaptionWords(words, maxWords, cleanup) {
       .map((w) => ({ text: cleanup ? cleanCaptionWord(w.text) : w.text, rs: w.start - start, re: w.end - start }))
       .filter((w) => w.text);
     const text = wordItems.map((w) => w.text).join(' ');
-    if (text) blocks.push({ start, end, text, words: wordItems });
+    if (text) raw.push({ start, spokenEnd, text, words: wordItems });
+  }
+  // Second pass: hold each block until the next begins, capped so it clears a
+  // long pause. whisper stretches a word's `end` across trailing silence, so we
+  // key the linger cap off word COUNT (how long the text takes to read), not the
+  // reported spoken end — that's what made captions hang after a pause before.
+  const blocks = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const b = raw[i];
+    const next = raw[i + 1];
+    const linger = CAP_LINGER_BASE + CAP_LINGER_PER_WORD * b.words.length;
+    let end = b.start + linger;
+    if (next) end = Math.min(end, next.start); // continuous — no gap to next block
+    end = Math.max(end, b.start + CAP_MIN_BLOCK); // but never a flash-frame
+    blocks.push({ start: b.start, end, text: b.text, words: b.words });
   }
   return blocks;
 }
@@ -1337,7 +1339,6 @@ function wireCaptionControls() {
     state.captionSettings.timingOffset = v;
     els.capTimingSlider.value = v;
     if (!fromInput) els.capTimingInput.value = v.toFixed(2);
-    els.capTimingValue.textContent = `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
     applyCaptionTiming();
   };
   els.capTimingSlider.addEventListener('input', () => setTimingOffset(els.capTimingSlider.value));

@@ -48,15 +48,6 @@
         <div id="preview-guide-x" class="preview-guide preview-guide-x"></div>
         <div id="preview-overlays" class="preview-overlays"></div>
         <div id="text-layers" class="text-layers"></div>
-        <!-- TikTok safe-zone guides: the reserved regions where TikTok's own UI
-             sits over the video (proportions from TikTok's published 1080x1920
-             safe-area spec). Content important to keep visible belongs in the
-             clear centre. Guides only — never exported. -->
-        <div id="safe-zone" class="safe-zone hidden" aria-hidden="true">
-          <div class="safe-region safe-region-top"><span class="safe-region-label">Top nav</span></div>
-          <div class="safe-region safe-region-right"><span class="safe-region-label">Buttons</span></div>
-          <div class="safe-region safe-region-bottom"><span class="safe-region-label">Caption &amp; music</span></div>
-        </div>
         <div id="preview-flash" class="preview-flash"></div>
       </div>
       <div id="preview-controls" class="preview-controls hidden">
@@ -91,14 +82,6 @@
         <div class="field-group">
           <label class="field-label">Aspect ratio</label>
           <div id="aspect-ratio-group" class="toggle-group aspect-ratio-group"></div>
-          <label class="switch-row" for="safe-zone-toggle">
-            <span class="field-label switch-label">Safe zones</span>
-            <span class="switch">
-              <input type="checkbox" id="safe-zone-toggle" />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-          <p class="field-hint">Guides only — shows where TikTok/Reels UI covers the frame. Never exported.</p>
         </div>
 
         <div class="field-group">
@@ -258,8 +241,11 @@
 
         <div class="field-group">
           <div class="cap-timing-row">
-            <label class="field-label" for="cap-timing-slider">Timing nudge <span id="cap-timing-value">+0.15s</span></label>
-            <input id="cap-timing-input" class="cap-timing-input" type="number" min="-3" max="3" step="0.05" value="0.15" aria-label="Timing nudge seconds" />
+            <label class="field-label" for="cap-timing-slider">Timing nudge</label>
+            <div class="cap-timing-input-wrap">
+              <input id="cap-timing-input" class="cap-timing-input" type="number" min="-3" max="3" step="0.05" value="0.15" aria-label="Timing nudge seconds" />
+              <span class="cap-timing-unit">s</span>
+            </div>
           </div>
           <input id="cap-timing-slider" type="range" min="-3" max="3" value="0.15" step="0.05" />
           <p class="field-hint">Shifts all captions later (+) or earlier (−), up to ±3s. Type an exact value in the box. Whisper often runs a touch early, especially on noisy clips.</p>

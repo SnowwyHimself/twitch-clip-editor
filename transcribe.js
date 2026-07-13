@@ -146,69 +146,6 @@ function dtwTypeFromModelPath(modelPath) {
   return match ? `${match[1]}${match[2] || ''}` : null;
 }
 
-// whisper.cpp stretches every segment's end timestamp to fill the time up to
-// the next segment — so a word before a pause has its `end` inflated to cover
-// the whole silence, and the caption hangs on screen until the next word. The
-// per-segment/token timestamps can't recover the true speech end (in word mode
-// the segment IS the stretched token). So we get the real speech/silence
-// boundaries independently: ffmpeg's silencedetect over the same 16kHz wav.
-// Returns silence *start* times (seconds) for pauses at least SILENCE_MIN_D long.
-const SILENCE_NOISE_DB = -30; // below this level counts as silence
-const SILENCE_MIN_D = 0.5; // only pauses this long (s) are treated as gaps
-const SILENCE_GRACE = 0.4; // caption lingers this long into the pause, then clears
-
-function detectSilenceStarts(ffmpegBin, wavPath) {
-  return new Promise((resolve) => {
-    const args = [
-      '-hide_banner', '-nostats',
-      '-i', wavPath,
-      '-af', `silencedetect=noise=${SILENCE_NOISE_DB}dB:d=${SILENCE_MIN_D}`,
-      '-f', 'null', '-',
-    ];
-    const child = spawn(ffmpegBin, args);
-    let stderr = '';
-    child.stderr.on('data', (c) => { stderr += c.toString(); });
-    // silencedetect is best-effort — on any failure we just skip the clamp.
-    child.on('error', () => resolve([]));
-    child.on('close', () => {
-      const starts = [];
-      for (const m of stderr.matchAll(/silence_start:\s*([0-9.]+)/g)) {
-        const t = parseFloat(m[1]);
-        if (Number.isFinite(t)) starts.push(t);
-      }
-      resolve(starts.sort((a, b) => a - b));
-    });
-  });
-}
-
-// Clamp each caption's end so it clears shortly after the last word instead of
-// hanging through a silence. Two independent caps, whichever fires first:
-//
-//   1. Silence-aware: if silencedetect found a pause that begins while the
-//      caption is still showing, clear at pauseStart + grace. Precise, but only
-//      works on clean audio — loud clips (crowd/music) never dip below the
-//      noise floor, so this finds nothing there.
-//   2. Word-count cap: no word takes more than ~1s to say, so a whisper
-//      duration far longer than the text warrants IS the hidden silence. Cap
-//      on-screen time at a generous per-word ceiling. Level-independent, so it
-//      catches the loud-clip case the silence pass misses.
-//
-// Both only ever shorten `end`, never extend it, so continuous speech (each
-// word ending right as the next begins) is left untouched.
-const MAX_DISPLAY_BASE = 0.6; // s of leeway before per-word time
-const MAX_DISPLAY_PER_WORD = 0.9; // generous ceiling per word (normal is ~0.3s)
-
-function clampCaptionEnds(segments, silenceStarts) {
-  return segments.map((seg) => {
-    let end = seg.end;
-    const pause = silenceStarts.find((s) => s > seg.start + 0.05 && s < end - 0.05);
-    if (pause !== undefined) end = Math.min(end, pause + SILENCE_GRACE);
-    const words = Math.max(1, (seg.text.match(/\S+/g) || []).length);
-    end = Math.min(end, seg.start + MAX_DISPLAY_BASE + words * MAX_DISPLAY_PER_WORD);
-    return end === seg.end ? seg : { ...seg, end };
-  });
-}
-
 async function transcribeSource(inputPath, { ffmpegBin, resourcesDir, modelsDir, workDir, mode = 'blocks' }) {
   const setup = checkWhisperSetup({ resourcesDir, modelsDir });
   if (!setup.binary) {
@@ -263,10 +200,10 @@ async function transcribeSource(inputPath, { ffmpegBin, resourcesDir, modelsDir,
       }))
       .filter((seg) => seg.text && Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start);
 
-    // Clear captions during real pauses instead of hanging them until the next
-    // word (see detectSilenceStarts/clampSilence). The wav still exists here.
-    const silenceStarts = await detectSilenceStarts(ffmpegBin, wavPath);
-    return clampCaptionEnds(segments, silenceStarts);
+    // Raw word segments — display timing (continuous, capped so nothing lingers
+    // through a long pause) is decided when words are grouped into caption
+    // blocks on the client (see groupCaptionWords in panel.js).
+    return segments;
   } finally {
     fs.unlink(wavPath, () => {});
     fs.unlink(jsonPath, () => {});

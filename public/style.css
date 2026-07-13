@@ -670,65 +670,6 @@ input[type="text"] {
   display: none;
 }
 
-/* Safe-zone guides (preview only, never rendered): the dashed inner box is the
-   area platform UI leaves clear; the labels mark what sits in each margin. */
-.safe-zone {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 6;
-}
-/* Each reserved region: a thin outlined band with a faint tint and a small
-   corner label. Percentages are of the canvas (9:16 = TikTok's native frame),
-   so they scale with the preview size; other aspect ratios keep the same
-   relative bands as a reasonable approximation. */
-.safe-region {
-  position: absolute;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  background: rgba(255, 90, 90, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
-}
-/* TikTok top nav (For You / search / status): ~7% of height. */
-.safe-region-top {
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 6.8%;
-}
-/* Right action rail (like / comment / share / spinning disc): ~14% wide,
-   spanning the icon cluster in the lower-middle. */
-.safe-region-right {
-  right: 0;
-  top: 42%;
-  bottom: 14%;
-  width: 14%;
-}
-/* Bottom caption / username / music ticker: ~25% of height. */
-.safe-region-bottom {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 25%;
-}
-.safe-region-label {
-  position: absolute;
-  top: 3px;
-  left: 5px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: rgba(255, 255, 255, 0.92);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-  white-space: nowrap;
-}
-/* Right rail label reads vertically so it fits the narrow column. */
-.safe-region-right .safe-region-label {
-  top: 6px;
-  left: 50%;
-  transform: translateX(-50%) rotate(90deg);
-  transform-origin: center;
-}
-
 .preview-placeholder {
   display: none;
   position: absolute;
@@ -2145,19 +2086,31 @@ img.preset-thumb {
   font-size: var(--fs-xs);
 }
 
-/* Timing-nudge label + numeric input on one row. */
+/* Timing-nudge label + numeric input on one row. Both sides are fixed-width so
+   changing the value (via slider or typing) never reflows the row and shifts the
+   panel horizontally. */
 .cap-timing-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
 }
+.cap-timing-input-wrap {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
 .cap-timing-input {
-  width: 64px;
+  width: 56px;
   flex: none;
   padding: 4px 6px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.cap-timing-unit {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* Audio fade ramps on a clip bar: a translucent wedge showing the volume
