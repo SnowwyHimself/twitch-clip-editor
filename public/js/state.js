@@ -104,7 +104,11 @@ export const state = {
   // layer at once (like CapCut/TikTok's caption styling, which styles the
   // whole caption track, not one block at a time).
   captionSettings: {
-    mode: 'words', // 'words' = one word at a time | 'blocks' = short lines
+    // Words per caption block (1 = one word at a time, the dominant viral
+    // style). We always transcribe word-level and group by this.
+    maxWords: 1,
+    // Strip trailing , and . from words (keeps ? and !) for cleaner captions.
+    punctuationCleanup: true,
     style: 'outline',
     fontId: null, // null -> default font, resolved at generation time
     fontSize: 58,

@@ -209,7 +209,9 @@ function lookupElements() {
     noLayerMsg: byId('panel-text-empty'),
     textControls: byId('panel-text-controls'),
     // Captions tab
-    capModeButtons: () => document.querySelectorAll('[data-caption-mode]'),
+    capMaxWordsSlider: byId('cap-maxwords-slider'),
+    capMaxWordsValue: byId('cap-maxwords-value'),
+    capPunctToggle: byId('cap-punct-toggle'),
     capGenerateBtn: byId('captions-generate-btn'),
     capStatus: byId('captions-status'),
     capStyleButtons: () => document.querySelectorAll('[data-cap-style]'),
@@ -1061,6 +1063,38 @@ function wireTransitionControls() {
 
 // --- captions tab -------------------------------------------------------------------
 
+// Duration guardrails (seconds) for a caption block, layered on top of the A2
+// silence clamp: a block never flashes shorter than MIN or lingers past MAX.
+const CAP_MIN_BLOCK = 0.4;
+const CAP_MAX_BLOCK = 4;
+
+// Strips trailing commas/periods (keeps ? and !), used for punctuation cleanup.
+function cleanCaptionWord(text) {
+  return text.replace(/[.,]+(?=\s|$)/g, '').trim();
+}
+
+// Groups word-level whisper segments into N-word caption blocks, optionally
+// cleaning punctuation, and applies the duration guardrails. Each block keeps
+// baseStart/baseEnd (its own span) so the timing-nudge slider stays re-derivable.
+function groupCaptionWords(words, maxWords, cleanup) {
+  const n = Math.max(1, Math.min(5, maxWords || 1));
+  const blocks = [];
+  for (let i = 0; i < words.length; i += n) {
+    const chunk = words.slice(i, i + n);
+    const start = chunk[0].start;
+    let end = chunk[chunk.length - 1].end;
+    const dur = end - start;
+    if (dur < CAP_MIN_BLOCK) end = start + CAP_MIN_BLOCK;
+    else if (dur > CAP_MAX_BLOCK) end = start + CAP_MAX_BLOCK;
+    const text = chunk
+      .map((w) => (cleanup ? cleanCaptionWord(w.text) : w.text))
+      .filter(Boolean)
+      .join(' ');
+    if (text) blocks.push({ start, end, text });
+  }
+  return blocks;
+}
+
 async function generateCaptions() {
   if (!state.source) {
     els.capStatus.textContent = 'Load a clip first.';
@@ -1077,15 +1111,19 @@ async function generateCaptions() {
   els.capGenerateBtn.textContent = 'Transcribing…';
   els.capStatus.textContent = 'Listening to the clip…';
   try {
-    const segments = await transcribe(state.source, state.captionSettings.mode);
-    if (segments.length === 0) {
+    // Always transcribe word-level, then group into N-word blocks client-side
+    // (see groupCaptionWords) so "words per block" and punctuation cleanup are
+    // just post-processing, not a re-transcription.
+    const words = await transcribe(state.source, 'words');
+    if (words.length === 0) {
       els.capStatus.textContent = 'No speech was detected in this clip.';
       return;
     }
+    const s = state.captionSettings;
+    const segments = groupCaptionWords(words, s.maxWords || 1, !!s.punctuationCleanup);
     // Regenerating replaces the previous caption set — hand-made text
     // layers (group:null) are never touched.
     removeCaptionLayers();
-    const s = state.captionSettings;
     const offset = s.timingOffset || 0;
     for (const seg of segments) {
       const start = Math.max(0, seg.start + offset);
@@ -1111,7 +1149,7 @@ async function generateCaptions() {
         { select: false }
       );
     }
-    els.capStatus.textContent = `${segments.length} caption ${segments.length === 1 ? 'block' : 'blocks'} added — restyle them below, or click Generate again after changing the mode.`;
+    els.capStatus.textContent = `${segments.length} caption ${segments.length === 1 ? 'block' : 'blocks'} added — restyle them below, or regenerate after changing the settings.`;
   } catch (err) {
     els.capStatus.textContent = `Transcription failed: ${err.message}`;
   } finally {
@@ -1121,11 +1159,12 @@ async function generateCaptions() {
 }
 
 function wireCaptionControls() {
-  els.capModeButtons().forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.captionSettings.mode = btn.dataset.captionMode;
-      els.capModeButtons().forEach((b) => b.classList.toggle('active', b === btn));
-    });
+  els.capMaxWordsSlider.addEventListener('input', () => {
+    state.captionSettings.maxWords = parseInt(els.capMaxWordsSlider.value, 10) || 1;
+    els.capMaxWordsValue.textContent = String(state.captionSettings.maxWords);
+  });
+  els.capPunctToggle.addEventListener('change', () => {
+    state.captionSettings.punctuationCleanup = els.capPunctToggle.checked;
   });
 
   els.capGenerateBtn.addEventListener('click', generateCaptions);
@@ -1205,7 +1244,9 @@ function wireCaptionControls() {
 // applying a preset, which sets several fields at once).
 function syncCaptionControls() {
   const s = state.captionSettings;
-  els.capModeButtons().forEach((b) => b.classList.toggle('active', b.dataset.captionMode === s.mode));
+  els.capMaxWordsSlider.value = s.maxWords || 1;
+  els.capMaxWordsValue.textContent = String(s.maxWords || 1);
+  els.capPunctToggle.checked = s.punctuationCleanup !== false;
   els.capStyleButtons().forEach((b) => b.classList.toggle('active', b.dataset.capStyle === s.style));
   els.capAnimButtons().forEach((b) => b.classList.toggle('active', b.dataset.capAnim === (s.animation || 'none')));
   if (s.fontId) els.capFontSelect.value = s.fontId;
@@ -1234,7 +1275,8 @@ function saveCaptionPresets(list) {
 function currentCaptionStyle() {
   const s = state.captionSettings;
   return {
-    mode: s.mode,
+    maxWords: s.maxWords,
+    punctuationCleanup: s.punctuationCleanup,
     style: s.style,
     fontId: s.fontId,
     fontSize: s.fontSize,
