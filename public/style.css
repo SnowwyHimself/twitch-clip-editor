@@ -735,39 +735,55 @@ input[type="text"] {
   pointer-events: none;
   z-index: 6;
 }
-.safe-zone-inner {
+/* Each reserved region: a thin outlined band with a faint tint and a small
+   corner label. Percentages are of the canvas (9:16 = TikTok's native frame),
+   so they scale with the preview size; other aspect ratios keep the same
+   relative bands as a reasonable approximation. */
+.safe-region {
   position: absolute;
-  top: 7%;
-  bottom: 18%;
-  left: 5%;
-  right: 12%;
-  border: 1.5px dashed rgba(255, 255, 255, 0.75);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 90, 90, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
-.safe-zone-tag {
+/* TikTok top nav (For You / search / status): ~7% of height. */
+.safe-region-top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6.8%;
+}
+/* Right action rail (like / comment / share / spinning disc): ~14% wide,
+   spanning the icon cluster in the lower-middle. */
+.safe-region-right {
+  right: 0;
+  top: 42%;
+  bottom: 14%;
+  width: 14%;
+}
+/* Bottom caption / username / music ticker: ~25% of height. */
+.safe-region-bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 25%;
+}
+.safe-region-label {
   position: absolute;
-  font-size: var(--fs-xs);
+  top: 3px;
+  left: 5px;
+  font-size: 10px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
   white-space: nowrap;
 }
-.safe-zone-tag-top {
-  top: 2%;
+/* Right rail label reads vertically so it fits the narrow column. */
+.safe-region-right .safe-region-label {
+  top: 6px;
   left: 50%;
-  transform: translateX(-50%);
-}
-.safe-zone-tag-bottom {
-  bottom: 8%;
-  left: 50%;
-  transform: translateX(-50%);
-}
-.safe-zone-tag-right {
-  top: 50%;
-  right: 2%;
-  transform: rotate(90deg);
-  transform-origin: right center;
+  transform: translateX(-50%) rotate(90deg);
+  transform-origin: center;
 }
 
 .preview-placeholder {

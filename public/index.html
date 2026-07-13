@@ -60,11 +60,14 @@
         <div id="preview-guide-x" class="preview-guide preview-guide-x"></div>
         <div id="preview-overlays" class="preview-overlays"></div>
         <div id="text-layers" class="text-layers"></div>
-        <div id="safe-zone" class="safe-zone hidden">
-          <div class="safe-zone-inner"></div>
-          <span class="safe-zone-tag safe-zone-tag-top">clock / handle</span>
-          <span class="safe-zone-tag safe-zone-tag-right">actions</span>
-          <span class="safe-zone-tag safe-zone-tag-bottom">caption / music</span>
+        <!-- TikTok safe-zone guides: the reserved regions where TikTok's own UI
+             sits over the video (proportions from TikTok's published 1080x1920
+             safe-area spec). Content important to keep visible belongs in the
+             clear centre. Guides only — never exported. -->
+        <div id="safe-zone" class="safe-zone hidden" aria-hidden="true">
+          <div class="safe-region safe-region-top"><span class="safe-region-label">Top nav</span></div>
+          <div class="safe-region safe-region-right"><span class="safe-region-label">Buttons</span></div>
+          <div class="safe-region safe-region-bottom"><span class="safe-region-label">Caption &amp; music</span></div>
         </div>
         <div id="preview-flash" class="preview-flash"></div>
       </div>
