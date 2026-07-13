@@ -323,7 +323,38 @@ function updateLayerEl(layer) {
 
   const centerX = resolvePreviewCenter(layer.xPercent, root.offsetWidth, frameWidth);
   const centerY = resolvePreviewCenter(layer.yPercent, root.offsetHeight, frameHeight);
-  setCenterTransform(root, centerX, centerY, frameWidth, frameHeight);
+  // Cache the settled center so the per-frame entrance animation can offset
+  // from it without re-measuring the box each frame.
+  entry.baseCenter = { x: centerX, y: centerY };
+  if (layer.group === 'caption' && (layer.animation || 'none') !== 'none') {
+    applyCaptionEntrance(layer, entry, fgVideo.currentTime || 0);
+  } else {
+    root.style.opacity = '';
+    setCenterTransform(root, centerX, centerY, frameWidth, frameHeight);
+  }
+}
+
+// Caption entrance animation, applied per-frame. 'fade' ramps opacity 0->1 over
+// the first CAP_ANIM_DURATION seconds after the caption's start; 'slide' also
+// eases it up from CAP_SLIDE_FRAC of the canvas height. Matches the export's
+// overlay fade-alpha + y t-expression. Before the caption's start (only shown
+// when selected for editing) it sits settled at full opacity.
+const CAP_ANIM_DURATION = 0.25;
+const CAP_SLIDE_FRAC = 0.04;
+function applyCaptionEntrance(layer, entry, srcT) {
+  const base = entry.baseCenter;
+  if (!base) return;
+  const { width, height } = frameSize();
+  const anim = layer.animation || 'none';
+  if (anim === 'none' || srcT < layer.start) {
+    entry.root.style.opacity = '';
+    setCenterTransform(entry.root, base.x, base.y, width, height);
+    return;
+  }
+  const p = Math.min(1, (srcT - layer.start) / CAP_ANIM_DURATION);
+  entry.root.style.opacity = p.toFixed(3);
+  const slide = anim === 'slide' ? (1 - p) * height * CAP_SLIDE_FRAC : 0;
+  setCenterTransform(entry.root, base.x, base.y + slide, width, height);
 }
 
 // Shown while the playhead is inside the layer's range, or while selected
@@ -339,6 +370,9 @@ function updateLayerVisibility() {
     const inRange = !gap && t >= layer.start && t < layer.end;
     const visible = !hiddenByToggle && (inRange || isSelected('layer', layer.id));
     entry.root.classList.toggle('time-hidden', !visible);
+    if (visible && layer.group === 'caption' && (layer.animation || 'none') !== 'none') {
+      applyCaptionEntrance(layer, entry, t);
+    }
   }
 }
 

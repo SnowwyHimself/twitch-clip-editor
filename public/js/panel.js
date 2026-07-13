@@ -194,6 +194,7 @@ function lookupElements() {
     capGenerateBtn: byId('captions-generate-btn'),
     capStatus: byId('captions-status'),
     capStyleButtons: () => document.querySelectorAll('[data-cap-style]'),
+    capAnimButtons: () => document.querySelectorAll('[data-cap-anim]'),
     capFontSelect: byId('cap-font-select'),
     capColorPicker: byId('cap-color-picker'),
     capSizeSlider: byId('cap-size-slider'),
@@ -1029,6 +1030,7 @@ async function generateCaptions() {
           fontSize: s.fontSize,
           color: s.color,
           dropShadow: s.dropShadow,
+          animation: s.animation || 'none',
           xPercent: 50,
           yPercent: s.yPercent,
           start,
@@ -1065,6 +1067,14 @@ function wireCaptionControls() {
     btn.addEventListener('click', () => {
       state.captionSettings.style = btn.dataset.capStyle;
       els.capStyleButtons().forEach((b) => b.classList.toggle('active', b === btn));
+      applyCaptionStyle();
+    });
+  });
+
+  els.capAnimButtons().forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.captionSettings.animation = btn.dataset.capAnim;
+      els.capAnimButtons().forEach((b) => b.classList.toggle('active', b === btn));
       applyCaptionStyle();
     });
   });
@@ -1119,6 +1129,7 @@ function syncCaptionControls() {
   const s = state.captionSettings;
   els.capModeButtons().forEach((b) => b.classList.toggle('active', b.dataset.captionMode === s.mode));
   els.capStyleButtons().forEach((b) => b.classList.toggle('active', b.dataset.capStyle === s.style));
+  els.capAnimButtons().forEach((b) => b.classList.toggle('active', b.dataset.capAnim === (s.animation || 'none')));
   if (s.fontId) els.capFontSelect.value = s.fontId;
   markActiveSwatch(els.capColorPicker, s.color);
   els.capSizeSlider.value = s.fontSize;

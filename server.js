@@ -341,6 +341,11 @@ function clampFadeSeconds(value) {
   return Math.min(30, v);
 }
 
+// Caption entrance animation params — MUST match preview.js (CAP_ANIM_DURATION,
+// CAP_SLIDE_FRAC) so the fade/slide look identical in preview and render.
+const CAP_ANIM_DURATION = 0.25;
+const CAP_SLIDE_FRAC = 0.04;
+
 // Converts a 0-100 "center position" percentage into a top-left pixel
 // coordinate, clamped so the full contentSize always stays within
 // [0, canvasSize] regardless of how large/small the caption or how far
@@ -815,13 +820,30 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     nextInputIndex += 1;
   }
   for (const cap of captionOverlays) {
-    args.push('-i', cap.pngPath);
-    overlayStages.push({
-      inputLabel: `[${nextInputIndex}:v]`,
-      x: cap.x,
-      y: cap.y,
-      enable: cap.enable,
-    });
+    const animated = cap.animation === 'fade' || cap.animation === 'slide';
+    // An animated caption needs a continuous stream to ramp alpha over time, so
+    // it's looped — but BOUNDED with -t (to its end + a margin) so the input
+    // EOFs instead of looping forever, which otherwise wedges ffmpeg at the
+    // finalize step long after the video stream has ended.
+    if (animated) args.push('-loop', '1', '-t', (cap.end + 0.2).toFixed(3), '-i', cap.pngPath);
+    else args.push('-i', cap.pngPath);
+    const rawLabel = `[${nextInputIndex}:v]`;
+    const stage = { inputLabel: rawLabel, x: cap.x, y: cap.y, enable: cap.enable };
+    if (animated) {
+      const d = CAP_ANIM_DURATION.toFixed(3);
+      const st = cap.start.toFixed(3);
+      const faded = `[capf${nextInputIndex}]`;
+      // Fade the caption's alpha in over the first CAP_ANIM_DURATION after it
+      // appears (st is on the main timeline; a -loop 1 image shares that clock).
+      stage.pre = `${rawLabel}format=yuva420p,fade=t=in:st=${st}:d=${d}:alpha=1${faded}`;
+      stage.inputLabel = faded;
+      if (cap.animation === 'slide') {
+        // Ease the caption up from slidePx below its resting y over the same
+        // window — matches the preview's per-frame translate.
+        stage.y = `${cap.y}+${cap.slidePx}*(1-clip((t-${st})/${d}\\,0\\,1))`;
+      }
+    }
+    overlayStages.push(stage);
     nextInputIndex += 1;
   }
   // Sound clips are audio-only, so their input order relative to the
@@ -1010,6 +1032,12 @@ function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
       x,
       y,
       enable: hasRange ? `between(t,${layer.start.toFixed(3)},${layer.end.toFixed(3)})` : null,
+      // Entrance animation needs a real time range; slidePx is a fraction of
+      // canvas height, matching the preview (CAP_SLIDE_FRAC).
+      animation: hasRange ? layer.animation || 'none' : 'none',
+      start: hasRange ? layer.start : null,
+      end: hasRange ? layer.end : null,
+      slidePx: Math.round(canvasH * CAP_SLIDE_FRAC),
     };
   });
 }
@@ -1309,6 +1337,7 @@ function buildTextLayers(body) {
       xPercent: clampPositionPercent(l && l.xPercent, 50),
       yPercent: clampPositionPercent(l && l.yPercent, 25),
       wrapWidth: clampWrapRatio(l && l.wrapWidth),
+      animation: ['fade', 'slide'].includes(l && l.animation) ? l.animation : 'none',
       start: Number.isFinite(parseFloat(l && l.start)) ? parseFloat(l.start) : null,
       end: Number.isFinite(parseFloat(l && l.end)) ? parseFloat(l.end) : null,
     }))

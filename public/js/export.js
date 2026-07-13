@@ -59,6 +59,7 @@ function buildTextLayersPayload() {
       xPercent: layer.xPercent,
       yPercent: layer.yPercent,
       wrapWidth: layer.wrapWidth,
+      animation: layer.animation,
       start,
       end,
     });

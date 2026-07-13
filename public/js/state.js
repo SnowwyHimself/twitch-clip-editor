@@ -105,6 +105,10 @@ export const state = {
     color: '#ffffff',
     dropShadow: false,
     yPercent: 75,
+    // Entrance animation for each caption: 'none' | 'fade' | 'slide' (slide-up).
+    // Rendered identically in preview (per-frame opacity/translate) and export
+    // (overlay fade-alpha + y t-expression) so they match.
+    animation: 'none',
     // Nudge every caption's timing by this many seconds (whisper often
     // reports words slightly early, especially on noisy clips) — positive
     // = later. Applied relative to each caption's original whisper time
@@ -419,6 +423,7 @@ export function addTextLayer(partial = {}, { select = true } = {}) {
     xPercent: 50,
     yPercent: 25,
     wrapWidth: TEXT_WRAP_DEFAULT,
+    animation: 'none', // caption entrance animation: 'none' | 'fade' | 'slide'
     start: 0,
     end: 3,
     group: null, // 'caption' for Auto captions layers
@@ -756,6 +761,7 @@ export function applyCaptionStyle() {
       color: s.color,
       dropShadow: s.dropShadow,
       yPercent: s.yPercent,
+      animation: s.animation || 'none',
     });
   }
   emit('layers');
