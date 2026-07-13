@@ -257,6 +257,7 @@ function wireShortcuts() {
       const sound = selectedSound();
       const overlay = selectedOverlay();
       const segment = selectedSegment();
+      const appendedClip = selectedAppendedClip();
       if (layer) {
         e.preventDefault();
         removeLayer(layer.id);
@@ -266,6 +267,9 @@ function wireShortcuts() {
       } else if (overlay) {
         e.preventDefault();
         removeOverlay(overlay.id);
+      } else if (appendedClip) {
+        e.preventDefault();
+        removeAppendedClip(appendedClip.id);
       } else if (segment) {
         e.preventDefault();
         removeSegment(segment.id);

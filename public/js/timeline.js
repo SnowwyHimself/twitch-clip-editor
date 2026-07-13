@@ -52,7 +52,10 @@ import {
   primaryOutputDuration,
   appendedLayout,
   selectClip,
+  selectedAppendedClip,
+  removeAppendedClip,
   moveAppendedClip,
+  updateAppendedClip,
   sourceToOutput,
   outputToSource,
   MIN_SEGMENT_SECONDS,
@@ -291,6 +294,47 @@ function attachAppendedClipDrag(el, clip) {
   el.addEventListener('pointercancel', end);
 }
 
+// Edge-trim an appended clip: the left grip moves its in-point (start), the
+// right grip its out-point (end), within [0, source duration]. Mutated live +
+// relaid out without a DOM rebuild (so capture holds), committed on release.
+function attachAppendedClipTrim(edge, clip, isLeft) {
+  let startX = 0;
+  let dragging = false;
+  let orig = null;
+  edge.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    selectClip(clip.id);
+    startX = e.clientX;
+    dragging = true;
+    orig = { start: clip.start, end: clip.end, duration: clip.duration };
+    try {
+      edge.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic pointers */
+    }
+  });
+  edge.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const pps = pxPerSecond();
+    if (pps <= 0) return;
+    const delta = (e.clientX - startX) / pps;
+    if (isLeft) {
+      clip.start = Math.max(0, Math.min(orig.start + delta, clip.end - MIN_SEGMENT_SECONDS));
+    } else {
+      clip.end = Math.max(clip.start + MIN_SEGMENT_SECONDS, Math.min(orig.end + delta, orig.duration));
+    }
+    layoutVideoTrack();
+    updatePlayhead();
+  });
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    emit('segments'); // finalize (history + full re-render)
+  };
+  edge.addEventListener('pointerup', end);
+  edge.addEventListener('pointercancel', end);
+}
+
 function layoutTransitionBadges() {
   const pps = pxPerSecond();
   videoTrack.querySelectorAll('.tl-transition-badge').forEach((badge) => {
@@ -455,7 +499,14 @@ function renderVideoTrack() {
     label.className = 'tl-text-label';
     label.textContent = `🎬 ${item.clip.source.name || 'Clip'}`;
     el.appendChild(label);
+    const leftEdge = document.createElement('div');
+    leftEdge.className = 'tl-text-edge tl-text-edge-left';
+    const rightEdge = document.createElement('div');
+    rightEdge.className = 'tl-text-edge tl-text-edge-right';
+    el.append(leftEdge, rightEdge);
     attachAppendedClipDrag(el, item.clip);
+    attachAppendedClipTrim(leftEdge, item.clip, true);
+    attachAppendedClipTrim(rightEdge, item.clip, false);
     appendedClipEls.set(item.clip.id, el);
     videoTrack.appendChild(el);
   }
@@ -625,12 +676,14 @@ function deleteSelection() {
   if (sound) return removeSound(sound.id);
   const overlay = selectedOverlay();
   if (overlay) return removeOverlay(overlay.id);
+  const clip = selectedAppendedClip();
+  if (clip) return removeAppendedClip(clip.id);
 }
 
 function refreshToolbar() {
   const seg = selectedSegment();
   const canDeleteSegment = seg && state.segments.length > 1;
-  const otherSelected = !!(selectedLayer() || selectedSound() || selectedOverlay());
+  const otherSelected = !!(selectedLayer() || selectedSound() || selectedOverlay() || selectedAppendedClip());
   deleteBtn.disabled = !(canDeleteSegment || otherSelected);
 }
 

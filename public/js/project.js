@@ -71,6 +71,24 @@ function serialize() {
     captionSettings: state.captionSettings,
     overlays: state.overlays.map((o) => ({ ...o, file: undefined, mediaId: o.file ? o.id : null })),
     sounds: state.sounds.map((s) => ({ ...s, file: undefined, mediaId: s.file ? s.id : null })),
+    // Appended clips: URL clips re-resolve via the preview cache; file clips
+    // ride the media system (mediaId = clip id), same as overlays/sounds.
+    appendedClips: state.appendedClips.map((c) => ({
+      id: c.id,
+      start: c.start,
+      end: c.end,
+      duration: c.duration,
+      source: {
+        kind: c.source.kind,
+        url: c.source.url || null,
+        section: c.source.section || null,
+        name: c.source.name || null,
+        width: c.source.width || null,
+        height: c.source.height || null,
+        duration: c.source.duration || null,
+        mediaId: c.source.file ? c.id : null,
+      },
+    })),
   };
 }
 
@@ -78,6 +96,7 @@ function collectMedia() {
   const media = [];
   for (const o of state.overlays) if (o.file) media.push({ id: o.id, file: o.file });
   for (const s of state.sounds) if (s.file) media.push({ id: s.id, file: s.file });
+  for (const c of state.appendedClips) if (c.source.file) media.push({ id: c.id, file: c.source.file });
   return media;
 }
 
@@ -231,7 +250,48 @@ async function rehydrateMedia(projectId, items) {
   return out;
 }
 
-function applyStateFields(data, overlays, sounds) {
+// Rebuilds appended clips on open: URL clips re-resolve their preview through
+// the cache; file clips rehydrate from stored media into an object URL.
+async function restoreAppendedClips(projectId, items) {
+  const out = [];
+  for (const item of items || []) {
+    const s = item.source || {};
+    let previewUrl = null;
+    let file = null;
+    try {
+      if (s.kind === 'url' && s.url) {
+        ({ previewUrl } = await fetchPreviewSource(s.url, s.section || undefined));
+      } else if (s.mediaId) {
+        const blob = await fetch(`/api/project/${projectId}/media/${s.mediaId}`).then((r) => r.blob());
+        file = new File([blob], s.name || s.mediaId, { type: blob.type });
+        previewUrl = URL.createObjectURL(file);
+      }
+    } catch {
+      /* skip a clip that can't be re-resolved */
+    }
+    if (!previewUrl && !file) continue;
+    out.push({
+      id: item.id,
+      start: item.start,
+      end: item.end,
+      duration: item.duration,
+      source: {
+        kind: s.kind,
+        url: s.url || null,
+        section: s.section || null,
+        name: s.name || null,
+        width: s.width || null,
+        height: s.height || null,
+        duration: s.duration || null,
+        file,
+        previewUrl,
+      },
+    });
+  }
+  return out;
+}
+
+function applyStateFields(data, overlays, sounds, appendedClips) {
   if (data.aspect) state.aspect = data.aspect;
   if (Number.isFinite(data.zoom)) state.zoom = data.zoom;
   if (Number.isFinite(data.blur)) state.blur = data.blur;
@@ -254,6 +314,7 @@ function applyStateFields(data, overlays, sounds) {
   if (data.captionSettings) state.captionSettings = data.captionSettings;
   state.overlays = overlays;
   state.sounds = sounds;
+  state.appendedClips = appendedClips || [];
   state.sel = null;
 }
 
@@ -276,7 +337,8 @@ async function applyProjectData(id, data) {
   const mediaProjectId = id;
   const overlays = await rehydrateMedia(mediaProjectId, data.overlays || []);
   const sounds = await rehydrateMedia(mediaProjectId, data.sounds || []);
-  applyStateFields(data, overlays, sounds);
+  const appendedClips = await restoreAppendedClips(mediaProjectId, data.appendedClips || []);
+  applyStateFields(data, overlays, sounds, appendedClips);
   currentProjectId = data.autosaveOf || (id === AUTOSAVE_ID ? null : id);
   currentProjectName = data.name || 'Untitled';
   emit('segments');
@@ -310,7 +372,8 @@ export async function finishOpenWithFile(id, data, file) {
   await ready;
   const overlays = await rehydrateMedia(id, data.overlays || []);
   const sounds = await rehydrateMedia(id, data.sounds || []);
-  applyStateFields(data, overlays, sounds);
+  const appendedClips = await restoreAppendedClips(id, data.appendedClips || []);
+  applyStateFields(data, overlays, sounds, appendedClips);
   currentProjectId = id === AUTOSAVE_ID ? null : id;
   currentProjectName = data.name || 'Untitled';
   emit('segments');
