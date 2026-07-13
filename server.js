@@ -978,18 +978,24 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     segments.length === 1 &&
     segments[0].outStart <= 0.01 &&
     (!transitions || transitions.length === 0);
-  // Per-piece render (B6): only when the segment-concat path runs (multiple
-  // trimmed pieces), no global transform mode is active (keyframes / face-track
-  // / split each own the whole composite), and the pieces' settings actually
-  // differ. Otherwise the cheaper global transform (fed the edit-mirror values)
-  // already matches. Appended multi-source clips keep the global path for now.
+  // Per-piece render (B6): when the segment-concat path runs and no global
+  // transform mode is active (keyframes / face-track / split each own the whole
+  // composite), composite each piece to a canvas-sized fill.
+  //   - Single-source pieces that all share settings can skip it: buildSegmentFilter
+  //     concats the RAW trims (same dimensions) and buildFilterComplex fills once.
+  //   - Appended (multi-source) clips have DIFFERENT dimensions, so concat needs
+  //     them pre-normalised. The only correct normalisation is the same fill
+  //     composite (cover + blur bg) — the letterbox fallback bakes black bars into
+  //     each piece and its opaque pad then hides the blurred background, so the
+  //     export shows black bars where the preview shows the blur. Always per-piece
+  //     when appended so the render matches the preview.
   const perPiece =
     !noTrim &&
     !singleRange &&
     !(Array.isArray(keyframes) && keyframes.length >= 1) &&
     !(Array.isArray(faceTrack) && faceTrack.length >= 1) &&
     !split &&
-    pieceSettingsDiffer([...(segments || []), ...(hasAppended ? appended : [])]);
+    (hasAppended || pieceSettingsDiffer([...(segments || []), ...(hasAppended ? appended : [])]));
   // -progress pipe:1 streams machine-readable key=value progress lines to
   // stdout (stderr keeps the normal log for error reporting) — parsed by
   // runFfmpegWithProgress so the job status can expose a real percentage.
@@ -1100,13 +1106,17 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   let sourceAudioLabel = hasAudio ? '[0:a]' : null;
   if (hasAppended) {
     // Stitch primary + appended clips into one normalized [segv]/[sega].
+    // Sized to the CANVAS (not the source): with per-piece compositing each piece
+    // is fully filled to canvas here (buildPieceComposite), and the preComposited
+    // buildFilterComplex path below no longer resizes — so it must already be
+    // canvas-sized (matches buildSegmentFilter, which is also passed the canvas).
     const fps = Math.round(mediaInfo.fps || 30) || 30;
     const built = buildStitchedFilter(
       segments,
       transitions || [],
       hasAudio,
-      mediaInfo.width,
-      mediaInfo.height,
+      canvasW,
+      canvasH,
       fps,
       appended,
       appendedInputStart,
@@ -1590,7 +1600,9 @@ async function resolveAppendedClips(appendedClips) {
       const start = Math.max(0, Math.min(clip.start || 0, info.duration || 0));
       const end = clip.end && clip.end > start ? Math.min(clip.end, info.duration || clip.end) : info.duration || 0;
       if (end - start < 0.05) continue;
-      out.push({ filePath, start, end, hasAudio: info.hasAudio });
+      // Keep the piece's per-clip settings (zoom/blur/pan/colour) — without them
+      // an appended clip renders with defaults (no fill/blur), mismatching the preview.
+      out.push({ filePath, start, end, hasAudio: info.hasAudio, settings: clip.settings });
     } catch {
       /* skip an appended clip that can't be resolved */
     }

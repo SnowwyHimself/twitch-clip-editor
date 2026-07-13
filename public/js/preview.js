@@ -441,11 +441,17 @@ function applyCaptionEntrance(layer, entry, srcT) {
 // visibility (not display) keeps layout measurable for the pill math.
 function updateLayerVisibility() {
   const t = fgVideo.currentTime || 0;
+  // Text/caption layers all live in the PRIMARY clip's source-time domain, so
+  // none of them belong to an appended clip. While one is showing, fgVideo holds
+  // the APPENDED source (its own currentTime), so comparing that to primary-domain
+  // layer times would ghost primary layers onto the appended clip — a phantom that
+  // isn't on the timeline or in the export. Hide them while an appended clip plays.
+  const onAppended = activeAppended != null;
   for (const layer of state.layers) {
     const entry = layerEls.get(layer.id);
     if (!entry) continue;
     const hiddenByToggle = state.captionsHidden && layer.group === 'caption';
-    const inRange = !gap && t >= layer.start && t < layer.end;
+    const inRange = !gap && !onAppended && t >= layer.start && t < layer.end;
     const visible = !hiddenByToggle && (inRange || isSelected('layer', layer.id));
     entry.root.classList.toggle('time-hidden', !visible);
     if (visible && layer.group === 'caption' && (layer.animation || 'none') !== 'none') {

@@ -1967,7 +1967,9 @@ img.preset-thumb {
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: var(--radius-md);
+  /* Video-track pieces are contiguous, so no rounded corners — rounded ends on
+     abutting bars leave a dark notch at every clip boundary that reads as a gap. */
+  border-radius: 0;
   cursor: pointer;
   background: rgba(124, 92, 255, 0.28);
   border: 1px solid rgba(124, 92, 255, 0.5);
@@ -2161,7 +2163,9 @@ img.preset-thumb {
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: var(--radius-md);
+  /* Contiguous with the primary segments — square edges so clip boundaries abut
+     seamlessly instead of showing a dark rounded-corner notch (the "gap"). */
+  border-radius: 0;
   cursor: grab;
   overflow: hidden;
   touch-action: none;
