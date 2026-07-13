@@ -684,10 +684,12 @@ const PRESETS_KEY = 'clipEditor.presets.v1';
 const DEFAULT_PRESET_KEY = 'clipEditor.defaultPreset.v1';
 const PAN_LOCK_KEY = 'clipEditor.lockPosition.v1';
 
-// Defaults to locked (missing key === locked) so presets don't move framing
-// out of the box — the main source of "the preset messed up my clip".
+// Defaults to UNLOCKED (missing key === unlocked) so a preset applies the whole
+// framing it captured — including position — and "load a clip, pick a preset"
+// actually reframes the clip. Users who prefer to frame each clip by hand can
+// turn the lock on.
 function positionLocked() {
-  return localStorage.getItem(PAN_LOCK_KEY) !== '0';
+  return localStorage.getItem(PAN_LOCK_KEY) === '1';
 }
 
 function loadPresets() {
