@@ -1891,10 +1891,34 @@ img.preset-thumb {
   align-items: center;
   gap: 6px;
 }
-.tl-zoom .secondary-btn {
+.tl-zoom-fit {
   padding: 4px 10px;
+  font-size: var(--fs-sm);
+  line-height: 1;
+}
+/* − / + at the ends of the slider (CapCut style): quiet, square glyph buttons. */
+.tl-zoom-end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--text-dim);
   font-size: var(--fs-lg);
   line-height: 1;
+  cursor: pointer;
+}
+.tl-zoom-end:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-light);
+}
+/* Slim zoom slider — narrower than the standard range control. */
+.tl-zoom-slider {
+  width: 108px;
 }
 .tl-zoom-label {
   font-size: var(--fs-xs);

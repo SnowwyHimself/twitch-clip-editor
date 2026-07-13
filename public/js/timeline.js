@@ -130,6 +130,8 @@ const tlGrid = document.getElementById('tl-grid');
 const zoomInBtn = document.getElementById('tl-zoom-in');
 const zoomOutBtn = document.getElementById('tl-zoom-out');
 const zoomLabel = document.getElementById('tl-zoom-label');
+const zoomSlider = document.getElementById('tl-zoom-slider');
+const fitBtn = document.getElementById('tl-zoom-fit');
 
 const MOVE_THRESHOLD_PX = 4; // press-and-hold under this = click/select, over = drag
 
@@ -137,14 +139,26 @@ const MOVE_THRESHOLD_PX = 4; // press-and-hold under this = click/select, over =
 // scrolls) so caption blocks / keyframes are easier to grab. The track column
 // is stretched to fitWidth×zoom; pxPerSecond derives from the ruler's own width
 // so everything (ruler, clips, keyframes, playhead) stays in sync.
-const TL_ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
+const TL_ZOOM_MIN = 1;
+const TL_ZOOM_MAX = 10;
+const ZOOM_STEP_FACTOR = 1.6; // per +/- button or key press
 let tlZoom = 1;
+
+const prefersReducedMotion =
+  window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function clampZoom(z) {
+  return Math.min(TL_ZOOM_MAX, Math.max(TL_ZOOM_MIN, Number.isFinite(z) ? z : 1));
+}
 
 function fitTrackWidth() {
   // Visible width available to the track column (body minus the label gutter).
   return Math.max(120, tlBody.clientWidth - 64 - 8);
 }
 
+// Applies the current zoom: sizes the grid, syncs the slider/label/buttons, then
+// RE-LAYOUT (not a full DOM rebuild) so repeated zoom frames stay cheap. The
+// ruler re-renders because its tick density adapts to zoom.
 function applyTimelineZoom() {
   if (tlZoom <= 1) {
     tlGrid.style.width = '';
@@ -152,14 +166,16 @@ function applyTimelineZoom() {
     tlGrid.style.width = `${Math.round(64 + 8 + fitTrackWidth() * tlZoom)}px`;
   }
   zoomLabel.textContent = `${Math.round(tlZoom * 100)}%`;
-  zoomOutBtn.disabled = tlZoom <= TL_ZOOM_STEPS[0];
-  zoomInBtn.disabled = tlZoom >= TL_ZOOM_STEPS[TL_ZOOM_STEPS.length - 1];
-  renderAll();
-}
-
-function nextZoomStep(dir) {
-  const i = TL_ZOOM_STEPS.indexOf(tlZoom);
-  return TL_ZOOM_STEPS[Math.min(TL_ZOOM_STEPS.length - 1, Math.max(0, (i < 0 ? 0 : i) + dir))];
+  if (zoomSlider) {
+    if (document.activeElement !== zoomSlider) zoomSlider.value = tlZoom.toFixed(2);
+    const pct = ((tlZoom - TL_ZOOM_MIN) / (TL_ZOOM_MAX - TL_ZOOM_MIN)) * 100;
+    zoomSlider.style.setProperty('--fill', `${pct.toFixed(1)}%`);
+  }
+  zoomOutBtn.disabled = tlZoom <= TL_ZOOM_MIN + 1e-3;
+  zoomInBtn.disabled = tlZoom >= TL_ZOOM_MAX - 1e-3;
+  if (fitBtn) fitBtn.disabled = tlZoom <= TL_ZOOM_MIN + 1e-3;
+  renderRuler();
+  layoutAll();
 }
 
 // Zoom to `next`, keeping `anchorOutTime` pinned under the same on-screen
@@ -168,7 +184,8 @@ function nextZoomStep(dir) {
 // outTimeToX rescales with the new pxPerSecond after applyTimelineZoom relays
 // out the grid.
 function zoomTo(next, anchorOutTime) {
-  if (next === tlZoom) return;
+  next = clampZoom(next);
+  if (Math.abs(next - tlZoom) < 1e-4) return;
   const anchorContentBefore = ruler.offsetLeft + outTimeToX(anchorOutTime);
   const viewportX = anchorContentBefore - tlBody.scrollLeft;
   tlZoom = next;
@@ -177,8 +194,47 @@ function zoomTo(next, anchorOutTime) {
   tlBody.scrollLeft = anchorContentAfter - viewportX;
 }
 
+// Smooth (~120ms) zoom for discrete triggers — +/- buttons, keys, Fit. Wheel
+// and slider drags call zoomTo directly since they're already continuous.
+let zoomRaf = null;
+let zoomFallback = null;
+function animateZoomTo(target, anchorOutTime) {
+  target = clampZoom(target);
+  if (zoomRaf) cancelAnimationFrame(zoomRaf);
+  if (zoomFallback) clearTimeout(zoomFallback);
+  if (prefersReducedMotion) {
+    zoomTo(target, anchorOutTime);
+    return;
+  }
+  const from = tlZoom;
+  if (Math.abs(target - from) < 1e-4) return;
+  const t0 = performance.now();
+  const tick = (now) => {
+    const p = Math.min(1, (now - t0) / 120);
+    const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+    zoomTo(from + (target - from) * eased, anchorOutTime);
+    zoomRaf = p < 1 ? requestAnimationFrame(tick) : null;
+  };
+  zoomRaf = requestAnimationFrame(tick);
+  // Safety net: if rAF is throttled (e.g. a backgrounded window), still land
+  // exactly on target so zoom never stalls part-way.
+  zoomFallback = setTimeout(() => {
+    if (zoomRaf) {
+      cancelAnimationFrame(zoomRaf);
+      zoomRaf = null;
+    }
+    zoomTo(target, anchorOutTime);
+  }, 160);
+}
+
 function stepZoom(dir) {
-  zoomTo(nextZoomStep(dir), getCurrentOutputTime());
+  animateZoomTo(tlZoom * (dir > 0 ? ZOOM_STEP_FACTOR : 1 / ZOOM_STEP_FACTOR), getCurrentOutputTime());
+}
+
+// Fit the whole project into the viewport (zoom 1) and scroll to the start.
+function fitZoom() {
+  animateZoomTo(TL_ZOOM_MIN, 0);
+  tlBody.scrollLeft = 0;
 }
 
 function trackWidth() {
@@ -216,10 +272,15 @@ function renderRuler() {
   const span = Math.max(sourceDuration(), outputDuration());
   if (span <= 0) return;
 
-  const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
-  const step = steps.find((s) => span / s <= 12) || 600;
+  // Tick density adapts to the current zoom: pick the smallest "nice" step whose
+  // on-screen spacing is at least TARGET_PX, so labels never crowd (zoomed out →
+  // 5s/10s/30s steps; zoomed in → 1s/0.5s).
+  const pps = pxPerSecond();
+  const TARGET_PX = 84;
+  const niceSteps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+  const step = niceSteps.find((s) => s * pps >= TARGET_PX) || niceSteps[niceSteps.length - 1];
 
-  for (let t = 0; t <= span; t += step) {
+  for (let t = 0; t <= span + 1e-6; t += step) {
     const tick = document.createElement('div');
     tick.className = 'tl-tick';
     tick.style.left = `${outTimeToX(t)}px`;
@@ -998,18 +1059,35 @@ export function initTimeline() {
   deleteBtn.addEventListener('click', deleteSelection);
   zoomInBtn.addEventListener('click', () => stepZoom(1));
   zoomOutBtn.addEventListener('click', () => stepZoom(-1));
-  // ⌘/Ctrl + scroll zooms the timeline around the cursor (CapCut-style). Plain
-  // scroll is left alone so the track still pans/scrolls normally.
+  fitBtn.addEventListener('click', fitZoom);
+  // Slider drives zoom continuously around the playhead; double-click fits.
+  zoomSlider.addEventListener('input', () => zoomTo(parseFloat(zoomSlider.value), getCurrentOutputTime()));
+  zoomSlider.addEventListener('dblclick', fitZoom);
+  // ⌘/Ctrl + scroll — and trackpad pinch, which the browser reports as a
+  // ctrlKey wheel — zoom smoothly around the cursor. Plain scroll pans normally.
   tlBody.addEventListener(
     'wheel',
     (e) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
-      const next = nextZoomStep(e.deltaY < 0 ? 1 : -1);
-      zoomTo(next, xToOutTime(e.clientX));
+      const factor = Math.exp(-e.deltaY * 0.002); // continuous, cursor-anchored
+      zoomTo(tlZoom * factor, xToOutTime(e.clientX));
     },
     { passive: false }
   );
+  // +/- (and =) zoom around the playhead, unless the user is typing.
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault();
+      stepZoom(1);
+    } else if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      stepZoom(-1);
+    }
+  });
   applyTimelineZoom();
 
   // Click-away deselect: pressing anywhere on the timeline that isn't a
