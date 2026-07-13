@@ -141,6 +141,7 @@ function buildFormData() {
       .map((tr) => ({
         afterIndex: kept.findIndex((s) => s.id === tr.afterSegmentId),
         duration: tr.duration,
+        color: tr.type === 'black-flash' ? 'black' : 'white',
       }))
       .filter((tr) => tr.afterIndex >= 0 && tr.afterIndex < kept.length - 1);
     if (transitions.length > 0) {

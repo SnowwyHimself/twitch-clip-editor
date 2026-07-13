@@ -280,6 +280,7 @@ function buildTransitions(body) {
     .map((t) => ({
       afterIndex: parseInt(t && t.afterIndex, 10),
       duration: Math.min(2, Math.max(0.1, parseFloat(t && t.duration) || 0.5)),
+      color: t && t.color === 'black' ? 'black' : 'white',
     }))
     .filter((t) => Number.isInteger(t.afterIndex) && t.afterIndex >= 0);
 }
@@ -740,12 +741,12 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
     const trAfter = transitions.find((t) => t.afterIndex === i);
     if (trAfter && i < segments.length - 1) {
       const half = Math.min(trAfter.duration / 2, len / 2);
-      fades.push(`fade=t=out:st=${(len - half).toFixed(3)}:d=${half.toFixed(3)}:color=white`);
+      fades.push(`fade=t=out:st=${(len - half).toFixed(3)}:d=${half.toFixed(3)}:color=${trAfter.color || 'white'}`);
     }
     const trBefore = transitions.find((t) => t.afterIndex === i - 1);
     if (trBefore) {
       const half = Math.min(trBefore.duration / 2, len / 2);
-      fades.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=white`);
+      fades.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=${trBefore.color || 'white'}`);
     }
     const fadeChain = fades.length > 0 ? `,${fades.join(',')}` : '';
 
@@ -804,12 +805,12 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
       const trAfter = (transitions || []).find((t) => t.afterIndex === i);
       if (trAfter && i < segs.length - 1) {
         const half = Math.min(trAfter.duration / 2, len / 2);
-        fades.push(`fade=t=out:st=${(len - half).toFixed(3)}:d=${half.toFixed(3)}:color=white`);
+        fades.push(`fade=t=out:st=${(len - half).toFixed(3)}:d=${half.toFixed(3)}:color=${trAfter.color || 'white'}`);
       }
       const trBefore = (transitions || []).find((t) => t.afterIndex === i - 1);
       if (trBefore) {
         const half = Math.min(trBefore.duration / 2, len / 2);
-        fades.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=white`);
+        fades.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=${trBefore.color || 'white'}`);
       }
       const fadeChain = fades.length ? `,${fades.join(',')}` : '';
       chain += `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS,${NV}${fadeChain}[v${n}];`;

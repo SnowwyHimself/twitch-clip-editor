@@ -1094,14 +1094,20 @@ export function pausePlayback() {
 function updateFlash(outT) {
   if (!flashEl) return;
   let opacity = 0;
+  let color = '#fff';
   for (const tr of state.transitions) {
     const seg = state.segments.find((s) => s.id === tr.afterSegmentId);
     if (!seg) continue;
     const boundary = seg.outStart + (seg.end - seg.start);
     const half = tr.duration / 2;
     if (half <= 0) continue;
-    opacity = Math.max(opacity, 1 - Math.abs(outT - boundary) / half);
+    const o = 1 - Math.abs(outT - boundary) / half;
+    if (o > opacity) {
+      opacity = o;
+      color = tr.type === 'black-flash' ? '#000' : '#fff';
+    }
   }
+  flashEl.style.background = color;
   flashEl.style.opacity = Math.max(0, Math.min(1, opacity)).toFixed(3);
 }
 

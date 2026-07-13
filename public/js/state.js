@@ -416,14 +416,14 @@ let transitionCounter = 0;
 
 // Attaches a white-flash at the boundary after this piece (it must have a
 // following piece). One transition per boundary — re-adding replaces.
-export function addTransitionAfter(segmentId, duration) {
+export function addTransitionAfter(segmentId, duration, type = 'white-flash') {
   const idx = state.segments.findIndex((s) => s.id === segmentId);
   if (idx === -1 || idx === state.segments.length - 1) return null;
   state.transitions = state.transitions.filter((tr) => tr.afterSegmentId !== segmentId);
   const tr = {
     id: `tr-${Date.now()}-${transitionCounter++}`,
     afterSegmentId: segmentId,
-    type: 'white-flash',
+    type: type === 'black-flash' ? 'black-flash' : 'white-flash',
     duration,
   };
   state.transitions.push(tr);

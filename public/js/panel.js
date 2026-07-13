@@ -1009,7 +1009,15 @@ function renderTransitionList() {
   }
 }
 
+let transitionType = 'white-flash';
+
 function wireTransitionControls() {
+  document.querySelectorAll('[data-trans-type]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      transitionType = btn.dataset.transType;
+      document.querySelectorAll('[data-trans-type]').forEach((b) => b.classList.toggle('active', b === btn));
+    });
+  });
   els.transDurationSlider.addEventListener('input', () => {
     els.transDurationValue.textContent = `${parseFloat(els.transDurationSlider.value).toFixed(1)}s`;
   });
@@ -1023,7 +1031,7 @@ function wireTransitionControls() {
       els.transStatus.textContent = 'No touching cut near the playhead (transitions can’t span a black gap).';
       return;
     }
-    addTransitionAfter(seg.id, parseFloat(els.transDurationSlider.value));
+    addTransitionAfter(seg.id, parseFloat(els.transDurationSlider.value), transitionType);
     els.transStatus.textContent = 'Added — the ✦ badge on the cut marks it; click the badge (or ✕ below) to remove.';
   });
 }
