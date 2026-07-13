@@ -268,6 +268,16 @@
           <p class="field-hint">Styling applies to all caption blocks at once. Select a single block on the timeline to fine-tune it in the Text tab.</p>
         </div>
 
+        <div class="field-group">
+          <label class="field-label">Style presets</label>
+          <div id="cap-preset-list" class="preset-list"></div>
+          <div class="preset-save-row">
+            <input id="cap-preset-name" type="text" maxlength="24" placeholder="Name this look…" />
+            <button type="button" id="cap-preset-save-btn" class="secondary-btn">Save</button>
+          </div>
+          <p class="field-hint">Saves the caption look (style, font, color, size, shadow, position, animation) to reuse on any clip.</p>
+        </div>
+
         <div class="field-group hidden" id="transcript-group">
           <label class="field-label">Transcript</label>
           <div id="transcript-list" class="transcript-list"></div>

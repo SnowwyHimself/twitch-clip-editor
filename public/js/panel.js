@@ -205,6 +205,9 @@ function lookupElements() {
     capTimingValue: byId('cap-timing-value'),
     transcriptGroup: byId('transcript-group'),
     transcriptList: byId('transcript-list'),
+    capPresetList: byId('cap-preset-list'),
+    capPresetName: byId('cap-preset-name'),
+    capPresetSaveBtn: byId('cap-preset-save-btn'),
     captionsVisibleToggle: byId('captions-visible-toggle'),
   };
 }
@@ -1107,6 +1110,111 @@ function wireCaptionControls() {
   });
   on('layers', renderTranscript);
   renderTranscript();
+  wireCaptionPresets();
+}
+
+// Pushes state.captionSettings back onto the Captions-tab controls (used after
+// applying a preset, which sets several fields at once).
+function syncCaptionControls() {
+  const s = state.captionSettings;
+  els.capModeButtons().forEach((b) => b.classList.toggle('active', b.dataset.captionMode === s.mode));
+  els.capStyleButtons().forEach((b) => b.classList.toggle('active', b.dataset.capStyle === s.style));
+  if (s.fontId) els.capFontSelect.value = s.fontId;
+  markActiveSwatch(els.capColorPicker, s.color);
+  els.capSizeSlider.value = s.fontSize;
+  els.capSizeValue.textContent = `${s.fontSize}px`;
+  els.capShadowToggle.checked = !!s.dropShadow;
+  els.capYSlider.value = s.yPercent;
+  els.capYValue.textContent = `${s.yPercent}%`;
+}
+
+// --- caption style presets (localStorage, up to 6) ----------------------------------
+const CAPTION_PRESETS_KEY = 'clipEditor.captionPresets.v1';
+
+function loadCaptionPresets() {
+  try {
+    return JSON.parse(localStorage.getItem(CAPTION_PRESETS_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+function saveCaptionPresets(list) {
+  localStorage.setItem(CAPTION_PRESETS_KEY, JSON.stringify(list));
+}
+// The reusable look — the styling slice of captionSettings (not per-clip timing).
+function currentCaptionStyle() {
+  const s = state.captionSettings;
+  return {
+    mode: s.mode,
+    style: s.style,
+    fontId: s.fontId,
+    fontSize: s.fontSize,
+    color: s.color,
+    dropShadow: s.dropShadow,
+    yPercent: s.yPercent,
+    animation: s.animation,
+  };
+}
+function applyCaptionPreset(style) {
+  Object.assign(state.captionSettings, style);
+  syncCaptionControls();
+  applyCaptionStyle(); // restyle any existing caption layers to the preset
+}
+function renderCaptionPresetList() {
+  els.capPresetList.innerHTML = '';
+  const presets = loadCaptionPresets();
+  if (presets.length === 0) {
+    els.capPresetList.innerHTML = '<p class="field-hint">No caption presets yet.</p>';
+    return;
+  }
+  for (const p of presets) {
+    const row = document.createElement('div');
+    row.className = 'preset-row';
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.className = 'preset-apply';
+    name.textContent = p.name;
+    name.title = 'Apply this caption look';
+    name.addEventListener('click', () => applyCaptionPreset(p.style));
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'preset-del';
+    del.textContent = '✕';
+    del.title = 'Delete preset';
+    del.addEventListener('click', async () => {
+      const ok = await confirmDialog({ title: 'Delete caption preset?', itemName: p.name, confirmLabel: 'Delete' });
+      if (!ok) return;
+      saveCaptionPresets(loadCaptionPresets().filter((x) => x.id !== p.id));
+      renderCaptionPresetList();
+    });
+    row.append(name, del);
+    els.capPresetList.appendChild(row);
+  }
+}
+function wireCaptionPresets() {
+  const save = () => {
+    const name = els.capPresetName.value.trim();
+    if (!name) return;
+    const presets = loadCaptionPresets();
+    const existing = presets.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      existing.style = currentCaptionStyle();
+    } else {
+      if (presets.length >= 6) {
+        els.capPresetName.placeholder = 'Max 6 — delete one first';
+        return;
+      }
+      presets.push({ id: `cp-${Date.now()}`, name, style: currentCaptionStyle() });
+    }
+    saveCaptionPresets(presets);
+    els.capPresetName.value = '';
+    renderCaptionPresetList();
+  };
+  els.capPresetSaveBtn.addEventListener('click', save);
+  els.capPresetName.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save();
+  });
+  renderCaptionPresetList();
 }
 
 function clockLabel(sec) {
