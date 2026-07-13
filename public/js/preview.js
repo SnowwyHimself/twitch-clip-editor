@@ -1406,6 +1406,11 @@ function layoutSplitRegion(box, video, srcW, srcH, regionW, regionH, region) {
   video.style.height = `${(srcH * scale).toFixed(2)}px`;
   video.style.left = `${(-winX * scale).toFixed(2)}px`;
   video.style.top = `${(-winY * scale).toFixed(2)}px`;
+  // Mirror: flip each region horizontally. Because the video sits at
+  // left=-winX*scale, a plain scaleX(-1) (flip about the element's centre) shows
+  // exactly the same crop window mirrored — which matches the ffmpeg export,
+  // where hflip runs on the whole source before the identical crop (buildSplitBase).
+  video.style.transform = state.mirror ? 'scaleX(-1)' : '';
   return scale;
 }
 

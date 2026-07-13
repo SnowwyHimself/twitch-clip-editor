@@ -1179,8 +1179,11 @@ function groupCaptionWords(words, maxWords, cleanup) {
     const next = raw[i + 1];
     const linger = CAP_LINGER_BASE + CAP_LINGER_PER_WORD * b.words.length;
     let end = b.start + linger;
-    if (next) end = Math.min(end, next.start); // continuous — no gap to next block
-    end = Math.max(end, b.start + CAP_MIN_BLOCK); // but never a flash-frame
+    end = Math.max(end, b.start + CAP_MIN_BLOCK); // prefer at least a readable beat…
+    // …but NEVER run into the next caption — clamping to next.start last
+    // guarantees only one caption is on screen at a time (no overlap). Fast
+    // speech just means a shorter beat, never two stacked captions.
+    if (next) end = Math.min(end, Math.max(b.start, next.start));
     blocks.push({ start: b.start, end, text: b.text, words: b.words });
   }
   return blocks;
