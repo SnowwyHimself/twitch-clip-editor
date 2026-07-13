@@ -114,6 +114,10 @@ export const state = {
     // Strip trailing , and . from words (keeps ? and !) for cleaner captions.
     punctuationCleanup: true,
     style: 'outline',
+    // D1 styling carried across every caption (see applyCaptionStyle).
+    strokeWidth: null,
+    strokeColor: '#000000',
+    uppercase: false,
     fontId: null, // null -> default font, resolved at generation time
     fontSize: 58,
     color: '#ffffff',
@@ -1158,6 +1162,9 @@ export function applyCaptionStyle() {
       fontSize: s.fontSize,
       color: s.color,
       dropShadow: s.dropShadow,
+      strokeWidth: s.strokeWidth != null ? s.strokeWidth : null,
+      strokeColor: s.strokeColor || '#000000',
+      uppercase: !!s.uppercase,
       yPercent: s.yPercent,
       animation: s.animation || 'none',
     });

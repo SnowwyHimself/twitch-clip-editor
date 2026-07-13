@@ -1359,6 +1359,9 @@ function currentCaptionStyle() {
     maxWords: s.maxWords,
     punctuationCleanup: s.punctuationCleanup,
     style: s.style,
+    strokeWidth: s.strokeWidth,
+    strokeColor: s.strokeColor,
+    uppercase: s.uppercase,
     fontId: s.fontId,
     fontSize: s.fontSize,
     color: s.color,
@@ -1367,40 +1370,80 @@ function currentCaptionStyle() {
     animation: s.animation,
   };
 }
+
+// Built-in caption looks shipped with the app (not deletable). The gallery
+// shows these plus any the user saved, all as visual cards.
+const BUILTIN_CAPTION_STYLES = [
+  { id: 'b-hype', name: 'Hype', style: { style: 'outline', color: '#ffffff', strokeWidth: 18, strokeColor: '#000000', uppercase: true, dropShadow: false, animation: 'bounce' } },
+  { id: 'b-clean', name: 'Clean', style: { style: 'plain', color: '#ffffff', strokeWidth: 0, strokeColor: '#000000', uppercase: false, dropShadow: true, animation: 'fade' } },
+  { id: 'b-pill', name: 'Pill', style: { style: 'box', color: '#ffffff', strokeWidth: 0, strokeColor: '#000000', uppercase: false, dropShadow: false, animation: 'slide' } },
+  { id: 'b-gold', name: 'Gold', style: { style: 'outline', color: '#ffd23f', strokeWidth: 16, strokeColor: '#000000', uppercase: true, dropShadow: false, animation: 'shake' } },
+];
+
+// A small styled sample of a caption look for a gallery card.
+function captionStyleSample(st) {
+  const sample = document.createElement('span');
+  sample.className = 'cap-card-sample';
+  sample.textContent = 'Aa';
+  if (st.style === 'box') {
+    sample.style.background = st.color || '#fff';
+    sample.style.color = '#111';
+    sample.style.padding = '0 5px';
+    sample.style.borderRadius = '4px';
+  } else {
+    sample.style.color = st.color || '#fff';
+    const sw = st.strokeWidth != null ? st.strokeWidth : st.style === 'outline' ? 15 : 0;
+    if (sw > 0) sample.style.webkitTextStroke = `1px ${st.strokeColor || '#000'}`;
+  }
+  if (st.uppercase) sample.style.textTransform = 'uppercase';
+  return sample;
+}
 function applyCaptionPreset(style) {
   Object.assign(state.captionSettings, style);
   syncCaptionControls();
   applyCaptionStyle(); // restyle any existing caption layers to the preset
 }
-function renderCaptionPresetList() {
-  els.capPresetList.innerHTML = '';
-  const presets = loadCaptionPresets();
-  if (presets.length === 0) {
-    els.capPresetList.innerHTML = '<p class="field-hint">No caption presets yet.</p>';
-    return;
-  }
-  for (const p of presets) {
-    const row = document.createElement('div');
-    row.className = 'preset-row';
-    const name = document.createElement('button');
-    name.type = 'button';
-    name.className = 'preset-apply';
-    name.textContent = p.name;
-    name.title = 'Apply this caption look';
-    name.addEventListener('click', () => applyCaptionPreset(p.style));
+function makeCaptionCard(p, { deletable }) {
+  const card = document.createElement('div');
+  card.className = 'cap-card';
+  const apply = document.createElement('button');
+  apply.type = 'button';
+  apply.className = 'cap-card-apply';
+  apply.title = `Apply "${p.name}"`;
+  apply.appendChild(captionStyleSample(p.style));
+  const label = document.createElement('span');
+  label.className = 'cap-card-name';
+  label.textContent = p.name;
+  apply.appendChild(label);
+  apply.addEventListener('click', () => applyCaptionPreset(p.style));
+  card.appendChild(apply);
+  if (deletable) {
     const del = document.createElement('button');
     del.type = 'button';
-    del.className = 'preset-del';
+    del.className = 'cap-card-del';
     del.innerHTML = icon('x', 12);
     del.title = 'Delete preset';
-    del.addEventListener('click', async () => {
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const ok = await confirmDialog({ title: 'Delete caption preset?', itemName: p.name, confirmLabel: 'Delete' });
       if (!ok) return;
       saveCaptionPresets(loadCaptionPresets().filter((x) => x.id !== p.id));
       renderCaptionPresetList();
     });
-    row.append(name, del);
-    els.capPresetList.appendChild(row);
+    card.appendChild(del);
+  }
+  return card;
+}
+
+// Gallery of caption looks: built-in defaults first, then the user's saved
+// presets — all as styled visual cards.
+function renderCaptionPresetList() {
+  els.capPresetList.innerHTML = '';
+  for (const p of BUILTIN_CAPTION_STYLES) {
+    els.capPresetList.appendChild(makeCaptionCard(p, { deletable: false }));
+  }
+  for (const p of loadCaptionPresets()) {
+    els.capPresetList.appendChild(makeCaptionCard(p, { deletable: true }));
   }
 }
 function wireCaptionPresets() {

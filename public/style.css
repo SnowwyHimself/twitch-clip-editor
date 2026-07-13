@@ -2046,6 +2046,64 @@ img.preset-thumb {
   flex-wrap: wrap;
 }
 
+/* D2 caption style gallery: a grid of visual look cards. */
+#cap-preset-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-1);
+}
+.cap-card {
+  position: relative;
+}
+.cap-card-apply {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  height: 52px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.cap-card-apply:hover {
+  border-color: var(--border-light);
+  background: var(--panel-3);
+}
+.cap-card-sample {
+  font-weight: 800;
+  font-size: 17px;
+  line-height: 1;
+}
+.cap-card-name {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.cap-card-del {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--error);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.cap-card:hover .cap-card-del {
+  opacity: 1;
+}
+
 /* D1 text style presets: a compact grid of styled sample thumbnails. */
 .text-style-presets {
   display: grid;
