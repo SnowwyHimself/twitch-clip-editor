@@ -19,6 +19,7 @@ import {
   addAppendedClip,
   selectedAppendedClip,
   removeAppendedClip,
+  syncFullDurationLayers,
   sourceDuration,
   outputDuration,
   setTimelineMode,
@@ -565,6 +566,9 @@ async function boot() {
   wireToolbar();
   wireShortcuts();
   wireProjects();
+  // Keep "apply to whole video" text layers pinned to the project length as
+  // clips are added, trimmed, or deleted.
+  on('segments', syncFullDurationLayers);
   emit('settings');
 
   refreshStartRecent();

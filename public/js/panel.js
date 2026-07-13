@@ -24,6 +24,7 @@ import {
   applyCaptionTiming,
   defaultFontId,
   sourceDuration,
+  outputDuration,
   addTransitionAfter,
   removeTransition,
   addOverlay,
@@ -202,6 +203,7 @@ function lookupElements() {
     dropShadowToggle: byId('drop-shadow-toggle'),
     layerStart: byId('layer-start'),
     layerEnd: byId('layer-end'),
+    layerFullToggle: byId('layer-full-toggle'),
     duplicateBtn: byId('duplicate-layer-btn'),
     deleteBtn: byId('delete-layer-btn'),
     noLayerMsg: byId('panel-text-empty'),
@@ -1450,6 +1452,19 @@ function wireTextControls() {
   els.layerStart.addEventListener('change', commitTime);
   els.layerEnd.addEventListener('change', commitTime);
 
+  // "Apply to whole video": checked pins the layer to [0, outputDuration] and
+  // keeps it there as clips change; unchecked freezes it at the current times
+  // and it becomes a normal layer again.
+  els.layerFullToggle.addEventListener('change', () => {
+    const layer = selectedLayer();
+    if (!layer) return;
+    if (els.layerFullToggle.checked) {
+      updateLayer(layer.id, { fullDuration: true, start: 0, end: outputDuration() });
+    } else {
+      updateLayer(layer.id, { fullDuration: false });
+    }
+  });
+
   els.duplicateBtn.addEventListener('click', () => {
     const layer = selectedLayer();
     if (!layer) return;
@@ -1485,6 +1500,11 @@ function refreshTextPanel() {
   els.dropShadowToggle.checked = layer.dropShadow;
   if (document.activeElement !== els.layerStart) els.layerStart.value = layer.start.toFixed(2);
   if (document.activeElement !== els.layerEnd) els.layerEnd.value = layer.end.toFixed(2);
+  const full = !!layer.fullDuration;
+  els.layerFullToggle.checked = full;
+  // Manual timing is meaningless while pinned to the whole video.
+  els.layerStart.disabled = full;
+  els.layerEnd.disabled = full;
 }
 
 function refreshVideoPanel() {

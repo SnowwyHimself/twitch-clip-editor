@@ -527,6 +527,7 @@ export function addTextLayer(partial = {}, { select = true } = {}) {
     animation: 'none', // caption entrance animation: 'none' | 'fade' | 'slide'
     start: 0,
     end: 3,
+    fullDuration: false, // when true, spans the whole project (see syncFullDurationLayers)
     group: null, // 'caption' for Auto captions layers
     ...partial,
   };
@@ -534,6 +535,25 @@ export function addTextLayer(partial = {}, { select = true } = {}) {
   emit('layers');
   if (select) selectLayer(layer.id);
   return layer;
+}
+
+// Layers flagged fullDuration stay pinned to the whole project [0, outputDuration].
+// Called whenever the timeline changes (clips added/trimmed/deleted) so they
+// track the new length. Emits 'layers' only when something actually moved, so
+// it can safely ride the 'segments' event without looping.
+export function syncFullDurationLayers() {
+  const dur = outputDuration();
+  let changed = false;
+  for (const l of state.layers) {
+    if (!l.fullDuration) continue;
+    if (l.start !== 0 || Math.abs((l.end || 0) - dur) > 1e-4) {
+      l.start = 0;
+      l.end = dur;
+      changed = true;
+    }
+  }
+  if (changed) emit('layers');
+  return changed;
 }
 
 export function updateLayer(id, patch) {
