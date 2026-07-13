@@ -860,9 +860,18 @@ function buildSegmentFilter(segments, hasAudio, transitions, perPiece, canvasW, 
 // pix_fmt (the primary's) so concat — which demands identical link params —
 // accepts pieces from differently-encoded sources. Used only when there ARE
 // appended clips; the plain single-source path above is untouched otherwise.
-function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appended, appendedInputStart) {
+function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appended, appendedInputStart, perPiece) {
   const AFMT = 'aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo';
   const NV = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p`;
+  // concat needs identical fps/pixfmt/sar; composite output gets this suffix.
+  const NORM = `fps=${fps},format=yuv420p,setsar=1`;
+  // Per-piece: replace the letterbox NV with each piece's own reframe/blur/grade
+  // composite (canvas-sized), then normalise for concat.
+  const pieceVideo = (inLabel, settings, idx, fadeChain) => {
+    if (!perPiece) return `${inLabel},${NV}${fadeChain}[v${n}];`;
+    const comp = buildPieceComposite(W, H, settings, `[straw${idx}]`, `st${idx}`);
+    return `${inLabel}[straw${idx}];${comp.chain}${comp.outLabel}${NORM}${fadeChain}[v${n}];`;
+  };
   let chain = '';
   const pairLabels = [];
   let n = 0;
@@ -901,7 +910,12 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
         fades.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=${trBefore.color || 'white'}`);
       }
       const fadeChain = fades.length ? `,${fades.join(',')}` : '';
-      chain += `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS,${NV}${fadeChain}[v${n}];`;
+      chain += pieceVideo(
+        `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS`,
+        seg.settings,
+        n,
+        fadeChain
+      );
       if (hasAudio) chain += `[0:a]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
       pushPair();
       cursor = seg.outStart + len;
@@ -913,7 +927,7 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
     const s = clip.start.toFixed(3);
     const e = clip.end.toFixed(3);
     const len = (clip.end - clip.start).toFixed(3);
-    chain += `[${inIdx}:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS,${NV}[v${n}];`;
+    chain += pieceVideo(`[${inIdx}:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS`, clip.settings, n, '');
     if (hasAudio) {
       if (clip.hasAudio) {
         chain += `[${inIdx}:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
@@ -954,13 +968,12 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   // differ. Otherwise the cheaper global transform (fed the edit-mirror values)
   // already matches. Appended multi-source clips keep the global path for now.
   const perPiece =
-    !hasAppended &&
     !noTrim &&
     !singleRange &&
     !(Array.isArray(keyframes) && keyframes.length >= 1) &&
     !(Array.isArray(faceTrack) && faceTrack.length >= 1) &&
     !split &&
-    pieceSettingsDiffer(segments);
+    pieceSettingsDiffer([...(segments || []), ...(hasAppended ? appended : [])]);
   // -progress pipe:1 streams machine-readable key=value progress lines to
   // stdout (stderr keeps the normal log for error reporting) — parsed by
   // runFfmpegWithProgress so the job status can expose a real percentage.
@@ -1069,7 +1082,8 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
       mediaInfo.height,
       fps,
       appended,
-      appendedInputStart
+      appendedInputStart,
+      perPiece
     );
     segmentPrefix = built.chain;
     sourceVideoLabel = built.videoLabel;
@@ -1398,6 +1412,7 @@ function buildAppendedClips(body, appendedFiles) {
       kind: m.kind === 'file' ? 'file' : 'url',
       start: Number.isFinite(start) ? Math.max(0, start) : 0,
       end: Number.isFinite(end) && end > 0 ? end : null,
+      settings: parsePieceSettings(m.settings), // per-piece reframe/blur/grade (B6)
     };
     if (clip.kind === 'url') {
       clip.url = typeof m.url === 'string' ? m.url : null;
