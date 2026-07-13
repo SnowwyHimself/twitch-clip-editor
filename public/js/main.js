@@ -104,6 +104,7 @@ async function loadFromUrl() {
     return;
   }
   const section = currentSection();
+  hideRestoreBanner(); // a load is underway — never leave the banner up
   setPlaceholder('Fetching clip...');
   loadUrlBtn.disabled = true;
   loadUrlBtn.textContent = 'Loading...';
@@ -119,6 +120,7 @@ async function loadFromUrl() {
 }
 
 function loadFromFile(file) {
+  hideRestoreBanner();
   attachSource(URL.createObjectURL(file), { kind: 'file', file }, { isObjectUrl: true });
 }
 
@@ -362,6 +364,7 @@ function fmtWhen(ts) {
 
 async function handleOpen(id) {
   projectsModal.classList.add('hidden');
+  hideRestoreBanner(); // opening a project is an active session — dismiss now
   const result = await openProject(id);
   if (result.ok) return;
   if (result.reason === 'need-file') {
@@ -482,10 +485,12 @@ async function offerRestore() {
     }
   };
   restoreNoBtn.onclick = hideRestoreBanner;
-  // Auto-dismiss the moment the user starts working — loading/importing a clip,
-  // opening a project, or restoring all attach a source and fire 'source'. The
+  // Auto-dismiss the moment the user starts working. 'source' covers a loaded/
+  // imported clip; 'segments'/'layers' cover opening a project (which may not
+  // emit 'source' until a moved file is re-picked). The load/open entry points
+  // also call hideRestoreBanner() directly, so it never waits on metadata. The
   // banner must never sit on top of an active session.
-  on('source', hideRestoreBanner);
+  for (const ev of ['source', 'segments', 'layers']) on(ev, hideRestoreBanner);
 }
 
 // --- boot ------------------------------------------------------------------------------
