@@ -109,6 +109,8 @@ function buildFormData() {
         }))
       )
     );
+    // Global tracked-shot tightness (constant over the clip).
+    formData.append('faceZoom', String(state.faceTrack.zoom || 1));
   }
 
   // Zoom/position keyframes, timed in OUTPUT seconds (mapped across cuts +

@@ -196,7 +196,7 @@ function buildFaceTrack(body) {
     }
   }
   if (!Array.isArray(raw) || raw.length === 0) return [];
-  return raw
+  const samples = raw
     .map((s) => ({
       t: parseFloat(s && s.t),
       x: Math.max(0, Math.min(1, parseFloat(s && s.x))),
@@ -204,6 +204,11 @@ function buildFaceTrack(body) {
     }))
     .filter((s) => Number.isFinite(s.t) && Number.isFinite(s.x) && s.t >= 0)
     .sort((a, b) => a.t - b.t);
+  // Global tracked-shot tightness rides along on the array (1..3) so it reaches
+  // buildFaceTrackBase without threading a new arg through the whole chain.
+  const z = parseFloat(body.faceZoom);
+  samples.zoom = Number.isFinite(z) ? Math.max(1, Math.min(3, z)) : 1;
+  return samples;
 }
 
 // Facecam split config { ratio, facecam:{cx,cy,zoom}, gameplay:{cx,cy,zoom} }.
@@ -565,9 +570,15 @@ function buildFaceTrackBase(canvasW, canvasH, faceTrack, sourceLabel, speed, mir
   const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 1);
   const [fgSource] = labels;
   const xExpr = buildFaceExpr(faceTrack, 'x');
+  // Tighter shot: crop a canvas/zoom window from the cover-scaled source, then
+  // scale it back up to the canvas. zoom=1 crops canvas-sized (unchanged).
+  const zoom = Math.max(1, faceTrack.zoom || 1);
+  const cw = evenInt(canvasW / zoom);
+  const ch = evenInt(canvasH / zoom);
   const cover = `scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase`;
-  const crop = `crop=${canvasW}:${canvasH}:x='clip((iw-${canvasW})*(${xExpr}),0,iw-${canvasW})':y='(ih-${canvasH})/2'`;
-  return `${stage}${fgSource}${cover},${crop}[c0]`;
+  const crop = `crop=${cw}:${ch}:x='clip((iw-${cw})*(${xExpr}),0,iw-${cw})':y='(ih-${ch})/2'`;
+  const rescale = zoom > 1 ? `,scale=${canvasW}:${canvasH}` : '';
+  return `${stage}${fgSource}${cover},${crop}${rescale}[c0]`;
 }
 
 function evenInt(n) {

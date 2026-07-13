@@ -45,6 +45,7 @@ import {
   keyframeTransformAt,
   clampCropValue,
   setFaceTrackEnabled,
+  setFaceTrackZoom,
   clearFaceTrack,
   restoreFaceTrack,
   faceTrackActive,
@@ -127,6 +128,9 @@ function lookupElements() {
     faceTrackBtn: byId('face-track-btn'),
     facetrackToggleRow: byId('facetrack-toggle-row'),
     facetrackToggle: byId('facetrack-toggle'),
+    facetrackZoomRow: byId('facetrack-zoom-row'),
+    facetrackZoom: byId('facetrack-zoom'),
+    facetrackZoomValue: byId('facetrack-zoom-value'),
     facetrackStatus: byId('facetrack-status'),
     speedSlider: byId('speed-slider'),
     speedValue: byId('speed-value'),
@@ -427,6 +431,10 @@ function wireKeyframes() {
   els.kfPunchBtn.addEventListener('click', punchInAtPlayhead);
   els.faceTrackBtn.addEventListener('click', runFaceTrack);
   els.facetrackToggle.addEventListener('change', () => setFaceTrackEnabled(els.facetrackToggle.checked));
+  els.facetrackZoom.addEventListener('input', () => {
+    setFaceTrackZoom(els.facetrackZoom.value);
+    els.facetrackZoomValue.textContent = `${(state.faceTrack.zoom || 1).toFixed(1)}x`;
+  });
   on('facetrack', renderFaceTrackUI);
   renderFaceTrackUI();
   on('keyframes', renderKeyframeUI);
@@ -507,8 +515,13 @@ function setFaceStatus(text, isError = false) {
 // leaves the status line alone so a just-set outcome/error message survives
 // (renderFaceTrackUI, which also rewrites the status, would clobber it).
 function syncFaceTrackToggle() {
-  els.facetrackToggleRow.classList.toggle('hidden', state.faceTrack.samples.length === 0);
+  const hasSamples = state.faceTrack.samples.length > 0;
+  els.facetrackToggleRow.classList.toggle('hidden', !hasSamples);
   els.facetrackToggle.checked = faceTrackActive();
+  // Tracked-zoom slider shows only while tracking is actually on.
+  els.facetrackZoomRow.classList.toggle('hidden', !faceTrackActive());
+  els.facetrackZoom.value = state.faceTrack.zoom || 1;
+  els.facetrackZoomValue.textContent = `${(state.faceTrack.zoom || 1).toFixed(1)}x`;
 }
 
 // Auto-reframe: user picks a face on the preview, then we scan + follow it.

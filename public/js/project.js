@@ -309,7 +309,7 @@ function applyStateFields(data, overlays, sounds, appendedClips) {
   state.layout = data.layout === 'split' ? 'split' : 'fill';
   if (data.split) state.split = data.split;
   state.keyframes = data.keyframes || [];
-  state.faceTrack = data.faceTrack || { enabled: false, samples: [] };
+  state.faceTrack = data.faceTrack || { enabled: false, zoom: 1, samples: [] };
   state.segments = data.segments || [];
   state.timelineMode = data.timelineMode || 'snap';
   state.transitions = data.transitions || [];

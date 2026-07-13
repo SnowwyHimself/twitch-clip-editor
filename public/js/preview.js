@@ -40,6 +40,7 @@ import {
   clampWrapWidth,
   faceTrackActive,
   faceTrackAt,
+  faceTrackZoom,
 } from './state.js';
 
 const previewArea = document.getElementById('preview-area');
@@ -1276,11 +1277,18 @@ function applyClipTransform() {
   if (faceTrackActive()) {
     const ft = faceTrackAt(fgVideo.currentTime || 0) || { x: 0.5 };
     const posX = Math.max(0, Math.min(100, ft.x * 100));
+    const z = faceTrackZoom();
     fgVideo.style.objectFit = 'cover';
     fgVideo.style.objectPosition = `${posX.toFixed(2)}% 50%`;
-    fgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
+    // Tighter tracked shot: scale up around the face point (which object-position
+    // has placed at posX% / 50% of the frame), so the crop stays face-centred.
+    // Mirrors the export's crop=canvas/zoom window (buildFaceTrackBase).
+    fgVideo.style.transformOrigin = `${posX.toFixed(2)}% 50%`;
+    const flip = state.mirror ? -1 : 1;
+    fgVideo.style.transform = z > 1 ? `scale(${flip * z}, ${z})` : state.mirror ? 'scaleX(-1)' : 'none';
     return;
   }
+  fgVideo.style.transformOrigin = '';
   fgVideo.style.objectFit = '';
   fgVideo.style.objectPosition = '';
   const { zoom, panX, panY } = currentClipTransform();

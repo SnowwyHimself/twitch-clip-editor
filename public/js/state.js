@@ -67,7 +67,7 @@ export const state = {
   // RIGHT only to follow the chosen face, clamped to the source edges (never
   // black bars). samples: [{ t (source s), x (0..1 face centre in source
   // width), z (depth zoom, 1 = none) }], sorted by t.
-  faceTrack: { enabled: false, samples: [] },
+  faceTrack: { enabled: false, zoom: 1, samples: [] },
 
   // The KEPT pieces of the source — source-ordered, non-overlapping in
   // both domains. { id, start, end, outStart }: start/end are the source
@@ -364,7 +364,7 @@ export function resetSegments() {
   state.sel = null;
   state.transitions = [];
   state.keyframes = [];
-  state.faceTrack = { enabled: false, samples: [] };
+  state.faceTrack = { enabled: false, zoom: 1, samples: [] };
   state.audio = { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 };
   state.color = { brightness: 0, contrast: 0, saturation: 0 };
   state.appendedClips = []; // a fresh primary clip starts with no stitched clips
@@ -841,9 +841,11 @@ export function keyframeTransformAt(t) {
 // --- face tracking (auto-reframe) --------------------------------------------
 
 // Turns a scanned face path into the active reframe. samples must be sorted by
-// t; x is the face centre (0..1 of source width), z the depth zoom (default 1).
+// t; x is the face centre (0..1 of source width). Re-scanning keeps the user's
+// chosen tracked-shot zoom.
 export function setFaceTrack(samples) {
-  state.faceTrack = { enabled: true, samples: samples.slice().sort((a, b) => a.t - b.t) };
+  const zoom = state.faceTrack.zoom || 1;
+  state.faceTrack = { enabled: true, zoom, samples: samples.slice().sort((a, b) => a.t - b.t) };
   emit('facetrack');
 }
 
@@ -853,8 +855,20 @@ export function setFaceTrackEnabled(on) {
   emit('facetrack');
 }
 
+// How tight the tracked shot is: 1 = the default fill (widest that keeps the
+// frame full), up to FACE_ZOOM_MAX for a closer crop. Constant over the clip
+// (ffmpeg crop dimensions can't vary per frame), so it's a single setting.
+export const FACE_ZOOM_MAX = 3;
+export function setFaceTrackZoom(z) {
+  state.faceTrack.zoom = Math.max(1, Math.min(FACE_ZOOM_MAX, parseFloat(z) || 1));
+  emit('facetrack');
+}
+export function faceTrackZoom() {
+  return state.faceTrack.zoom || 1;
+}
+
 export function clearFaceTrack() {
-  state.faceTrack = { enabled: false, samples: [] };
+  state.faceTrack = { enabled: false, zoom: 1, samples: [] };
   emit('facetrack');
 }
 
@@ -863,8 +877,8 @@ export function clearFaceTrack() {
 export function restoreFaceTrack(snapshot) {
   state.faceTrack =
     snapshot && Array.isArray(snapshot.samples)
-      ? { enabled: !!snapshot.enabled, samples: snapshot.samples }
-      : { enabled: false, samples: [] };
+      ? { enabled: !!snapshot.enabled, zoom: snapshot.zoom || 1, samples: snapshot.samples }
+      : { enabled: false, zoom: 1, samples: [] };
   emit('facetrack');
 }
 
