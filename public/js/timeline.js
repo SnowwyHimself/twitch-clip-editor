@@ -58,6 +58,7 @@ import {
   updateAppendedClip,
   sourceToOutput,
   outputToSource,
+  setAudio,
   MIN_SEGMENT_SECONDS,
   MIN_LAYER_SECONDS,
 } from './state.js';
@@ -480,6 +481,18 @@ function layoutKeyframeMarkers() {
 
 // --- video track -------------------------------------------------------------
 
+// Keeps the on-piece mute button in sync when the setting changes elsewhere
+// (the Video tab toggle), without rebuilding the whole track on every 'settings'
+// emit (which fires per slider tick).
+function syncSegmentMute() {
+  const btn = videoTrack.querySelector('.tl-seg-mute');
+  if (!btn) return;
+  const muted = !!state.audio.muted;
+  btn.classList.toggle('on', muted);
+  btn.title = muted ? 'Original audio muted — click to unmute' : 'Mute original audio';
+  btn.innerHTML = icon(muted ? 'volume-x' : 'volume-2', 12);
+}
+
 function renderVideoTrack() {
   const duration = sourceDuration();
   videoTrack.innerHTML = '';
@@ -505,6 +518,23 @@ function renderVideoTrack() {
     attachSegmentMoveDrag(el, seg, prev, next);
     attachSegmentEdgeDrag(leftEdge, seg, prev, next, true);
     attachSegmentEdgeDrag(rightEdge, seg, prev, next, false);
+
+    // Mute toggle for the source audio, on the piece itself (mirrors the Video
+    // tab's "Mute original audio"). Global for now; becomes per-piece with B6.
+    // Only on the first piece so a single control governs the shared setting.
+    if (i === 0) {
+      const muteBtn = document.createElement('button');
+      muteBtn.type = 'button';
+      muteBtn.className = 'tl-seg-mute' + (state.audio.muted ? ' on' : '');
+      muteBtn.title = state.audio.muted ? 'Original audio muted — click to unmute' : 'Mute original audio';
+      muteBtn.innerHTML = icon(state.audio.muted ? 'volume-x' : 'volume-2', 12);
+      muteBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+      muteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setAudio({ muted: !state.audio.muted });
+      });
+      el.appendChild(muteBtn);
+    }
 
     segmentEls.set(seg.id, el);
     videoTrack.appendChild(el);
@@ -966,6 +996,7 @@ export function initTimeline() {
   on('settings', () => {
     renderSoundRow();
     renderOverlayRow();
+    syncSegmentMute();
   });
   on('selection', () => {
     renderVideoTrack();
