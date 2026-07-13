@@ -202,6 +202,42 @@ function wireIngestion() {
       if (isValidHttpUrl(urlInput.value.trim()) && !vodDetails.open) loadFromUrl();
     }, 0);
   });
+  // Right-click the field to paste-and-go: read the clipboard, drop it in, and
+  // if it's a URL start loading immediately (Electron grants clipboard read; a
+  // browser may prompt, in which case we just fall through to the native menu).
+  urlInput.addEventListener('contextmenu', (e) => {
+    if (!navigator.clipboard || !navigator.clipboard.readText) return; // native menu
+    e.preventDefault();
+    navigator.clipboard
+      .readText()
+      .then((text) => {
+        const t = (text || '').trim();
+        if (!t) return;
+        urlInput.value = t;
+        if (isValidHttpUrl(t) && !vodDetails.open) loadFromUrl();
+      })
+      .catch(() => {
+        /* permission denied — leave the field as-is */
+      });
+  });
+  // Drag a link straight onto the field.
+  urlInput.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  urlInput.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const dropped = (
+      e.dataTransfer.getData('text/uri-list') ||
+      e.dataTransfer.getData('text/plain') ||
+      ''
+    )
+      .split('\n')[0]
+      .trim();
+    if (!dropped) return;
+    urlInput.value = dropped;
+    if (isValidHttpUrl(dropped) && !vodDetails.open) loadFromUrl();
+  });
   openFileBtn.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => {
     const file = fileInput.files[0];
