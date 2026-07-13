@@ -28,6 +28,8 @@ import {
   resetHistory,
   sourceDuration,
   outputDuration,
+  primaryOutputDuration,
+  appendedAtOutput,
   sourceToOutput,
   outputToSourceClamped,
   pieceAtOutput,
@@ -860,6 +862,44 @@ const EPS = 0.01;
 let logicalPlaying = false;
 let gap = null; // { outT, resumeAt (outStart of the piece after the gap) } | null
 
+// Sequential multi-source: which source URL fg/bg currently hold, and — when
+// the playhead is over an appended clip — that clip + its output offset. Both
+// stay inert (null / primary URL) with no appended clips, so single-source
+// playback is unchanged.
+let loadedPreviewUrl = null;
+let activeAppended = null; // { clip, outStart } | null
+
+// Swap fg/bg to `url` (if not already loaded) and run `after` once it's ready
+// to seek. For the same URL it runs immediately.
+function loadPreviewUrlThen(url, after) {
+  if (loadedPreviewUrl === url) {
+    after();
+    return;
+  }
+  loadedPreviewUrl = url;
+  const onReady = () => {
+    fgVideo.removeEventListener('loadedmetadata', onReady);
+    after();
+  };
+  fgVideo.addEventListener('loadedmetadata', onReady);
+  fgVideo.src = url;
+  bgVideo.src = url;
+}
+
+// Restores the primary source into fg/bg (used when seeking back out of an
+// appended clip). Does not seek — the caller does.
+function ensurePrimaryLoaded() {
+  activeAppended = null;
+  const url = state.source && state.source.previewUrl;
+  if (url && loadedPreviewUrl !== url) {
+    loadedPreviewUrl = url;
+    fgVideo.src = url;
+    bgVideo.src = url;
+    return false; // needs a moment to load
+  }
+  return true;
+}
+
 function setGapVisual(inGap) {
   previewFrame.classList.toggle('in-gap', inGap);
 }
@@ -941,9 +981,7 @@ function boundaryAction(srcT) {
   return { loop: true };
 }
 
-export function seek(srcTime) {
-  gap = null;
-  setGapVisual(false);
+function finishSeek(srcTime) {
   fgVideo.currentTime = srcTime;
   if (typeof bgVideo.fastSeek === 'function') bgVideo.fastSeek(srcTime);
   else bgVideo.currentTime = srcTime;
@@ -956,14 +994,62 @@ export function seek(srcTime) {
   emit('time', { src: srcTime, out: sourceToOutput(srcTime) });
 }
 
-// Seek by output position — lands inside a piece normally; in free mode
-// it can land in a gap, which parks the playhead on black.
+// Primary-source seek (source time). If we'd swapped fg/bg onto an appended
+// clip, bring the primary back first (then seek once it's loaded).
+export function seek(srcTime) {
+  gap = null;
+  setGapVisual(false);
+  const primaryUrl = state.source && state.source.previewUrl;
+  if (primaryUrl && (activeAppended || loadedPreviewUrl !== primaryUrl)) {
+    activeAppended = null;
+    loadPreviewUrlThen(primaryUrl, () => {
+      finishSeek(srcTime);
+      updateAll();
+    });
+    return;
+  }
+  finishSeek(srcTime);
+}
+
+// Positions fg/bg on an appended clip and seeks to a local time within it.
+function seekAppended(item, localT) {
+  gap = null;
+  setGapVisual(false);
+  activeAppended = { clip: item.clip, outStart: item.outStart };
+  const outT = item.outStart + (localT - item.clip.start);
+  loadPreviewUrlThen(item.clip.source.previewUrl, () => {
+    fgVideo.currentTime = localT;
+    if (typeof bgVideo.fastSeek === 'function') bgVideo.fastSeek(localT);
+    else bgVideo.currentTime = localT;
+    if (logicalPlaying && fgVideo.paused) {
+      fgVideo.play().catch(() => {});
+      bgVideo.play().catch(() => {});
+    }
+    updateAll();
+    updateTimeLabel();
+    updateFlash(outT);
+    emit('time', { src: localT, out: outT });
+  });
+}
+
+// Seek by output position — lands inside a primary piece, an appended clip, or
+// (primary free mode) a gap that parks the playhead on black.
 export function seekOutput(outT) {
   const clamped = Math.max(0, Math.min(outT, outputDuration()));
+  const item = state.appendedClips.length ? appendedAtOutput(clamped) : null;
+  if (item) {
+    seekAppended(item, item.clip.start + (clamped - item.outStart));
+    return;
+  }
   const piece = pieceAtOutput(clamped);
   if (piece) {
     seek(piece.start + (clamped - piece.outStart));
     return;
+  }
+  activeAppended = null;
+  if (state.source && loadedPreviewUrl !== state.source.previewUrl) {
+    loadedPreviewUrl = state.source.previewUrl;
+    fgVideo.src = bgVideo.src = state.source.previewUrl;
   }
   fgVideo.pause();
   bgVideo.pause();
@@ -981,6 +1067,11 @@ export function getCurrentTime() {
 }
 
 export function getCurrentOutputTime() {
+  // While an appended clip is loaded, output time is its offset plus how far
+  // into the clip we are (fg holds the appended source, not the primary).
+  if (activeAppended) {
+    return activeAppended.outStart + ((fgVideo.currentTime || 0) - activeAppended.clip.start);
+  }
   if (gap) return gap.outT;
   return sourceToOutput(fgVideo.currentTime || 0);
 }
@@ -1105,6 +1196,8 @@ export function attachSource(srcUrl, sourceMeta, { isObjectUrl }) {
   state.source = { ...sourceMeta, previewUrl: srcUrl, duration: null, width: null, height: null };
   fgVideo.src = srcUrl;
   bgVideo.src = srcUrl;
+  loadedPreviewUrl = srcUrl; // which URL fg/bg currently hold (multi-source)
+  activeAppended = null;
 
   fgVideo.addEventListener(
     'loadedmetadata',
@@ -1534,6 +1627,13 @@ export function initPreview() {
           else seekOutput(0);
         }
       }
+    } else if (logicalPlaying && activeAppended && !fgVideo.seeking) {
+      // Playing an appended clip: when it ends, advance to the next appended
+      // clip, or loop back to the very start of the timeline.
+      if (fgVideo.currentTime >= activeAppended.clip.end - EPS) {
+        const outEnd = activeAppended.outStart + (activeAppended.clip.end - activeAppended.clip.start);
+        seekOutput(outEnd >= outputDuration() - EPS ? 0 : outEnd + EPS);
+      }
     } else if (logicalPlaying && !fgVideo.seeking) {
       // Never stack a second seek onto one still in flight — issuing
       // currentTime writes while the decoder is mid-seek is what makes
@@ -1541,7 +1641,10 @@ export function initPreview() {
       const action = boundaryAction(fgVideo.currentTime);
       if (action) {
         if (action.loop) {
-          seekOutput(0);
+          // With appended clips, the end of the primary flows into the first
+          // stitched clip instead of looping.
+          if (state.appendedClips.length) seekOutput(primaryOutputDuration());
+          else seekOutput(0);
         } else if (action.gapAt !== undefined) {
           enterGap(action.gapAt);
         } else if (action.seekSrc !== undefined) {
