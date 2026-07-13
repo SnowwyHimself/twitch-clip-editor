@@ -16,7 +16,7 @@
 //   speed when building ffmpeg enable times.
 
 export const state = {
-  // { kind: 'url'|'file', url, section, file, previewUrl, duration, width, height }
+  // { kind: 'url'|'file', url, file, previewUrl, duration, width, height }
   source: null,
 
   // Canvas / global video settings. These start neutral (no-op): zoom
@@ -142,7 +142,7 @@ export const state = {
   // sequential multi-source). Each is a trimmed [start,end] range of its OWN
   // source. Kept separate from state.segments (the primary clip's pieces) so
   // every single-source code path stays byte-identical when this is empty.
-  // { id, source: {kind,url,previewUrl,file,name,path,width,height,duration,section}, start, end, duration }
+  // { id, source: {kind,url,previewUrl,file,name,path,width,height,duration}, start, end, duration }
   appendedClips: [],
 
   // Server-provided option lists, loaded once at boot

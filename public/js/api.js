@@ -22,17 +22,11 @@ export async function fetchWhisperStatus() {
   return parseJsonResponse(res, 'Failed to check caption support');
 }
 
-// section: { start, end } in seconds, or null — the VOD timestamp range.
-export async function fetchPreviewSource(url, section) {
-  const body = { url };
-  if (section) {
-    body.sectionStart = section.start;
-    body.sectionEnd = section.end;
-  }
+export async function fetchPreviewSource(url) {
   const res = await fetch('/api/preview-source', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ url }),
   });
   return parseJsonResponse(res, 'Failed to load clip');
 }
@@ -47,10 +41,6 @@ export async function transcribe(source, mode) {
     formData.append('video', source.file);
   } else {
     formData.append('url', source.url);
-    if (source.section) {
-      formData.append('sectionStart', source.section.start);
-      formData.append('sectionEnd', source.section.end);
-    }
   }
   const res = await fetch('/api/transcribe', { method: 'POST', body: formData });
   return (await parseJsonResponse(res, 'Transcription failed')).segments;

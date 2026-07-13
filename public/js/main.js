@@ -1,5 +1,5 @@
 // Boot + top-level wiring: loads server option lists into state, wires the
-// header (paste-URL ingestion, VOD range, file open, keyboard shortcuts)
+// header (paste-URL ingestion, file open, keyboard shortcuts)
 // and the timeline toolbar's add-text / auto-captions buttons, then hands
 // off to the preview/timeline/panel/export modules.
 
@@ -58,9 +58,6 @@ const urlInput = document.getElementById('clip-url');
 const loadUrlBtn = document.getElementById('load-url-btn');
 const openFileBtn = document.getElementById('open-file-btn');
 const fileInput = document.getElementById('clip-file');
-const vodStartInput = document.getElementById('vod-start');
-const vodEndInput = document.getElementById('vod-end');
-const vodDetails = document.getElementById('vod-range');
 const addTextBtn = document.getElementById('tl-add-text');
 const autoCaptionsBtn = document.getElementById('tl-auto-captions');
 const addOverlayBtn = document.getElementById('tl-add-overlay');
@@ -79,22 +76,6 @@ function isValidHttpUrl(value) {
   }
 }
 
-// Accepts "90", "1:30", or "1:02:30" — returns seconds or null.
-function parseTimeInput(value) {
-  const trimmed = (value || '').trim();
-  if (!trimmed) return null;
-  const parts = trimmed.split(':').map((p) => parseFloat(p));
-  if (parts.some((p) => !Number.isFinite(p) || p < 0)) return null;
-  return parts.reduce((total, part) => total * 60 + part, 0);
-}
-
-function currentSection() {
-  const start = parseTimeInput(vodStartInput.value);
-  const end = parseTimeInput(vodEndInput.value);
-  if (start === null || end === null || end <= start) return null;
-  return { start, end };
-}
-
 // --- clip ingestion -----------------------------------------------------------
 
 async function loadFromUrl() {
@@ -103,14 +84,13 @@ async function loadFromUrl() {
     setPlaceholder('Please paste a valid clip URL (starting with http:// or https://).');
     return;
   }
-  const section = currentSection();
   hideRestoreBanner(); // a load is underway — never leave the banner up
   setPlaceholder('Fetching clip...');
   loadUrlBtn.disabled = true;
   loadUrlBtn.textContent = 'Loading...';
   try {
-    const { previewUrl } = await fetchPreviewSource(url, section);
-    attachSource(previewUrl, { kind: 'url', url, section }, { isObjectUrl: false });
+    const { previewUrl } = await fetchPreviewSource(url);
+    attachSource(previewUrl, { kind: 'url', url }, { isObjectUrl: false });
   } catch (err) {
     setPlaceholder(`Couldn't load clip: ${err.message}`);
   } finally {
@@ -142,14 +122,14 @@ function probeMedia(url) {
   });
 }
 
-async function appendClipFromUrl(url, section) {
+async function appendClipFromUrl(url) {
   addClipBtn.disabled = true;
   const label = addClipBtn.textContent;
   addClipBtn.textContent = 'Adding…';
   try {
-    const { previewUrl } = await fetchPreviewSource(url, section);
+    const { previewUrl } = await fetchPreviewSource(url);
     const dims = await probeMedia(previewUrl);
-    addAppendedClip({ kind: 'url', url, section: section || null, previewUrl, ...dims });
+    addAppendedClip({ kind: 'url', url, previewUrl, ...dims });
   } catch (err) {
     setPlaceholder(`Couldn't add clip: ${err.message}`);
   } finally {
@@ -176,7 +156,7 @@ async function addClip() {
   }
   const url = urlInput.value.trim();
   if (isValidHttpUrl(url)) {
-    await appendClipFromUrl(url, currentSection());
+    await appendClipFromUrl(url);
     urlInput.value = '';
   } else {
     appendClipFileInput.click();
@@ -199,7 +179,7 @@ function wireIngestion() {
   // explicit user gesture is what triggers the download.
   urlInput.addEventListener('paste', () => {
     setTimeout(() => {
-      if (isValidHttpUrl(urlInput.value.trim()) && !vodDetails.open) loadFromUrl();
+      if (isValidHttpUrl(urlInput.value.trim())) loadFromUrl();
     }, 0);
   });
   // Right-click the field to paste-and-go: read the clipboard, drop it in, and
@@ -214,7 +194,7 @@ function wireIngestion() {
         const t = (text || '').trim();
         if (!t) return;
         urlInput.value = t;
-        if (isValidHttpUrl(t) && !vodDetails.open) loadFromUrl();
+        if (isValidHttpUrl(t)) loadFromUrl();
       })
       .catch(() => {
         /* permission denied — leave the field as-is */
@@ -236,7 +216,7 @@ function wireIngestion() {
       .trim();
     if (!dropped) return;
     urlInput.value = dropped;
-    if (isValidHttpUrl(dropped) && !vodDetails.open) loadFromUrl();
+    if (isValidHttpUrl(dropped)) loadFromUrl();
   });
   openFileBtn.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => {

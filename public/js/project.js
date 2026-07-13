@@ -43,7 +43,6 @@ function serialize() {
       ? {
           kind: src.kind,
           url: src.url || null,
-          section: src.section || null,
           name: src.name || (src.file && src.file.name) || null,
           path: src.path || (src.file && src.file.path) || null,
           width: src.width || null,
@@ -82,7 +81,6 @@ function serialize() {
       source: {
         kind: c.source.kind,
         url: c.source.url || null,
-        section: c.source.section || null,
         name: c.source.name || null,
         width: c.source.width || null,
         height: c.source.height || null,
@@ -210,9 +208,9 @@ async function attachProjectSource(data) {
   if (!src) return { ok: false, reason: 'no-source' };
   if (src.kind === 'url' && src.url) {
     setPlaceholder('Re-loading clip…');
-    const { previewUrl } = await fetchPreviewSource(src.url, src.section || undefined);
+    const { previewUrl } = await fetchPreviewSource(src.url);
     const ready = waitForSource();
-    attachSource(previewUrl, { kind: 'url', url: src.url, section: src.section }, { isObjectUrl: false });
+    attachSource(previewUrl, { kind: 'url', url: src.url }, { isObjectUrl: false });
     await ready;
     return { ok: true };
   }
@@ -261,7 +259,7 @@ async function restoreAppendedClips(projectId, items) {
     let file = null;
     try {
       if (s.kind === 'url' && s.url) {
-        ({ previewUrl } = await fetchPreviewSource(s.url, s.section || undefined));
+        ({ previewUrl } = await fetchPreviewSource(s.url));
       } else if (s.mediaId) {
         const blob = await fetch(`/api/project/${projectId}/media/${s.mediaId}`).then((r) => r.blob());
         file = new File([blob], s.name || s.mediaId, { type: blob.type });
@@ -279,7 +277,6 @@ async function restoreAppendedClips(projectId, items) {
       source: {
         kind: s.kind,
         url: s.url || null,
-        section: s.section || null,
         name: s.name || null,
         width: s.width || null,
         height: s.height || null,

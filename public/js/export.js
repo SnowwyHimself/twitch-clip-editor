@@ -211,7 +211,6 @@ function buildFormData() {
     const entry = { kind: s.kind, start: Number((clip.start || 0).toFixed(3)), end: Number((clip.end || 0).toFixed(3)) };
     if (s.kind === 'url') {
       entry.url = s.url;
-      if (s.section) entry.section = s.section;
     } else {
       formData.append('appendedVideo', s.file);
       entry.hasFile = true;
@@ -224,10 +223,6 @@ function buildFormData() {
   if (state.source.kind === 'url') {
     endpoint = '/api/process-url';
     formData.append('url', state.source.url);
-    if (state.source.section) {
-      formData.append('sectionStart', state.source.section.start);
-      formData.append('sectionEnd', state.source.section.end);
-    }
   } else {
     endpoint = '/api/process-upload';
     formData.append('video', state.source.file);

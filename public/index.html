@@ -19,19 +19,7 @@
       <input id="project-file-input" type="file" accept="video/*" hidden />
     </div>
     <div class="source-input">
-      <input id="clip-url" type="text" placeholder="Paste a Twitch clip or VOD URL — it loads straight into the timeline" />
-      <details id="vod-range" class="vod-range">
-        <summary title="Only needed for full VODs — grabs just this time range">VOD range</summary>
-        <div class="vod-range-fields">
-          <p class="vod-range-hint">Only needed for a full VOD — grabs just this range.</p>
-          <label class="vod-field">Start
-            <input id="vod-start" type="text" placeholder="e.g. 1:02:30" />
-          </label>
-          <label class="vod-field">End
-            <input id="vod-end" type="text" placeholder="e.g. 1:03:15" />
-          </label>
-        </div>
-      </details>
+      <input id="clip-url" type="text" placeholder="Paste a Twitch clip link — it loads straight into the timeline" />
       <button type="button" id="load-url-btn" class="secondary-btn">Load</button>
       <button type="button" id="open-file-btn" class="secondary-btn">Open file</button>
       <input id="clip-file" type="file" accept="video/*" hidden />

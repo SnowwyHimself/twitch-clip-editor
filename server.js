@@ -1311,7 +1311,6 @@ function buildAppendedClips(body, appendedFiles) {
     };
     if (clip.kind === 'url') {
       clip.url = typeof m.url === 'string' ? m.url : null;
-      clip.section = m.section && Number.isFinite(parseFloat(m.section.start)) ? m.section : null;
     } else {
       const f = files[fileCursor++];
       clip.filePath = f ? f.path : null;
@@ -1371,24 +1370,13 @@ function findFileWithPrefix(dir, prefix) {
   return match ? path.join(dir, match) : null;
 }
 
-// section ({ start, end } in seconds, or null) narrows a VOD download to
-// just that time range instead of pulling a whole multi-hour broadcast —
-// yt-dlp's --download-sections does the range fetch, and
-// --force-keyframes-at-cuts re-encodes at the boundaries so the cut is
-// frame-accurate rather than snapping to the nearest (possibly seconds-
-// away) keyframe.
-function ytDlpArgs(url, section, outputTemplate) {
-  const args = ['-o', outputTemplate, '--no-playlist'];
-  if (section) {
-    args.push('--download-sections', `*${section.start}-${section.end}`, '--force-keyframes-at-cuts');
-  }
-  args.push(url);
-  return args;
+function ytDlpArgs(url, outputTemplate) {
+  return ['-o', outputTemplate, '--no-playlist', url];
 }
 
-async function downloadWithYtDlp(url, section, jobId) {
+async function downloadWithYtDlp(url, jobId) {
   const outputTemplate = path.join(DOWNLOADS_DIR, `${jobId}.%(ext)s`);
-  await runCommand(YTDLP_BIN, ytDlpArgs(url, section, outputTemplate));
+  await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
   const filePath = findFileWithPrefix(DOWNLOADS_DIR, jobId);
   if (!filePath) {
     throw new Error('yt-dlp reported success but no downloaded file was found');
@@ -1396,38 +1384,24 @@ async function downloadWithYtDlp(url, section, jobId) {
   return filePath;
 }
 
-// The section is part of the cache key — the same VOD URL with two
-// different timestamp ranges is two different downloads.
-function previewCacheKey(url, section) {
-  const keySource = section ? `${url}|${section.start}-${section.end}` : url;
-  return crypto.createHash('sha1').update(keySource).digest('hex');
+function previewCacheKey(url) {
+  return crypto.createHash('sha1').update(url).digest('hex');
 }
 
 // Downloads a clip purely for the live preview, reusing a prior download of
 // the exact same URL if one's already cached (see PREVIEW_CACHE_DIR above).
-async function fetchPreviewSource(url, section) {
-  const cacheKey = previewCacheKey(url, section);
+async function fetchPreviewSource(url) {
+  const cacheKey = previewCacheKey(url);
   let filePath = findFileWithPrefix(PREVIEW_CACHE_DIR, cacheKey);
   if (!filePath) {
     const outputTemplate = path.join(PREVIEW_CACHE_DIR, `${cacheKey}.%(ext)s`);
-    await runCommand(YTDLP_BIN, ytDlpArgs(url, section, outputTemplate));
+    await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
     filePath = findFileWithPrefix(PREVIEW_CACHE_DIR, cacheKey);
     if (!filePath) {
       throw new Error('yt-dlp reported success but no downloaded file was found');
     }
   }
   return filePath;
-}
-
-// Optional VOD timestamp range riding along with a URL — both bounds in
-// seconds (the frontend converts hh:mm:ss input to seconds before
-// sending). Only a fully-specified, positive-length range counts;
-// anything else means "whole clip", never a half-open guess.
-function buildSection(body) {
-  const start = parseFloat(body.sectionStart);
-  const end = parseFloat(body.sectionEnd);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) return null;
-  return { start, end };
 }
 
 // Resolves each appended clip to a local file path + probed info, so it can be
@@ -1439,7 +1413,7 @@ async function resolveAppendedClips(appendedClips) {
   for (const clip of appendedClips || []) {
     try {
       let filePath = clip.filePath;
-      if (clip.kind === 'url' && clip.url) filePath = await fetchPreviewSource(clip.url, clip.section || undefined);
+      if (clip.kind === 'url' && clip.url) filePath = await fetchPreviewSource(clip.url);
       if (!filePath || !fs.existsSync(filePath)) continue;
       const info = await probeSource(filePath);
       const start = Math.max(0, Math.min(clip.start || 0, info.duration || 0));
@@ -1507,14 +1481,13 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts) {
+async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts) {
   try {
     setJob(jobId, { status: 'downloading' });
-    // If the user already fetched a live preview for this exact URL (and
-    // VOD section, if any), reuse that download instead of running yt-dlp
-    // a second time.
-    const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
-    const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
+    // If the user already fetched a live preview for this exact URL, reuse that
+    // download instead of running yt-dlp a second time.
+    const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url));
+    const inputPath = cachedPath || (await downloadWithYtDlp(url, jobId));
     await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -1565,7 +1538,7 @@ app.post('/api/preview-source', async (req, res) => {
     return res.status(400).json({ error: 'Please enter a valid clip URL (starting with http:// or https://)' });
   }
   try {
-    const filePath = await fetchPreviewSource(trimmedUrl, buildSection(req.body || {}));
+    const filePath = await fetchPreviewSource(trimmedUrl);
     res.json({ previewUrl: `/preview-cache/${path.basename(filePath)}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1635,7 +1608,6 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
   downloadAndProcess(
     jobId,
     trimmedUrl,
-    buildSection(req.body || {}),
     normalizeAspectRatio(req.body.aspectRatio),
     clampZoom(zoom),
     clampBlur(blur),
@@ -1717,7 +1689,7 @@ app.post('/api/transcribe', (req, res, next) => { req.jobId = crypto.randomUUID(
       if (!isValidHttpUrl(trimmedUrl)) {
         return res.status(400).json({ error: 'Provide a video file or a valid clip URL to transcribe' });
       }
-      inputPath = await fetchPreviewSource(trimmedUrl, buildSection(req.body || {}));
+      inputPath = await fetchPreviewSource(trimmedUrl);
     }
     const segments = await transcribeSource(inputPath, {
       ffmpegBin: FFMPEG_BIN,

@@ -4,8 +4,8 @@ A timeline-based editor for turning Twitch clips into TikTok/Reels/Shorts
 posts — CapCut-style layout (preview center, properties panel right,
 timeline bottom), scoped specifically to the paste-a-clip-link workflow:
 
-- **Paste a Twitch clip URL (or a VOD URL + time range) and it loads
-  straight into the timeline** — no manual download/import step
+- **Paste a Twitch clip URL and it loads straight into the timeline** — no
+  manual download/import step
 - **Trim/split/cut** on the video track; preview playback and the export
   both skip cut segments
 - **Multiple text layers**, each with its own font/color/style/shadow and
@@ -104,10 +104,7 @@ electron-builder's bundled NSIS installer tool is Intel-only.
 ## Usage
 
 1. **Load a clip**: paste a Twitch clip URL into the top bar — it starts
-   loading the moment you paste (or press Enter / click **Load**). For a
-   full VOD, open **VOD range** next to the field first and enter a
-   start/end timestamp (`1:02:30` style) so only that slice is fetched
-   (via yt-dlp's `--download-sections`, with frame-accurate cut points).
+   loading the moment you paste (or press Enter / click **Load**).
    **Open file** loads a video already on disk instead. Whatever gets
    fetched for a URL is cached and reused by the export, never downloaded
    twice.
@@ -253,10 +250,9 @@ not by this CSS preview.
 uses `URL.createObjectURL` on the local file directly, no network
 involved. A pasted URL has no local file to point a `<video>` at, so
 loading it hits `POST /api/preview-source`, which downloads the clip with
-yt-dlp into `preview-cache/` (keyed by a hash of the URL plus the VOD
-range, if any — so re-loading, or loading then exporting, the same URL
-never re-downloads it) and returns a `/preview-cache/...` URL the
-`<video>` elements can load directly.
+yt-dlp into `preview-cache/` (keyed by a hash of the URL — so re-loading,
+or loading then exporting, the same URL never re-downloads it) and returns
+a `/preview-cache/...` URL the `<video>` elements can load directly.
 
 ## How the conversion works
 

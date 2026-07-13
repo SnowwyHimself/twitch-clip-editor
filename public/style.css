@@ -244,7 +244,6 @@ body {
 .icon-text-btn,
 .preview-play-btn,
 .emoji-picker-btn,
-.vod-range summary,
 .font-select,
 select,
 input[type="text"] {
@@ -289,7 +288,6 @@ input[type="text"] {
     transform: none;
   }
 }
-.vod-range-fields,
 .emoji-panel,
 .export-card,
 .confirm-card {
@@ -323,8 +321,7 @@ input[type="text"] {
 
 /* ===== Depth & surfaces ===== */
 /* Popovers get a lighter top edge (light from above). */
-.emoji-panel,
-.vod-range-fields {
+.emoji-panel {
   border-top-color: var(--border-light);
 }
 /* Timeline pieces read as physical chips (inner top highlight). Selected
@@ -494,71 +491,6 @@ input[type="text"] {
 .source-input input[type="text"] {
   flex: 1;
   min-width: 0;
-}
-
-.vod-range {
-  position: relative;
-  font-size: var(--fs-sm);
-  color: var(--text-dim);
-}
-
-.vod-range summary {
-  cursor: pointer;
-  white-space: nowrap;
-  list-style: none;
-  padding: 6px 8px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-}
-
-.vod-range[open] summary {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-.vod-range-fields {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  width: 240px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-}
-
-.vod-range-hint {
-  margin: 0;
-  font-size: var(--fs-xs);
-  line-height: 1.4;
-  color: var(--text-dim);
-}
-
-.vod-field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Overrides the topbar's .source-input input rule (flex:1/min-width:0),
-   which otherwise squeezes these; give them the full popover width and a
-   readable size so the typed time is never clipped. */
-.vod-range-fields input[type="text"] {
-  flex: none;
-  width: 100%;
-  padding: 9px 11px;
-  font-size: var(--fs-md);
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
 }
 
 .workspace {
