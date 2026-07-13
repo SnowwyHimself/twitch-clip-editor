@@ -1369,7 +1369,15 @@ function wireTextControls() {
     els.emojiPanel.classList.toggle('hidden');
   });
   document.addEventListener('click', (e) => {
-    if (!els.emojiPanel.classList.contains('hidden') && !els.emojiPanel.contains(e.target) && e.target !== els.emojiBtn) {
+    // Use contains(): since the icon swap the button holds an <svg>, so a click
+    // lands on the SVG child, not the button itself. An identity check on
+    // e.target then treated the button's own click as "outside" and closed the
+    // panel on the same bubbling event — so it never appeared to open.
+    if (
+      !els.emojiPanel.classList.contains('hidden') &&
+      !els.emojiPanel.contains(e.target) &&
+      !els.emojiBtn.contains(e.target)
+    ) {
       els.emojiPanel.classList.add('hidden');
     }
   });

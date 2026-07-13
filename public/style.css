@@ -1580,10 +1580,15 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  color: var(--text-dim);
   font-size: var(--fs-md);
   line-height: 1;
   padding: 4px 7px;
   cursor: pointer;
+}
+.emoji-picker-btn:hover {
+  color: var(--text);
+  border-color: var(--border-light);
 }
 
 .emoji-picker-btn:hover {
