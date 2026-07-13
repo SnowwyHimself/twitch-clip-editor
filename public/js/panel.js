@@ -887,7 +887,7 @@ function addSoundFromFile(file, label, url) {
     'loadedmetadata',
     () => {
       const dur = probe.duration || 1;
-      updateSound(sound.id, { duration: dur, end: sound.start + dur });
+      updateSound(sound.id, { duration: dur, end: sound.start + dur }, { history: false });
     },
     { once: true }
   );

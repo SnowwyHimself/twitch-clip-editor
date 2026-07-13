@@ -612,8 +612,16 @@ export function setColor(patch) {
 }
 
 // --- sounds -----------------------------------------------------------------------
-// Sounds/overlays hold File objects, so they stay OUT of undo history and
-// ride the 'settings' event (same as when each was a single item).
+// Sounds/overlays are undoable too, but their File objects can't be JSON-
+// serialized into a history snapshot. So the snapshot stores everything EXCEPT
+// the file, and this registry keeps the File alive by id; restoreSnapshot
+// re-links it. The registry is only ever added to (a deleted-then-undone item
+// gets its file back), so it's effectively a per-session file cache.
+const mediaFiles = new Map();
+function linkMediaFile(item) {
+  if (item && item.id && item.file instanceof File) mediaFiles.set(item.id, item.file);
+  return item;
+}
 
 let soundCounter = 0;
 
@@ -635,16 +643,22 @@ export function addSound(partial = {}, { select: doSelect = true } = {}) {
     ...partial,
   };
   state.sounds.push(sound);
+  linkMediaFile(sound);
   emit('settings');
+  emit('media');
   if (doSelect) selectSound(sound.id);
   return sound;
 }
 
-export function updateSound(id, patch) {
+export function updateSound(id, patch, { history = true } = {}) {
   const s = state.sounds.find((x) => x.id === id);
   if (!s) return;
   Object.assign(s, patch);
+  linkMediaFile(s);
   emit('settings');
+  // System-driven corrections (e.g. filling in duration once metadata loads)
+  // pass history:false so they don't become their own undo step.
+  if (history) emit('media-adjust');
 }
 
 export function removeSound(id) {
@@ -653,6 +667,7 @@ export function removeSound(id) {
   state.sounds.splice(i, 1);
   if (isSelected('sound', id)) clearSelection();
   emit('settings');
+  emit('media');
 }
 
 // Split at a SOURCE time — the right half continues the audio (its offset
@@ -669,7 +684,9 @@ export function splitSoundAt(id, srcTime) {
   };
   s.end = srcTime;
   state.sounds.splice(state.sounds.indexOf(s) + 1, 0, right);
+  linkMediaFile(right);
   emit('settings');
+  emit('media');
   return right;
 }
 
@@ -698,7 +715,9 @@ export function addOverlay(partial = {}, { select: doSelect = true } = {}) {
     ...partial,
   };
   state.overlays.push(o);
+  linkMediaFile(o);
   emit('settings');
+  emit('media');
   if (doSelect) selectOverlay(o.id);
   return o;
 }
@@ -707,7 +726,9 @@ export function updateOverlay(id, patch) {
   const o = state.overlays.find((x) => x.id === id);
   if (!o) return;
   Object.assign(o, patch);
+  linkMediaFile(o);
   emit('settings');
+  emit('media-adjust');
 }
 
 // Clamps one crop edge (0–100%) so the two opposite edges still leave a sliver
@@ -727,6 +748,7 @@ export function removeOverlay(id) {
   state.overlays.splice(i, 1);
   if (isSelected('overlay', id)) clearSelection();
   emit('settings');
+  emit('media');
 }
 
 export function splitOverlayAt(id, srcTime) {
@@ -742,7 +764,9 @@ export function splitOverlayAt(id, srcTime) {
   };
   o.end = srcTime;
   state.overlays.splice(state.overlays.indexOf(o) + 1, 0, right);
+  linkMediaFile(right);
   emit('settings');
+  emit('media');
   return right;
 }
 
@@ -914,7 +938,11 @@ export function defaultFontId() {
 // through the 'segments'/'layers' events; recording is debounced so a
 // continuous drag or a typing burst collapses into one history entry.
 
-const HISTORY_EVENTS = new Set(['segments', 'layers', 'keyframes']);
+const HISTORY_EVENTS = new Set(['segments', 'layers', 'keyframes', 'media', 'media-adjust']);
+// Structural edits (splits, deletes, adds) each deserve their own step, so
+// they record on the next tick; continuous edits (typing, dragging a slider)
+// debounce into one step per pause.
+const IMMEDIATE_HISTORY = new Set(['segments', 'media']);
 const HISTORY_LIMIT = 100;
 const HISTORY_DEBOUNCE_MS = 350;
 
@@ -923,6 +951,12 @@ let historyIndex = -1;
 let restoring = false;
 let recordTimer = null;
 
+// Sounds/overlays are snapshot with their File stripped (not serializable);
+// mediaFiles re-links it on restore.
+function stripFile(item) {
+  const { file, ...rest } = item;
+  return rest;
+}
 function historySnapshot() {
   return JSON.stringify({
     segments: state.segments,
@@ -930,6 +964,8 @@ function historySnapshot() {
     transitions: state.transitions,
     layers: state.layers,
     keyframes: state.keyframes,
+    sounds: state.sounds.map(stripFile),
+    overlays: state.overlays.map(stripFile),
   });
 }
 
@@ -940,7 +976,7 @@ function historySnapshot() {
 function scheduleHistoryRecord(event) {
   if (restoring) return;
   clearTimeout(recordTimer);
-  const delay = event === 'segments' ? 0 : HISTORY_DEBOUNCE_MS;
+  const delay = IMMEDIATE_HISTORY.has(event) ? 0 : HISTORY_DEBOUNCE_MS;
   recordTimer = setTimeout(() => {
     const snap = historySnapshot();
     if (history[historyIndex] === snap) return;
@@ -961,11 +997,17 @@ function restoreSnapshot(snap) {
     state.transitions = data.transitions;
     state.layers = data.layers;
     state.keyframes = data.keyframes || [];
+    // Re-link each sound/overlay's File from the registry (stripped from the
+    // snapshot). A restored deletion thus comes back fully wired for export.
+    const relink = (item) => ({ ...item, file: mediaFiles.get(item.id) || null });
+    state.sounds = (data.sounds || []).map(relink);
+    state.overlays = (data.overlays || []).map(relink);
     state.sel = null;
     emit('selection');
     emit('segments');
     emit('layers');
     emit('keyframes');
+    emit('settings'); // re-render sounds/overlays
   } finally {
     restoring = false;
   }
