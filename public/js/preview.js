@@ -1246,7 +1246,11 @@ export function attachSource(srcUrl, sourceMeta, { isObjectUrl }) {
 }
 
 export function setPlaceholder(text) {
-  placeholder.textContent = text;
+  // Write status/error text into the title line only, so the empty-state icon,
+  // hint, and recent-projects list keep their structure.
+  const titleEl = placeholder.querySelector('#preview-empty-title');
+  if (titleEl) titleEl.textContent = text;
+  else placeholder.textContent = text;
 }
 
 // --- global refresh -------------------------------------------------------------

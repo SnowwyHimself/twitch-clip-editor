@@ -151,6 +151,26 @@ body {
   display: none !important;
 }
 
+/* ===== Scrollbars: thin, quiet, rounded — brighten on hover ===== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-light);
+}
+
 /* ===== Icons (inline Lucide SVGs, currentColor) ===== */
 .icon {
   display: block;
@@ -754,12 +774,36 @@ input[type="text"] {
   display: none;
   position: absolute;
   inset: 0;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
   padding: var(--space-4);
   font-size: var(--fs-md);
   line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.preview-empty-icon {
+  display: block;
+  color: var(--text-dim);
+  opacity: 0.4;
+  margin-bottom: var(--space-3);
+}
+
+.preview-empty-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.preview-empty-hint {
+  margin: var(--space-1) 0 0;
+  max-width: 32ch;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
   color: var(--text-dim);
 }
 
@@ -1196,6 +1240,23 @@ textarea:focus,
 .font-select:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
+}
+
+/* Keyboard focus ring for buttons/tabs/swatches — only on :focus-visible so a
+   plain mouse click stays clean. */
+.primary-btn:focus-visible,
+.secondary-btn:focus-visible,
+.danger-btn:focus-visible,
+.icon-btn:focus-visible,
+.icon-text-btn:focus-visible,
+.panel-tab:focus-visible,
+.aspect-btn:focus-visible,
+.layout-btn:focus-visible,
+.preview-play-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
 }
 
 textarea {
@@ -1279,7 +1340,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
-.primary-btn:hover {
+.primary-btn:hover:not(:disabled) {
   background: var(--accent-hover);
   box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
@@ -1287,9 +1348,17 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   filter: brightness(0.9); /* pressed reads darker (with the :active scale) */
 }
 
-.primary-btn:disabled {
-  opacity: 0.5;
+/* Unified disabled treatment: dim, no pointer affordance, and no hover/active
+   feedback (hover rules above are all gated on :not(:disabled)). */
+.primary-btn:disabled,
+.secondary-btn:disabled,
+.danger-btn:disabled,
+.icon-btn:disabled,
+.icon-text-btn:disabled,
+.kf-track-btn:disabled {
+  opacity: 0.45;
   cursor: default;
+  box-shadow: none;
 }
 
 .secondary-btn {
@@ -1326,10 +1395,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   width: 100%;
   margin-top: var(--space-2);
 }
-.kf-track-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
 .link-btn {
   background: none;
   border: none;
@@ -1343,14 +1408,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   text-decoration: underline;
 }
 
-.secondary-btn:hover {
+.secondary-btn:hover:not(:disabled) {
   background: var(--panel-3); /* raise one step, never changes size */
   border-color: var(--border-light);
-}
-
-.secondary-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 .danger-btn {
@@ -1364,7 +1424,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   cursor: pointer;
 }
 
-.danger-btn:hover {
+.danger-btn:hover:not(:disabled) {
   background: rgba(255, 92, 92, 0.1);
 }
 
@@ -1776,6 +1836,32 @@ img.preset-thumb {
   width: 1px;
   height: 20px;
   background: var(--border);
+}
+
+/* Segmented toolbar groups (undo/redo, split/delete): buttons share one
+   outline, collapse the touching edge into a single internal divider, and
+   round only the outer corners. */
+.btn-group {
+  display: inline-flex;
+  align-items: stretch;
+}
+.btn-group .secondary-btn {
+  border-radius: 0;
+  border-right-width: 0;
+}
+.btn-group .secondary-btn:first-child {
+  border-top-left-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+}
+.btn-group .secondary-btn:last-child {
+  border-right-width: 1px;
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+}
+/* Keep the focus ring above the neighbour's border. */
+.btn-group .secondary-btn:focus-visible {
+  position: relative;
+  z-index: 1;
 }
 
 .snap-toggle {
@@ -2326,22 +2412,58 @@ img.preset-thumb {
 
 .export-bar {
   height: 8px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-full);
   background: var(--bg);
   overflow: hidden;
   margin-bottom: 14px;
 }
 
 .export-bar-fill {
+  position: relative;
   height: 100%;
   width: 0;
   background: var(--accent);
-  border-radius: var(--radius-sm);
-  transition: width 0.3s;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  transition: width 0.3s var(--ease);
+}
+
+/* Subtle sheen travelling along the fill while the export runs. */
+.export-bar-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: barSheen 1.4s var(--ease) infinite;
+}
+
+@keyframes barSheen {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .export-bar-fill.error {
   background: var(--error);
+}
+
+/* Sheen only reads as "working" — drop it when finished or errored. */
+.export-bar-fill.error::after,
+.export-bar-fill.done::after {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export-bar-fill::after {
+    animation: none;
+    display: none;
+  }
 }
 
 .export-result video {

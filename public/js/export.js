@@ -246,7 +246,7 @@ function showProgress() {
   progressPane.classList.remove('hidden');
   modalResult.classList.add('hidden');
   modalBarFill.style.width = '0%';
-  modalBarFill.classList.remove('error');
+  modalBarFill.classList.remove('error', 'done');
   modalStatus.classList.remove('error');
 }
 
@@ -286,6 +286,7 @@ function pollStatus(jobId) {
         stopPolling();
         setExporting(false);
         modalBarFill.style.width = '100%';
+        modalBarFill.classList.add('done'); // stop the running-sheen animation
         modalResult.classList.remove('hidden');
         resultVideo.src = job.outputUrl;
         downloadLink.href = job.outputUrl;
