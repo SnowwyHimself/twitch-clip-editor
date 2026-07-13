@@ -67,10 +67,10 @@
         <div id="preview-flash" class="preview-flash"></div>
       </div>
       <div id="preview-controls" class="preview-controls hidden">
-        <button type="button" id="preview-play-btn" class="preview-play-btn" aria-label="Play or pause">⏸</button>
+        <button type="button" id="preview-play-btn" class="preview-play-btn icon-btn" aria-label="Play or pause"><span data-icon="pause"></span></button>
         <input type="range" id="preview-seek" class="preview-seek" min="0" max="100" step="0.01" value="0" aria-label="Seek" />
         <span id="preview-time" class="preview-time">0:00 / 0:00</span>
-        <button type="button" id="preview-mute-btn" class="preview-play-btn" aria-label="Mute or unmute">🔇</button>
+        <button type="button" id="preview-mute-btn" class="preview-play-btn icon-btn" aria-label="Mute or unmute"><span data-icon="volume-x"></span></button>
       </div>
     </section>
 
@@ -92,7 +92,7 @@
             <input id="preset-name" type="text" maxlength="24" placeholder="Name a preset…" />
             <button type="button" id="preset-save-btn" class="secondary-btn">Save</button>
           </div>
-          <p class="field-hint">Saves the current video settings (up to 3). The ★ one auto-applies when you load a clip.</p>
+          <p class="field-hint">Saves the current video settings (up to 3). The <span class="inline-icon" data-icon="star"></span> one auto-applies when you load a clip.</p>
         </div>
 
         <div class="field-group">
@@ -158,15 +158,15 @@
         <div class="field-group fill-only" id="keyframe-group">
           <div class="kf-row">
             <span class="field-label">Zoom &amp; position keyframes</span>
-            <button type="button" id="kf-add-btn" class="secondary-btn kf-diamond" title="Add / update a keyframe at the playhead">◆</button>
+            <button type="button" id="kf-add-btn" class="secondary-btn kf-diamond icon-btn" title="Add / update a keyframe at the playhead" aria-label="Add or update a keyframe"><span data-icon="diamond"></span></button>
           </div>
           <p class="field-hint" id="kf-status">No keyframes — the clip holds still. Drop one here, move the playhead, change zoom or position to animate a punch-in.</p>
-          <button type="button" id="kf-punch-btn" class="secondary-btn full-width">⚡ Punch in at playhead</button>
+          <button type="button" id="kf-punch-btn" class="secondary-btn full-width icon-text-btn"><span data-icon="zap"></span> Punch in at playhead</button>
           <button type="button" id="kf-clear-btn" class="link-btn hidden">Clear keyframes</button>
         </div>
 
         <div class="field-group fill-only" id="facetrack-group">
-          <button type="button" id="face-track-btn" class="secondary-btn kf-track-btn">🎯 Select a face to track</button>
+          <button type="button" id="face-track-btn" class="secondary-btn kf-track-btn icon-text-btn"><span data-icon="face"></span> Select a face to track</button>
           <label class="switch-row hidden" id="facetrack-toggle-row" for="facetrack-toggle">
             <span class="field-label switch-label">Face tracking</span>
             <span class="switch">
@@ -392,10 +392,10 @@
           <label class="field-label">Transition</label>
           <div class="preset-grid">
             <button type="button" id="trans-white-flash" class="preset-item active" data-trans-type="white-flash">
-              <span class="preset-thumb">⚡</span><span>White flash</span>
+              <span class="preset-thumb" data-icon="zap"></span><span>White flash</span>
             </button>
             <button type="button" id="trans-black-dip" class="preset-item" data-trans-type="black-flash">
-              <span class="preset-thumb">🌑</span><span>Dip to black</span>
+              <span class="preset-thumb" data-icon="moon"></span><span>Dip to black</span>
             </button>
           </div>
           <p class="field-hint">Dip to white or black between two pieces of the clip.</p>
@@ -429,7 +429,7 @@
           <div class="field-group">
             <div class="caption-label-row">
               <label class="field-label" for="caption-text">Text</label>
-              <button type="button" id="emoji-picker-btn" class="emoji-picker-btn" aria-label="Insert emoji">😀</button>
+              <button type="button" id="emoji-picker-btn" class="emoji-picker-btn icon-btn" aria-label="Insert emoji"><span data-icon="smile"></span></button>
             </div>
             <textarea id="caption-text" rows="3" placeholder="Type your text..."></textarea>
             <div id="emoji-panel" class="emoji-panel hidden"></div>
@@ -490,8 +490,8 @@
 
   <section class="timeline">
     <div class="timeline-toolbar">
-      <button type="button" id="tl-undo" class="secondary-btn" disabled title="Undo (⌘Z)">↩</button>
-      <button type="button" id="tl-redo" class="secondary-btn" disabled title="Redo (⇧⌘Z)">↪</button>
+      <button type="button" id="tl-undo" class="secondary-btn icon-btn" disabled title="Undo (⌘Z)" aria-label="Undo"><span data-icon="undo"></span></button>
+      <button type="button" id="tl-redo" class="secondary-btn icon-btn" disabled title="Redo (⇧⌘Z)" aria-label="Redo"><span data-icon="redo"></span></button>
       <span class="toolbar-sep"></span>
       <button type="button" id="tl-add-clip" class="secondary-btn" title="Stitch another clip after this one — paste a URL above first, or pick a file">+ Clip</button>
       <input id="append-clip-file" type="file" accept="video/*" hidden />
@@ -501,8 +501,8 @@
       <button type="button" id="tl-add-sound" class="secondary-btn">+ Sound</button>
       <button type="button" id="tl-transitions" class="secondary-btn">Transitions</button>
       <span class="toolbar-sep"></span>
-      <button type="button" id="tl-split" class="secondary-btn">✂ Split</button>
-      <button type="button" id="tl-delete" class="secondary-btn" disabled>🗑 Delete</button>
+      <button type="button" id="tl-split" class="secondary-btn icon-text-btn"><span data-icon="scissors"></span> Split</button>
+      <button type="button" id="tl-delete" class="secondary-btn icon-text-btn" disabled><span data-icon="trash"></span> Delete</button>
       <input id="overlay-file" type="file" accept="image/*,video/*" hidden />
       <input id="audio-file" type="file" accept="audio/*" hidden />
       <span class="toolbar-sep"></span>
@@ -524,7 +524,7 @@
       <div id="tl-grid" class="tl-grid">
         <div class="tl-label"></div>
         <div id="tl-ruler" class="tl-ruler"></div>
-        <div class="tl-label tl-kf-label hidden" id="tl-kf-label">◆</div>
+        <div class="tl-label tl-kf-label hidden icon-btn" id="tl-kf-label"><span data-icon="diamond"></span></div>
         <div id="tl-keyframe-row" class="tl-keyframe-row hidden"></div>
         <div class="tl-label">Video</div>
         <div id="tl-video-track" class="tl-video-track"></div>

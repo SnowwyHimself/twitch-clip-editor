@@ -40,6 +40,7 @@ import {
 import { initTimeline } from './timeline.js';
 import { initPanel, showTab } from './panel.js';
 import { initExport } from './export.js';
+import { icon, hydrateIcons } from './icons.js';
 import {
   saveProject,
   saveProjectAs,
@@ -389,7 +390,7 @@ async function renderProjectList(container, { compact = false } = {}) {
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'project-del';
-      del.textContent = '✕';
+      del.innerHTML = icon('x', 12);
       del.title = 'Delete project';
       del.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -490,6 +491,7 @@ async function offerRestore() {
 // --- boot ------------------------------------------------------------------------------
 
 async function boot() {
+  hydrateIcons(); // fill the static [data-icon] markup with SVGs
   try {
     const [fonts, ratios, whisper] = await Promise.all([fetchFonts(), fetchAspectRatios(), fetchWhisperStatus()]);
     state.fonts = fonts;

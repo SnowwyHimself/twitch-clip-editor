@@ -64,6 +64,7 @@ import {
 import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './preview.js';
 import { getPeaks, drawWaveform } from './waveform.js';
 import { getFilmstrip, drawFilmstrip } from './filmstrip.js';
+import { icon } from './icons.js';
 
 // Paints a filmstrip (video-frame thumbnails) behind a video-track bar's label,
 // showing the [offsetSec, offsetSec+lenSec] slice it plays. Cached per URL, so
@@ -413,7 +414,7 @@ function renderKeyframeRow() {
     marker.type = 'button';
     marker.className = 'tl-kf-marker';
     marker.dataset.t = kf.t;
-    marker.textContent = '◆';
+    marker.innerHTML = icon('diamond', 12);
     marker.title = `Keyframe @ ${kf.t.toFixed(2)}s — click to jump, drag to move, double-click to delete`;
     attachKeyframeMarkerDrag(marker, kf);
     keyframeRow.appendChild(marker);
@@ -518,7 +519,8 @@ function renderVideoTrack() {
     el.classList.toggle('selected', isSelected('clip', item.clip.id));
     const label = document.createElement('span');
     label.className = 'tl-text-label';
-    label.textContent = `🎬 ${item.clip.source.name || 'Clip'}`;
+    label.innerHTML = icon('clapperboard', 12);
+    label.append(document.createTextNode(' ' + (item.clip.source.name || 'Clip')));
     el.appendChild(label);
     const leftEdge = document.createElement('div');
     leftEdge.className = 'tl-text-edge tl-text-edge-left';
@@ -540,7 +542,7 @@ function renderVideoTrack() {
     badge.type = 'button';
     badge.className = 'tl-transition-badge';
     badge.dataset.after = seg.id;
-    badge.textContent = '✦';
+    badge.innerHTML = icon('zap', 12);
     badge.title = `White flash (${tr.duration.toFixed(1)}s) — click to remove`;
     badge.addEventListener('pointerdown', (e) => e.stopPropagation());
     badge.addEventListener('click', (e) => {
@@ -732,7 +734,9 @@ function buildClipBar(clip, className, labelText, opts) {
 
   const label = document.createElement('span');
   label.className = 'tl-text-label';
-  label.textContent = labelText;
+  // Optional leading icon (SVG via innerHTML) + the text as a safe text node.
+  if (opts.icon) label.innerHTML = icon(opts.icon, 12);
+  label.append(document.createTextNode((opts.icon ? ' ' : '') + labelText));
   bar.appendChild(label);
 
   const leftEdge = document.createElement('div');
@@ -848,7 +852,8 @@ function renderSoundRow() {
   setRowVisible(soundRow, show);
   if (!show) return;
   for (const s of state.sounds) {
-    const bar = buildClipBar(s, 'tl-sound-bar', `🔊 ${s.label || 'Sound'}`, {
+    const bar = buildClipBar(s, 'tl-sound-bar', `${s.label || 'Sound'}`, {
+      icon: 'music',
       selected: () => isSelected('sound', s.id),
       onSelect: () => selectSound(s.id),
       emitEvent: 'settings',
@@ -870,7 +875,8 @@ function renderOverlayRow() {
   setRowVisible(overlayRow, show);
   if (!show) return;
   for (const o of state.overlays) {
-    const bar = buildClipBar(o, 'tl-overlay-bar', `🖼 ${o.isVideo ? 'Video' : 'Image'} overlay`, {
+    const bar = buildClipBar(o, 'tl-overlay-bar', `${o.isVideo ? 'Video' : 'Image'} overlay`, {
+      icon: 'image',
       selected: () => isSelected('overlay', o.id),
       onSelect: () => selectOverlay(o.id),
       emitEvent: 'settings',

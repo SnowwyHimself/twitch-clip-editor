@@ -59,6 +59,7 @@ import {
 } from './preview.js';
 import { trackSelectedFace } from './facetrack.js';
 import { confirmDialog } from './confirm.js';
+import { icon } from './icons.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile } from './api.js';
 
 const CAPTION_COLORS = [
@@ -706,7 +707,7 @@ function renderPresetList() {
     const star = document.createElement('button');
     star.type = 'button';
     star.className = 'preset-star' + (p.id === defId ? ' on' : '');
-    star.textContent = p.id === defId ? '★' : '☆';
+    star.innerHTML = icon('star');
     star.title = 'Auto-apply this preset when a clip loads';
     star.addEventListener('click', () => {
       localStorage.setItem(DEFAULT_PRESET_KEY, p.id === defId ? '' : p.id);
@@ -733,7 +734,7 @@ function renderPresetList() {
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'preset-del';
-    del.textContent = '✕';
+    del.innerHTML = icon('x', 12);
     del.title = 'Delete preset';
     del.addEventListener('click', async () => {
       const ok = await confirmDialog({
@@ -818,7 +819,7 @@ async function buildOverlayPresets() {
       btn.className = 'preset-item';
       const isVideo = /\.(webm|mp4|mov)$/i.test(preset.id);
       btn.innerHTML = isVideo
-        ? `<span class="preset-thumb">🎞</span><span>${preset.label}</span>`
+        ? `<span class="preset-thumb">${icon('film')}</span><span>${preset.label}</span>`
         : `<img class="preset-thumb" src="${preset.url}" alt="" /><span>${preset.label}</span>`;
       btn.addEventListener('click', async () => {
         addOverlayFromFile(await presetAsFile(preset));
@@ -921,7 +922,7 @@ async function buildSfxPresets() {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'preset-item';
-      btn.innerHTML = `<span class="preset-thumb">🔊</span><span>${preset.label}</span>`;
+      btn.innerHTML = `<span class="preset-thumb">${icon('music')}</span><span>${preset.label}</span>`;
       btn.addEventListener('click', async () => {
         // Audible feedback on pick — hearing the effect beats reading its name.
         new Audio(preset.url).play().catch(() => {});
@@ -1006,7 +1007,7 @@ function renderTransitionList() {
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'danger-btn trans-remove';
-    del.textContent = '✕';
+    del.innerHTML = icon('x', 12);
     del.setAttribute('aria-label', 'Remove transition');
     del.addEventListener('click', () => removeTransition(tr.id));
     row.appendChild(label);
@@ -1240,7 +1241,7 @@ function renderCaptionPresetList() {
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'preset-del';
-    del.textContent = '✕';
+    del.innerHTML = icon('x', 12);
     del.title = 'Delete preset';
     del.addEventListener('click', async () => {
       const ok = await confirmDialog({ title: 'Delete caption preset?', itemName: p.name, confirmLabel: 'Delete' });

@@ -15,6 +15,7 @@
 // axes, shown only while the playhead is inside its time range (or while
 // it's selected, so you can style a layer without chasing the playhead).
 
+import { icon } from './icons.js';
 import {
   state,
   on,
@@ -905,7 +906,7 @@ function setGapVisual(inGap) {
 }
 
 function updatePlayButton() {
-  playBtn.textContent = logicalPlaying ? '⏸' : '▶';
+  playBtn.innerHTML = icon(logicalPlaying ? 'pause' : 'play');
 }
 
 function setLogicalPlaying(playing) {
@@ -1526,7 +1527,7 @@ export function beginFaceSelect() {
     cancelBtn.type = 'button';
     cancelBtn.className = 'face-select-cancel';
     cancelBtn.setAttribute('aria-label', 'Cancel face selection');
-    cancelBtn.textContent = '✕';
+    cancelBtn.innerHTML = icon('x', 12);
     pill.append(label, cancelBtn);
     previewFrame.appendChild(pill);
 
@@ -1751,7 +1752,7 @@ export function initPreview() {
   muteBtn.addEventListener('click', () => {
     monitorMuted = !monitorMuted;
     syncClipAudio();
-    muteBtn.textContent = monitorMuted ? '🔇' : '🔊';
+    muteBtn.innerHTML = icon(monitorMuted ? 'volume-x' : 'volume-2');
   });
 
   // Clicking the video itself selects the main clip (for framing) and lets

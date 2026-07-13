@@ -141,6 +141,59 @@ body {
   display: none !important;
 }
 
+/* ===== Icons (inline Lucide SVGs, currentColor) ===== */
+.icon {
+  display: block;
+  flex-shrink: 0;
+}
+/* Icon-only buttons centre their glyph. */
+.icon-btn,
+.preview-play-btn,
+.emoji-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Icon + label buttons. */
+.icon-text-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+/* Inline icon inside prose (e.g. the ★ reference in a hint). */
+.inline-icon {
+  display: inline-flex;
+  vertical-align: -2px;
+  color: var(--accent);
+}
+.inline-icon .icon {
+  width: 12px;
+  height: 12px;
+}
+.preset-thumb .icon {
+  width: 20px;
+  height: 20px;
+}
+.preset-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.preset-star .icon {
+  width: 15px;
+  height: 15px;
+}
+.preset-star.on {
+  color: var(--accent);
+}
+/* Leading icon on a timeline bar label — inline so the text still truncates. */
+.tl-text-label .icon {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 2px;
+}
+
 /* ===== App shell: topbar / workspace / timeline ===== */
 
 .editor {
