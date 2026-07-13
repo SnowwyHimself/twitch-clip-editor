@@ -252,6 +252,7 @@ function buildSegments(body) {
       start: parseFloat(s && s.start),
       end: parseFloat(s && s.end),
       outStart: Number.isFinite(parseFloat(s && s.outStart)) ? parseFloat(s.outStart) : null,
+      settings: parsePieceSettings(s && s.settings),
     }))
     .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.start >= 0 && s.end > s.start)
     .sort((a, b) => (a.outStart !== null ? a.outStart : a.start) - (b.outStart !== null ? b.outStart : b.start));
@@ -644,7 +645,71 @@ function withColorGrade(graph, label, color) {
   return { graph: `${graph};${label}${chain}[cgrade]`, label: '[cgrade]' };
 }
 
-function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack, split, srcW, srcH, color) {
+// Per-piece video settings (B6): { zoom, panX, panY, blur, color }. Missing =
+// neutral, so a piece without settings renders exactly as before.
+function parsePieceSettings(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const c = r.color && typeof r.color === 'object' ? r.color : {};
+  return {
+    zoom: Number.isFinite(parseFloat(r.zoom)) ? Math.max(1, parseFloat(r.zoom)) : 1,
+    panX: Number.isFinite(parseFloat(r.panX)) ? parseFloat(r.panX) : 0,
+    panY: Number.isFinite(parseFloat(r.panY)) ? parseFloat(r.panY) : 0,
+    blur: Number.isFinite(parseFloat(r.blur)) ? Math.max(0, parseFloat(r.blur)) : 0,
+    color: {
+      brightness: parseFloat(c.brightness) || 0,
+      contrast: parseFloat(c.contrast) || 0,
+      saturation: parseFloat(c.saturation) || 0,
+    },
+  };
+}
+
+// True if any piece's settings differ from the first — i.e. per-piece rendering
+// is actually needed (otherwise the cheaper global transform suffices).
+function pieceSettingsDiffer(list) {
+  if (!Array.isArray(list) || list.length < 2) return false;
+  const key = (s) =>
+    JSON.stringify([s.zoom, s.panX, s.panY, s.blur, s.color.brightness, s.color.contrast, s.color.saturation]);
+  const first = key(list[0].settings || parsePieceSettings());
+  return list.some((p) => key(p.settings || parsePieceSettings()) !== first);
+}
+
+// Per-piece transform + grade: applies one piece's zoom/pan/blur/colour to an
+// already-trimmed, speed/mirror-neutral segment video (inLabel), producing a
+// canvas-sized graded output. Mirrors buildFilterComplex's normal fill path but
+// per segment; labels are indexed so many coexist in one graph. Speed and mirror
+// stay global (applied once to the concat, downstream).
+function buildPieceComposite(canvasW, canvasH, s, inLabel, idx) {
+  const set = parsePieceSettings(s);
+  const zoom = Math.max(1, set.zoom);
+  const fgWidth = Math.round((canvasW * zoom) / 2) * 2;
+  const panXpx = Math.round((set.panX / 100) * (canvasW / 2));
+  const panYpx = Math.round((set.panY / 100) * (canvasH / 2));
+  const panXExpr = panXpx !== 0 ? `+(${panXpx})` : '';
+  const panYExpr = panYpx !== 0 ? `+(${panYpx})` : '';
+  const bgFill = set.blur > 0 ? `gblur=sigma=${set.blur}` : `drawbox=color=black:t=fill`;
+  const grade = colorGradeChain(set.color);
+  const bg = `pcbg${idx}`;
+  const fg = `pcfg${idx}`;
+  const ov = `pcov${idx}`;
+  const out = `pc${idx}`;
+  let chain = `${inLabel}split=2[${bg}][${fg}];`;
+  chain += `[${bg}]scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase,crop=${canvasW}:${canvasH},${bgFill}[${bg}o];`;
+  chain += `[${fg}]scale=${fgWidth}:-2,crop=${canvasW}:ih:(iw-${canvasW})/2:0[${fg}o];`;
+  const overlay = `[${bg}o][${fg}o]overlay=(W-w)/2${panXExpr}:(H-h)/2${panYExpr}`;
+  if (grade) chain += `${overlay}[${ov}];[${ov}]${grade}[${out}];`;
+  else chain += `${overlay}[${out}];`;
+  return { chain, outLabel: `[${out}]` };
+}
+
+function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack, split, srcW, srcH, color, preComposited) {
+  // Per-piece path: the base is already a canvas-sized, per-piece-transformed,
+  // graded video (see buildSegmentFilter). Only apply global speed/mirror, then
+  // stack captions/overlays.
+  if (preComposited) {
+    const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 1);
+    const graph = `${stage}${labels[0]}setsar=1[c0]`;
+    return composeOverlayStages(graph, overlayStages, '[c0]');
+  }
   // Facecam split layout overrides the fill composite entirely.
   if (split && srcW && srcH) {
     const g = withColorGrade(buildSplitBase(canvasW, canvasH, split, srcW, srcH, sourceLabel, speed, mirror), '[c0]', color);
@@ -724,7 +789,7 @@ function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlaySta
 //     arbitrary source's SAR/sample-rate.
 // concat's v=1:a=1 form expects the pieces interleaved as
 // [v0][a0][v1][a1]... — one video+audio pair per piece.
-function buildSegmentFilter(segments, hasAudio, transitions) {
+function buildSegmentFilter(segments, hasAudio, transitions, perPiece, canvasW, canvasH) {
   const AFMT = 'aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo';
   let chain = '';
   const pairLabels = [];
@@ -733,7 +798,10 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
 
   const addBlackFiller = (gapSeconds) => {
     const d = gapSeconds.toFixed(3);
-    chain += `[0:v]trim=start=0:end=${d},setpts=PTS-STARTPTS,drawbox=color=black:t=fill,setsar=1[v${n}];`;
+    // In per-piece mode the real pieces are canvas-sized (composite), so the
+    // filler must be too, or concat's identical-link-params rule fails.
+    const sizeToCanvas = perPiece ? `,scale=${canvasW}:${canvasH}` : '';
+    chain += `[0:v]trim=start=0:end=${d},setpts=PTS-STARTPTS${sizeToCanvas},drawbox=color=black:t=fill,setsar=1[v${n}];`;
     if (hasAudio) {
       chain += `[0:a]atrim=start=0:end=${d},asetpts=PTS-STARTPTS,volume=0,${AFMT}[a${n}];`;
       pairLabels.push(`[v${n}][a${n}]`);
@@ -761,7 +829,16 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
     }
     const fadeChain = fades.length > 0 ? `,${fades.join(',')}` : '';
 
-    chain += `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS,setsar=1${fadeChain}[v${n}];`;
+    if (perPiece) {
+      // Trim → per-piece composite (canvas-sized + graded) → fades on the full
+      // frame. Speed/mirror are applied globally downstream.
+      chain += `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS,setsar=1[raw${n}];`;
+      const comp = buildPieceComposite(canvasW, canvasH, seg.settings, `[raw${n}]`, n);
+      chain += comp.chain;
+      chain += `${comp.outLabel}${fadeChain ? fadeChain.replace(/^,/, '') : 'null'}[v${n}];`;
+    } else {
+      chain += `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS,setsar=1${fadeChain}[v${n}];`;
+    }
     if (hasAudio) {
       chain += `[0:a]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
       pairLabels.push(`[v${n}][a${n}]`);
@@ -871,6 +948,19 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     segments.length === 1 &&
     segments[0].outStart <= 0.01 &&
     (!transitions || transitions.length === 0);
+  // Per-piece render (B6): only when the segment-concat path runs (multiple
+  // trimmed pieces), no global transform mode is active (keyframes / face-track
+  // / split each own the whole composite), and the pieces' settings actually
+  // differ. Otherwise the cheaper global transform (fed the edit-mirror values)
+  // already matches. Appended multi-source clips keep the global path for now.
+  const perPiece =
+    !hasAppended &&
+    !noTrim &&
+    !singleRange &&
+    !(Array.isArray(keyframes) && keyframes.length >= 1) &&
+    !(Array.isArray(faceTrack) && faceTrack.length >= 1) &&
+    !split &&
+    pieceSettingsDiffer(segments);
   // -progress pipe:1 streams machine-readable key=value progress lines to
   // stdout (stderr keeps the normal log for error reporting) — parsed by
   // runFfmpegWithProgress so the job status can expose a real percentage.
@@ -985,7 +1075,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     sourceVideoLabel = built.videoLabel;
     sourceAudioLabel = built.audioLabel;
   } else if (!noTrim && !singleRange) {
-    const built = buildSegmentFilter(segments, hasAudio, transitions || []);
+    const built = buildSegmentFilter(segments, hasAudio, transitions || [], perPiece, canvasW, canvasH);
     segmentPrefix = built.chain;
     sourceVideoLabel = built.videoLabel;
     sourceAudioLabel = built.audioLabel;
@@ -993,7 +1083,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
 
   let filterComplex =
     segmentPrefix +
-    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height, color);
+    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height, color, perPiece);
 
   // atempo only accepts 0.5-2.0 per instance, which matches the slider's
   // own range exactly, so a single atempo call always suffices — no need
