@@ -294,10 +294,19 @@ function updateLayerEl(layer) {
   inner.style.fontSize = `${fontSizePx.toFixed(2)}px`;
   inner.style.lineHeight = String(PREVIEW_LINE_HEIGHT_RATIO);
   // Per-layer wrap width (fraction of canvas width). The server's opentype
-  // word-wrap multiplies canvas width by the same ratio, so preview and render
-  // wrap at identical words.
+  // word-wrap wraps at canvasWidth*wrapRatio, so the preview must wrap at
+  // frameWidth*wrapRatio for identical line breaks. An absolutely-positioned
+  // auto-width block shrink-to-fits BELOW its max-width, wrapping text earlier
+  // than the render (and never reaching the canvas edge). Fix it by measuring
+  // the text's natural unwrapped width and pinning the box to
+  // min(natural, wrapPx): short text still hugs (and can sit flush to an edge),
+  // long text wraps exactly at the canvas-derived limit, matching ffmpeg.
   const wrapRatio = clampWrapWidth(layer.wrapWidth);
-  root.style.maxWidth = `${(frameWidth * wrapRatio).toFixed(2)}px`;
+  const wrapPx = frameWidth * wrapRatio;
+  root.style.maxWidth = 'none';
+  root.style.width = 'max-content';
+  const naturalPx = root.offsetWidth; // reflow at the unwrapped width
+  root.style.width = `${Math.min(naturalPx, wrapPx).toFixed(2)}px`;
 
   const shadowOffsetX = (fontSizePx * 0.05).toFixed(2);
   const shadowOffsetY = (fontSizePx * 0.07).toFixed(2);
