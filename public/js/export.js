@@ -80,6 +80,8 @@ function buildFormData() {
   formData.append('audioVolume', state.audio.muted ? 0 : state.audio.volumePercent);
   formData.append('audioFadeIn', state.audio.fadeIn || 0);
   formData.append('audioFadeOut', state.audio.fadeOut || 0);
+  // Color grade (brightness/contrast/saturation, each -100..100).
+  formData.append('color', JSON.stringify(state.color || {}));
   formData.append('layout', state.layout || 'fill');
   if (state.layout === 'split') formData.append('split', JSON.stringify(state.split));
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));

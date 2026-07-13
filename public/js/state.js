@@ -38,6 +38,12 @@ export const state = {
   // approximately, in preview (HTML media can't boost past 100%).
   audio: { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 },
 
+  // Color adjustment, each -100..100 (0 = neutral). Grades the footage (not
+  // captions/overlays). Preview = CSS filter; export = ffmpeg eq. Contrast and
+  // saturation map identically both sides; brightness is approximate in preview
+  // (CSS multiplies, eq adds).
+  color: { brightness: 0, contrast: 0, saturation: 0 },
+
   // Zoom/position keyframes for the main clip — animate a punch-in or a
   // slow push/pan. Each is { id, t, zoom, panX, panY } where t is a SOURCE
   // second. Empty = no animation (the static zoom/panX/panY above are used).
@@ -360,6 +366,7 @@ export function resetSegments() {
   state.keyframes = [];
   state.faceTrack = { enabled: false, samples: [] };
   state.audio = { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 };
+  state.color = { brightness: 0, contrast: 0, saturation: 0 };
   state.appendedClips = []; // a fresh primary clip starts with no stitched clips
   emit('segments');
   emit('keyframes');
@@ -589,6 +596,18 @@ export function clampFadeSeconds(value) {
 // Patch the main-clip audio (volume/mute/fades) and notify the preview + export.
 export function setAudio(patch) {
   Object.assign(state.audio, patch);
+  emit('settings');
+}
+
+export function clampColorValue(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(100, Math.max(-100, Math.round(n)));
+}
+
+// Patch the color grade (brightness/contrast/saturation) and notify.
+export function setColor(patch) {
+  Object.assign(state.color, patch);
   emit('settings');
 }
 

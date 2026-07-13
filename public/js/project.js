@@ -59,6 +59,7 @@ function serialize() {
     panX: state.panX,
     panY: state.panY,
     audio: state.audio,
+    color: state.color,
     layout: state.layout,
     split: state.split,
     keyframes: state.keyframes,
@@ -302,6 +303,9 @@ function applyStateFields(data, overlays, sounds, appendedClips) {
   state.audio = data.audio && typeof data.audio === 'object'
     ? { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0, ...data.audio }
     : { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 };
+  state.color = data.color && typeof data.color === 'object'
+    ? { brightness: 0, contrast: 0, saturation: 0, ...data.color }
+    : { brightness: 0, contrast: 0, saturation: 0 };
   state.layout = data.layout === 'split' ? 'split' : 'fill';
   if (data.split) state.split = data.split;
   state.keyframes = data.keyframes || [];

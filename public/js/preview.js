@@ -1394,16 +1394,33 @@ function attachSplitDivider() {
   splitDivider.addEventListener('pointercancel', end);
 }
 
+// CSS equivalent of the export's color grade (empty when neutral). Brightness
+// is multiplicative here vs additive in ffmpeg eq — close, not exact.
+function colorFilterCss() {
+  const { brightness = 0, contrast = 0, saturation = 0 } = state.color || {};
+  if (brightness === 0 && contrast === 0 && saturation === 0) return '';
+  return `brightness(${(1 + brightness / 100).toFixed(3)}) contrast(${(1 + contrast / 100).toFixed(
+    3
+  )}) saturate(${(1 + saturation / 100).toFixed(3)})`;
+}
+
 function updateAll() {
   applyClipTransform();
   bgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
 
+  // Color grade on the footage (fg + blurred bg + split regions), matching the
+  // export's eq. Contrast/saturation map exactly; brightness is approximate.
+  const grade = colorFilterCss();
+  fgVideo.style.filter = grade;
+  for (const v of [splitTopVideo, splitBottomVideo]) if (v) v.style.filter = grade;
+
   // The reframe / split fill the frame, so no blur background shows behind.
   if (!faceTrackActive() && !splitActive() && state.blur > 0) {
     bgVideo.classList.remove('hidden');
-    bgVideo.style.filter = `blur(${(state.blur * PREVIEW_BLUR_CSS_SCALE).toFixed(1)}px)`;
+    bgVideo.style.filter = `blur(${(state.blur * PREVIEW_BLUR_CSS_SCALE).toFixed(1)}px) ${grade}`.trim();
   } else {
     bgVideo.classList.add('hidden');
+    bgVideo.style.filter = grade;
   }
 
   fgVideo.playbackRate = state.speed;

@@ -624,15 +624,25 @@ function composeOverlayStages(graph, overlayStages, startLabel) {
   return `${graph};${current}setsar=1[outv]`;
 }
 
-function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack, split, srcW, srcH) {
+// Applies the color grade to the composite `label` (grading footage, before
+// captions/overlays). Returns the graph + the new label to stack overlays on.
+function withColorGrade(graph, label, color) {
+  const chain = colorGradeChain(color);
+  if (!chain) return { graph, label };
+  return { graph: `${graph};${label}${chain}[cgrade]`, label: '[cgrade]' };
+}
+
+function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack, split, srcW, srcH, color) {
   // Facecam split layout overrides the fill composite entirely.
   if (split && srcW && srcH) {
-    return composeOverlayStages(buildSplitBase(canvasW, canvasH, split, srcW, srcH, sourceLabel, speed, mirror), overlayStages);
+    const g = withColorGrade(buildSplitBase(canvasW, canvasH, split, srcW, srcH, sourceLabel, speed, mirror), '[c0]', color);
+    return composeOverlayStages(g.graph, overlayStages, g.label);
   }
   // Face-tracking overrides the normal blur-bg composite with a frame-filling
   // reframe that pans to follow the chosen face.
   if (Array.isArray(faceTrack) && faceTrack.length >= 1) {
-    return composeOverlayStages(buildFaceTrackBase(canvasW, canvasH, faceTrack, sourceLabel, speed, mirror), overlayStages);
+    const g = withColorGrade(buildFaceTrackBase(canvasW, canvasH, faceTrack, sourceLabel, speed, mirror), '[c0]', color);
+    return composeOverlayStages(g.graph, overlayStages, g.label);
   }
   // With keyframes, zoom/pan are animated per-frame by a zoompan applied to
   // the finished composite (below), so the base is built neutral (zoom 1, no
@@ -671,7 +681,8 @@ function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlaySta
     graph += `;[c0]${buildKeyframeZoompan(canvasW, canvasH, keyframes, fps)}[c0z]`;
     current = '[c0z]';
   }
-  return composeOverlayStages(graph, overlayStages, current);
+  const g = withColorGrade(graph, current, color);
+  return composeOverlayStages(g.graph, overlayStages, g.label);
 }
 
 // Cutting out a middle piece (rather than just trimming the two ends)
@@ -830,7 +841,7 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, onProgress) {
   const hasAppended = Array.isArray(appended) && appended.length > 0;
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
@@ -970,7 +981,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
 
   let filterComplex =
     segmentPrefix +
-    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height);
+    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height, color);
 
   // atempo only accepts 0.5-2.0 per instance, which matches the slider's
   // own range exactly, so a single atempo call always suffices — no need
@@ -1252,6 +1263,33 @@ function buildAppendedClips(body, appendedFiles) {
   });
 }
 
+// Color grade { brightness, contrast, saturation }, each -100..100.
+function buildColor(body) {
+  let raw = {};
+  try {
+    raw = typeof body.color === 'string' ? JSON.parse(body.color) : body.color || {};
+  } catch {
+    raw = {};
+  }
+  const clamp = (v) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? Math.min(100, Math.max(-100, n)) : 0;
+  };
+  return { brightness: clamp(raw.brightness), contrast: clamp(raw.contrast), saturation: clamp(raw.saturation) };
+}
+
+// ffmpeg eq chain for a color grade, or null when neutral. Contrast/saturation
+// are multipliers (match CSS); brightness is additive (approximate vs CSS).
+function colorGradeChain(color) {
+  if (!color) return null;
+  const { brightness = 0, contrast = 0, saturation = 0 } = color;
+  if (brightness === 0 && contrast === 0 && saturation === 0) return null;
+  const b = (brightness / 200).toFixed(4);
+  const c = (1 + contrast / 100).toFixed(4);
+  const s = (1 + saturation / 100).toFixed(4);
+  return `eq=brightness=${b}:contrast=${c}:saturation=${s}`;
+}
+
 // Main-clip audio settings: volume 0-200 (0 = muted, already collapsed by the
 // frontend) and head/tail fades in seconds.
 function buildMainAudio(body) {
@@ -1349,7 +1387,7 @@ async function resolveAppendedClips(appendedClips) {
   return out;
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -1388,7 +1426,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -1403,7 +1441,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -1411,7 +1449,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -1548,7 +1586,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildFaceTrack(req.body || {}),
     buildSplit(req.body || {}),
     buildMainAudio(req.body || {}),
-    buildAppendedClips(req.body || {}, req.files.appendedVideo)
+    buildAppendedClips(req.body || {}, req.files.appendedVideo),
+    buildColor(req.body || {})
   );
 });
 
@@ -1586,7 +1625,8 @@ app.post(
       buildFaceTrack(req.body),
       buildSplit(req.body),
       buildMainAudio(req.body),
-      buildAppendedClips(req.body, req.files.appendedVideo)
+      buildAppendedClips(req.body, req.files.appendedVideo),
+      buildColor(req.body)
     );
   }
 );

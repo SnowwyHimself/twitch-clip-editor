@@ -36,6 +36,8 @@ import {
   selectedSound,
   setAudio,
   clampVolumePercent,
+  setColor,
+  clampColorValue,
   addKeyframe,
   removeKeyframe,
   clearKeyframes,
@@ -173,6 +175,13 @@ function lookupElements() {
     clipFadeInValue: byId('clip-fadein-value'),
     clipFadeOutSlider: byId('clip-fadeout-slider'),
     clipFadeOutValue: byId('clip-fadeout-value'),
+    colorBrightness: byId('color-brightness'),
+    colorBrightnessValue: byId('color-brightness-value'),
+    colorContrast: byId('color-contrast'),
+    colorContrastValue: byId('color-contrast-value'),
+    colorSaturation: byId('color-saturation'),
+    colorSaturationValue: byId('color-saturation-value'),
+    colorResetBtn: byId('color-reset-btn'),
     // Text tab
     textInput: byId('caption-text'),
     emojiBtn: byId('emoji-picker-btn'),
@@ -333,6 +342,20 @@ function wireVideoControls() {
   els.clipFadeOutSlider.addEventListener('input', () => {
     setAudio({ fadeOut: parseFloat(els.clipFadeOutSlider.value) });
     els.clipFadeOutValue.textContent = `${parseFloat(els.clipFadeOutSlider.value).toFixed(1)}s`;
+  });
+  const wireColor = (slider, valueEl, key) => {
+    slider.addEventListener('input', () => {
+      const v = clampColorValue(slider.value);
+      setColor({ [key]: v });
+      valueEl.textContent = String(v);
+    });
+  };
+  wireColor(els.colorBrightness, els.colorBrightnessValue, 'brightness');
+  wireColor(els.colorContrast, els.colorContrastValue, 'contrast');
+  wireColor(els.colorSaturation, els.colorSaturationValue, 'saturation');
+  els.colorResetBtn.addEventListener('click', () => {
+    setColor({ brightness: 0, contrast: 0, saturation: 0 });
+    refreshVideoPanel();
   });
   // Position lock: when on, applying a preset never moves the clip (panX/panY
   // stay put). Persisted so the choice sticks across sessions. Default on —
@@ -1425,6 +1448,13 @@ function refreshVideoPanel() {
   els.clipFadeInValue.textContent = `${(state.audio.fadeIn || 0).toFixed(1)}s`;
   if (a !== els.clipFadeOutSlider) els.clipFadeOutSlider.value = state.audio.fadeOut || 0;
   els.clipFadeOutValue.textContent = `${(state.audio.fadeOut || 0).toFixed(1)}s`;
+  const col = state.color || { brightness: 0, contrast: 0, saturation: 0 };
+  if (a !== els.colorBrightness) els.colorBrightness.value = col.brightness;
+  els.colorBrightnessValue.textContent = String(col.brightness);
+  if (a !== els.colorContrast) els.colorContrast.value = col.contrast;
+  els.colorContrastValue.textContent = String(col.contrast);
+  if (a !== els.colorSaturation) els.colorSaturation.value = col.saturation;
+  els.colorSaturationValue.textContent = String(col.saturation);
   updateLayoutUI();
 }
 
