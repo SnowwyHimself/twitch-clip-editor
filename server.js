@@ -1050,7 +1050,10 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
       const delayMs = Math.round((au.delay || 0) * 1000);
       const delayChain = delayMs > 0 ? `adelay=${delayMs}:all=1,` : '';
       const label = `[sfx${i}]`;
-      filterComplex += `;[${au.idx}:a]${trimChain}${fadeChain}${delayChain}volume=${volume}${label}`;
+      // Duck stage AFTER volume+delay, so its enable `t` is final-video time —
+      // drops this sound to DUCK_FACTOR while speech (caption ranges) plays.
+      const duckChain = au.duckEnable ? `,volume=${DUCK_FACTOR}:enable='${au.duckEnable}'` : '';
+      filterComplex += `;[${au.idx}:a]${trimChain}${fadeChain}${delayChain}volume=${volume}${duckChain}${label}`;
       sfxLabels.push(label);
     });
     if (hasAudio) {
@@ -1224,6 +1227,25 @@ function buildMediaOverlays(body, overlayFiles) {
 // Each sound file (multipart 'audioTrack' field, order-matched to the JSON
 // `sounds` array) becomes a descriptor: volume, delay (FINAL-video seconds
 // where it starts), and trimStart/trimEnd (the region of the file to play).
+// Ducking must match the preview's DUCK_FACTOR (preview.js) for parity.
+const DUCK_FACTOR = 0.3;
+
+// An ffmpeg enable expression true during any speech (caption) range, in
+// FINAL-video seconds, or null when there are none.
+function speechEnableExpr(body) {
+  let ranges = [];
+  try {
+    ranges = JSON.parse(body.speechRanges || '[]');
+  } catch {
+    ranges = [];
+  }
+  const parts = (Array.isArray(ranges) ? ranges : [])
+    .map((r) => ({ s: parseFloat(r.start), e: parseFloat(r.end) }))
+    .filter((r) => Number.isFinite(r.s) && Number.isFinite(r.e) && r.e > r.s)
+    .map((r) => `between(t,${r.s.toFixed(3)},${r.e.toFixed(3)})`);
+  return parts.length ? parts.join('+') : null;
+}
+
 function buildAudioOverlays(body, audioFiles) {
   if (!audioFiles || audioFiles.length === 0) return [];
   let meta = [];
@@ -1232,6 +1254,7 @@ function buildAudioOverlays(body, audioFiles) {
   } catch {
     meta = [];
   }
+  const duckEnable = speechEnableExpr(body);
   return audioFiles.map((file, i) => {
     const m = meta[i] || {};
     const delay = parseFloat(m.delay);
@@ -1243,6 +1266,8 @@ function buildAudioOverlays(body, audioFiles) {
       volume: clampVolumePercent(m.volume, 80),
       fadeIn: clampFadeSeconds(m.fadeIn),
       fadeOut: clampFadeSeconds(m.fadeOut),
+      // Precomputed duck stage (only when this sound opts in AND speech exists).
+      duckEnable: m.duck && duckEnable ? duckEnable : null,
       delay: Number.isFinite(delay) && delay > 0 ? delay : 0,
       playLen: Number.isFinite(playLen) && playLen > 0 ? playLen : null,
       trimStart: Number.isFinite(trimStart) ? trimStart : 0,

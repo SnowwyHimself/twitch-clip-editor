@@ -161,6 +161,7 @@ function lookupElements() {
     audioVolumeSlider: byId('audio-volume-slider'),
     audioVolumeValue: byId('audio-volume-value'),
     audioMuteToggle: byId('audio-mute-toggle'),
+    audioDuckToggle: byId('audio-duck-toggle'),
     audioFadeInSlider: byId('audio-fadein-slider'),
     audioFadeInValue: byId('audio-fadein-value'),
     audioFadeOutSlider: byId('audio-fadeout-slider'),
@@ -900,6 +901,7 @@ function refreshSoundPanel() {
   els.audioVolumeSlider.value = s.volumePercent;
   els.audioVolumeValue.textContent = `${s.volumePercent}%`;
   els.audioMuteToggle.checked = !!s.muted;
+  els.audioDuckToggle.checked = !!s.duck;
   els.audioFadeInSlider.value = s.fadeIn || 0;
   els.audioFadeInValue.textContent = `${(s.fadeIn || 0).toFixed(1)}s`;
   els.audioFadeOutSlider.value = s.fadeOut || 0;
@@ -946,6 +948,10 @@ function wireSoundControls() {
   els.audioMuteToggle.addEventListener('change', () => {
     const s = selectedSound();
     if (s) updateSound(s.id, { muted: els.audioMuteToggle.checked });
+  });
+  els.audioDuckToggle.addEventListener('change', () => {
+    const s = selectedSound();
+    if (s) updateSound(s.id, { duck: els.audioDuckToggle.checked });
   });
   els.audioFadeInSlider.addEventListener('input', () => {
     const s = selectedSound();

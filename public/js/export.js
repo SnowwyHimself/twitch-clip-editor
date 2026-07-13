@@ -181,6 +181,7 @@ function buildFormData() {
       volume: s.muted ? 0 : s.volumePercent,
       fadeIn: s.fadeIn || 0,
       fadeOut: s.fadeOut || 0,
+      duck: !!s.duck,
       delay: Number(delay.toFixed(3)),
       playLen: Number(playLen.toFixed(3)),
       trimStart: Number((s.offset || 0).toFixed(3)),
@@ -188,6 +189,16 @@ function buildFormData() {
     });
   }
   if (sounds.length > 0) formData.append('sounds', JSON.stringify(sounds));
+
+  // Speech ranges for ducking = the caption layers (transcript) in FINAL-video
+  // seconds. Empty when captions are hidden/absent (nothing ducks then).
+  if (!state.captionsHidden && state.sounds.some((s) => s.duck)) {
+    const speech = state.layers
+      .filter((l) => l.group === 'caption' && l.text && l.text.trim())
+      .map((l) => ({ start: Number(mapToOutput(l.start).toFixed(3)), end: Number(mapToOutput(l.end).toFixed(3)) }))
+      .filter((r) => r.end - r.start > 0.02);
+    if (speech.length > 0) formData.append('speechRanges', JSON.stringify(speech));
+  }
 
   // Appended clips (sequential multi-source) — each stitched after the primary.
   // URL clips ride as metadata (the server re-resolves via the preview cache);

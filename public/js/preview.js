@@ -1141,6 +1141,20 @@ function syncSoundAudios() {
   }
 }
 
+// Auto-ducking: a ducked sound drops to DUCK_FACTOR of its volume while speech
+// is on screen. Speech ranges are the caption layers (the transcript) — no
+// separate VAD. Skipped when captions are hidden (no ranges then, matching
+// export). MUST equal the server's DUCK_FACTOR for preview/export parity.
+const DUCK_FACTOR = 0.3;
+function speechActiveAt(outT) {
+  if (state.captionsHidden) return false;
+  for (const l of state.layers) {
+    if (l.group !== 'caption') continue;
+    if (outT >= sourceToOutput(l.start) && outT < sourceToOutput(l.end)) return true;
+  }
+  return false;
+}
+
 // Linear fade envelope (matches ffmpeg afade's default 'tri' curve): ramps
 // 0->1 over the first `fadeIn` s and 1->0 over the last `fadeOut` s.
 function fadeGain(t, duration, fadeIn, fadeOut) {
@@ -1180,9 +1194,11 @@ function tickSounds(outT) {
           entry.audio.currentTime = target;
         } catch {}
       }
-      // Layer the fade envelope on the base volume, over the sound's own span.
+      // Layer the fade envelope on the base volume, over the sound's own span,
+      // and duck under speech (caption ranges) when enabled.
       const env = fadeGain(outT - startOut, endOut - startOut, s.fadeIn || 0, s.fadeOut || 0);
-      entry.audio.volume = Math.min(1, Math.max(0, (s.volumePercent / 100) * env));
+      const duck = s.duck && speechActiveAt(outT) ? DUCK_FACTOR : 1;
+      entry.audio.volume = Math.min(1, Math.max(0, (s.volumePercent / 100) * env * duck));
       if (entry.audio.paused) entry.audio.play().catch(() => {});
     } else if (!entry.audio.paused) {
       entry.audio.pause();

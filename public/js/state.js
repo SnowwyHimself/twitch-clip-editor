@@ -627,6 +627,7 @@ export function addSound(partial = {}, { select: doSelect = true } = {}) {
     muted: false,
     fadeIn: 0,
     fadeOut: 0,
+    duck: false, // auto-lower under speech (caption ranges)
     start: 0,
     end: 1,
     offset: 0,
