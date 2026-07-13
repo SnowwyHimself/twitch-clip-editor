@@ -1194,9 +1194,58 @@ input[type="file"] {
   color: var(--text-dim);
 }
 
+/* Custom slider: 4px rounded track (--panel-2), accent fill driven by the
+   JS-set --fill %, 14px white thumb that scales while dragging. */
 input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  accent-color: var(--accent);
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(to right, var(--accent) var(--fill, 0%), var(--panel-2) var(--fill, 0%));
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px; /* centre on the 4px track */
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-fast) var(--ease);
+}
+input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--panel-2);
+}
+input[type="range"]::-moz-range-progress {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-fast) var(--ease);
+}
+input[type="range"]:active::-moz-range-thumb {
+  transform: scale(1.15);
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--shadow-sm), 0 0 0 3px rgba(var(--accent-rgb), 0.18);
 }
 
 /* Buttons */

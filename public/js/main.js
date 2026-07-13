@@ -490,8 +490,41 @@ async function offerRestore() {
 
 // --- boot ------------------------------------------------------------------------------
 
+// Custom sliders: drive the accent fill (a --fill % the CSS track gradient
+// reads) from each range input's value — on user input, on the events that
+// re-set slider values programmatically (deferred a frame so values are set),
+// and per-frame for the seek scrubber during playback.
+function updateSliderFill(el) {
+  const min = parseFloat(el.min) || 0;
+  const max = Number.isFinite(parseFloat(el.max)) ? parseFloat(el.max) : 100;
+  const v = parseFloat(el.value) || 0;
+  const pct = max > min ? ((v - min) / (max - min)) * 100 : 0;
+  el.style.setProperty('--fill', `${Math.max(0, Math.min(100, pct))}%`);
+}
+function updateAllSliderFills() {
+  document.querySelectorAll('input[type="range"]').forEach(updateSliderFill);
+}
+function wireSliderFills() {
+  document.addEventListener(
+    'input',
+    (e) => {
+      if (e.target && e.target.tagName === 'INPUT' && e.target.type === 'range') updateSliderFill(e.target);
+    },
+    true
+  );
+  const refresh = () => requestAnimationFrame(updateAllSliderFills);
+  on('settings', refresh);
+  on('layers', refresh);
+  on('segments', refresh);
+  const seek = document.getElementById('preview-seek');
+  on('time', () => seek && updateSliderFill(seek));
+  updateAllSliderFills();
+  requestAnimationFrame(updateAllSliderFills);
+}
+
 async function boot() {
   hydrateIcons(); // fill the static [data-icon] markup with SVGs
+  wireSliderFills();
   try {
     const [fonts, ratios, whisper] = await Promise.all([fetchFonts(), fetchAspectRatios(), fetchWhisperStatus()]);
     state.fonts = fonts;
