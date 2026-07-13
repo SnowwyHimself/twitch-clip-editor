@@ -194,6 +194,103 @@ body {
   margin-right: 2px;
 }
 
+/* ===== Motion (subtle, fast) ===== */
+/* Interactive chrome: colour/shadow/transform ease. These never use transform
+   for layout, so transitioning it is safe and enables the press feel. */
+.secondary-btn,
+.primary-btn,
+.danger-btn,
+.link-btn,
+.toggle-btn,
+.panel-tab,
+.preset-item,
+.preset-apply,
+.preset-star,
+.preset-del,
+.project-open-row,
+.project-del,
+.color-swatch,
+.icon-btn,
+.icon-text-btn,
+.preview-play-btn,
+.emoji-picker-btn,
+.vod-range summary,
+.font-select,
+select,
+input[type="text"] {
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+/* Press feel — buttons only (not layout-positioned elements). */
+.secondary-btn:active:not(:disabled),
+.primary-btn:active:not(:disabled),
+.danger-btn:active:not(:disabled),
+.toggle-btn:active,
+.panel-tab:active,
+.preset-item:active,
+.icon-btn:active:not(:disabled),
+.icon-text-btn:active:not(:disabled),
+.color-swatch:active {
+  transform: scale(0.97);
+}
+/* Timeline pieces: colour/outline/shadow only — NOT transform (drag stays
+   instant, positioning is via left/width). Selection eases in. */
+.tl-segment,
+.tl-appended-clip,
+.tl-sound-bar,
+.tl-overlay-bar,
+.tl-text-bar,
+.tl-kf-marker,
+.tl-transition-badge {
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease), outline-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+/* Popover / modal entrance. */
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.vod-range-fields,
+.emoji-panel,
+.export-card,
+.confirm-card {
+  animation: popIn var(--dur-med) var(--ease);
+}
+
+/* Panel tab content fade-in (opacity + 4px rise). */
+@keyframes tabIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.panel-body:not(.hidden) {
+  animation: tabIn var(--dur-med) var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* ===== App shell: topbar / workspace / timeline ===== */
 
 .editor {
