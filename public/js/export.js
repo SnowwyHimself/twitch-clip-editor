@@ -20,7 +20,13 @@ const modalResult = document.getElementById('export-result');
 const resultVideo = document.getElementById('result-video');
 const downloadLink = document.getElementById('download-link');
 const closeModalBtn = document.getElementById('export-close-btn');
+const optionsPane = document.getElementById('export-options');
+const progressPane = document.getElementById('export-progress');
+const startRenderBtn = document.getElementById('export-start-btn');
+const resolutionSelect = document.getElementById('export-resolution');
+const qualitySelect = document.getElementById('export-quality');
 
+const EXPORT_OPTS_KEY = 'clipEditor.exportOpts.v1';
 let pollHandle = null;
 
 const STATUS_LABELS = {
@@ -82,6 +88,9 @@ function buildFormData() {
   formData.append('audioFadeOut', state.audio.fadeOut || 0);
   // Color grade (brightness/contrast/saturation, each -100..100).
   formData.append('color', JSON.stringify(state.color || {}));
+  // Export options — output height (px) + x264 CRF (lower = higher quality).
+  formData.append('outHeight', resolutionSelect.value);
+  formData.append('crf', qualitySelect.value);
   formData.append('layout', state.layout || 'fill');
   if (state.layout === 'split') formData.append('split', JSON.stringify(state.split));
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));
@@ -212,8 +221,17 @@ function buildFormData() {
   return { endpoint, formData };
 }
 
-function showModal() {
+// Opens the modal on the options step (pick resolution/quality, then Render).
+function showOptions() {
   modal.classList.remove('hidden');
+  optionsPane.classList.remove('hidden');
+  progressPane.classList.add('hidden');
+}
+
+// Switches the modal to the progress step.
+function showProgress() {
+  optionsPane.classList.add('hidden');
+  progressPane.classList.remove('hidden');
   modalResult.classList.add('hidden');
   modalBarFill.style.width = '0%';
   modalBarFill.classList.remove('error');
@@ -267,12 +285,18 @@ function pollStatus(jobId) {
   }, 700);
 }
 
-async function beginExport() {
+function beginExport() {
   if (!state.source) return;
   stopPolling();
-  showModal();
+  showOptions();
+}
+
+async function startRender() {
+  stopPolling();
+  showProgress();
   setExporting(true);
   modalStatus.textContent = 'Starting...';
+  localStorage.setItem(EXPORT_OPTS_KEY, JSON.stringify({ res: resolutionSelect.value, crf: qualitySelect.value }));
   try {
     const { endpoint, formData } = buildFormData();
     const { jobId } = await startExport(endpoint, formData);
@@ -284,6 +308,15 @@ async function beginExport() {
 
 export function initExport() {
   exportBtn.addEventListener('click', beginExport);
+  startRenderBtn.addEventListener('click', startRender);
+  // Restore the last-used export options.
+  try {
+    const saved = JSON.parse(localStorage.getItem(EXPORT_OPTS_KEY) || '{}');
+    if (saved.res) resolutionSelect.value = saved.res;
+    if (saved.crf) qualitySelect.value = saved.crf;
+  } catch {
+    /* defaults */
+  }
   closeModalBtn.addEventListener('click', () => {
     stopPolling();
     setExporting(false);

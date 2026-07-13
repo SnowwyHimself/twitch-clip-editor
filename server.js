@@ -841,7 +841,7 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, exportOpts, onProgress) {
   const hasAppended = Array.isArray(appended) && appended.length > 0;
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
@@ -1065,13 +1065,27 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     }
   }
 
-  const outputArgs = ['-filter_complex', filterComplex, '-map', '[outv]'];
+  // Export options: downscale the finished frame to the chosen resolution
+  // (the "p" value targets the short side, so it works for portrait and
+  // landscape), and use the chosen CRF (lower = higher quality/larger file).
+  let mapVideoLabel = '[outv]';
+  const shortSide = Math.min(canvasW, canvasH);
+  const targetRes = exportOpts && exportOpts.targetRes;
+  if (targetRes && targetRes < shortSide) {
+    const factor = targetRes / shortSide;
+    const ow = Math.max(2, Math.round((canvasW * factor) / 2) * 2);
+    const oh = Math.max(2, Math.round((canvasH * factor) / 2) * 2);
+    filterComplex += `;[outv]scale=${ow}:${oh}[outvs]`;
+    mapVideoLabel = '[outvs]';
+  }
+  const crf = String((exportOpts && exportOpts.crf) || 19);
+  const outputArgs = ['-filter_complex', filterComplex, '-map', mapVideoLabel];
   if (audioMap) outputArgs.push('-map', audioMap);
   args.push(
     ...outputArgs,
     '-c:v', 'libx264',
     '-preset', 'fast',
-    '-crf', '19',
+    '-crf', crf,
     '-c:a', 'aac',
     '-b:a', '192k',
     '-movflags', '+faststart', // moves the moov atom to the front so <video> playback doesn't fail/stall before the file is fully downloaded
@@ -1263,6 +1277,15 @@ function buildAppendedClips(body, appendedFiles) {
   });
 }
 
+// Export options: CRF (12-35, lower = better) + target resolution (short-side
+// px, e.g. 1080/720/480; null = keep canvas).
+function buildExportOpts(body) {
+  const crfRaw = parseInt(body.crf, 10);
+  const crf = Number.isFinite(crfRaw) ? Math.min(35, Math.max(12, crfRaw)) : 19;
+  const resRaw = parseInt(body.outHeight, 10);
+  return { crf, targetRes: Number.isFinite(resRaw) && resRaw > 0 ? resRaw : null };
+}
+
 // Color grade { brightness, contrast, saturation }, each -100..100.
 function buildColor(body) {
   let raw = {};
@@ -1387,7 +1410,7 @@ async function resolveAppendedClips(appendedClips) {
   return out;
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -1426,7 +1449,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, exportOpts, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -1441,7 +1464,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -1449,7 +1472,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -1587,7 +1610,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildSplit(req.body || {}),
     buildMainAudio(req.body || {}),
     buildAppendedClips(req.body || {}, req.files.appendedVideo),
-    buildColor(req.body || {})
+    buildColor(req.body || {}),
+    buildExportOpts(req.body || {})
   );
 });
 
@@ -1626,7 +1650,8 @@ app.post(
       buildSplit(req.body),
       buildMainAudio(req.body),
       buildAppendedClips(req.body, req.files.appendedVideo),
-      buildColor(req.body)
+      buildColor(req.body),
+      buildExportOpts(req.body)
     );
   }
 );

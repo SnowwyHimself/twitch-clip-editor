@@ -537,11 +537,32 @@
         <h2>Export</h2>
         <button type="button" id="export-close-btn" class="secondary-btn">Close</button>
       </div>
-      <div id="export-status" class="export-status">Starting...</div>
-      <div class="export-bar"><div id="export-bar-fill" class="export-bar-fill"></div></div>
-      <div id="export-result" class="export-result hidden">
-        <video id="result-video" controls></video>
-        <a id="download-link" class="primary-btn download-btn" download>Download</a>
+      <div id="export-options" class="export-options">
+        <div class="field-group">
+          <label class="field-label" for="export-resolution">Resolution</label>
+          <select id="export-resolution" class="font-select">
+            <option value="1080">1080p (full)</option>
+            <option value="720">720p (smaller file)</option>
+            <option value="480">480p (smallest)</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="export-quality">Quality</label>
+          <select id="export-quality" class="font-select">
+            <option value="18">Higher (larger file)</option>
+            <option value="21" selected>Balanced</option>
+            <option value="25">Smaller (lower quality)</option>
+          </select>
+        </div>
+        <button type="button" id="export-start-btn" class="primary-btn full-width">Render</button>
+      </div>
+      <div id="export-progress" class="hidden">
+        <div id="export-status" class="export-status">Starting...</div>
+        <div class="export-bar"><div id="export-bar-fill" class="export-bar-fill"></div></div>
+        <div id="export-result" class="export-result hidden">
+          <video id="result-video" controls></video>
+          <a id="download-link" class="primary-btn download-btn" download>Download</a>
+        </div>
       </div>
     </div>
   </div>
