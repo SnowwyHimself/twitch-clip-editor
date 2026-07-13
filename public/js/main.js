@@ -20,6 +20,7 @@ import {
   selectedAppendedClip,
   removeAppendedClip,
   sourceDuration,
+  outputDuration,
   setTimelineMode,
   undo,
   redo,
@@ -27,7 +28,15 @@ import {
   canRedo,
 } from './state.js';
 import { fetchFonts, fetchAspectRatios, fetchWhisperStatus, fetchPreviewSource } from './api.js';
-import { initPreview, attachSource, setPlaceholder, getCurrentTime, togglePlay } from './preview.js';
+import {
+  initPreview,
+  attachSource,
+  setPlaceholder,
+  getCurrentTime,
+  getCurrentOutputTime,
+  seekOutput,
+  togglePlay,
+} from './preview.js';
 import { initTimeline } from './timeline.js';
 import { initPanel, showTab } from './panel.js';
 import { initExport } from './export.js';
@@ -250,6 +259,18 @@ function wireShortcuts() {
     if (e.key === ' ') {
       e.preventDefault();
       togglePlay();
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      seekOutput(getCurrentOutputTime() + (e.shiftKey ? 1 : 0.1));
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      seekOutput(getCurrentOutputTime() - (e.shiftKey ? 1 : 0.1));
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      seekOutput(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      seekOutput(outputDuration());
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       // Deletes whatever is selected — a text layer, sound, overlay, or a
       // video segment — mirroring the timeline toolbar's Delete button.
