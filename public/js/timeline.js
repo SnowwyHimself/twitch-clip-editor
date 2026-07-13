@@ -52,6 +52,7 @@ import {
   outputDuration,
   primaryOutputDuration,
   appendedLayout,
+  orderedPieces,
   selectClip,
   selectedAppendedClip,
   removeAppendedClip,
@@ -431,9 +432,10 @@ function attachAppendedClipTrim(edge, clip, isLeft) {
 
 function layoutTransitionBadges() {
   const pps = pxPerSecond();
+  const pieces = orderedPieces();
   videoTrack.querySelectorAll('.tl-transition-badge').forEach((badge) => {
-    const seg = state.segments.find((s) => s.id === badge.dataset.after);
-    if (seg) badge.style.left = `${(seg.outStart + (seg.end - seg.start)) * pps}px`;
+    const piece = pieces.find((p) => p.id === badge.dataset.after);
+    if (piece) badge.style.left = `${piece.outEnd * pps}px`;
   });
 }
 
@@ -664,14 +666,15 @@ function renderVideoTrack() {
     videoTrack.appendChild(el);
   }
 
-  // Transition badges at boundaries that have one.
+  // Transition badges at boundaries that have one — anchored to any piece
+  // (segment OR appended clip), positioned by its output-end in layout (C2).
   for (const tr of state.transitions) {
-    const seg = state.segments.find((s) => s.id === tr.afterSegmentId);
-    if (!seg) continue;
+    const piece = orderedPieces().find((p) => p.id === tr.afterSegmentId);
+    if (!piece) continue;
     const badge = document.createElement('button');
     badge.type = 'button';
     badge.className = 'tl-transition-badge';
-    badge.dataset.after = seg.id;
+    badge.dataset.after = piece.id;
     badge.innerHTML = icon('zap', 12);
     badge.title = `White flash (${tr.duration.toFixed(1)}s) — click to remove`;
     badge.addEventListener('pointerdown', (e) => e.stopPropagation());

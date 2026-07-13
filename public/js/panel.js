@@ -27,6 +27,7 @@ import {
   outputDuration,
   addTransitionAfter,
   removeTransition,
+  orderedPieces,
   addOverlay,
   updateOverlay,
   removeOverlay,
@@ -1018,20 +1019,18 @@ function wireSoundControls() {
 // playhead — transitions never span a free-mode black gap.
 function boundaryNearestPlayhead() {
   const outT = getCurrentOutputTime();
+  const pieces = orderedPieces();
   let best = null;
   let bestDist = Infinity;
-  for (let i = 0; i < state.segments.length - 1; i++) {
-    const seg = state.segments[i];
-    const next = state.segments[i + 1];
-    const outEnd = seg.outStart + (seg.end - seg.start);
-    if (next.outStart - outEnd > 0.05) continue;
-    const dist = Math.abs(outT - outEnd);
+  for (let i = 0; i < pieces.length - 1; i++) {
+    if (pieces[i + 1].outStart - pieces[i].outEnd > 0.05) continue; // no gap-spanning
+    const dist = Math.abs(outT - pieces[i].outEnd);
     if (dist < bestDist) {
       bestDist = dist;
-      best = seg;
+      best = pieces[i];
     }
   }
-  return best;
+  return best; // { kind, id, outStart, outEnd } | null
 }
 
 function renderTransitionList() {
@@ -1041,7 +1040,7 @@ function renderTransitionList() {
     return;
   }
   for (const tr of state.transitions) {
-    const idx = state.segments.findIndex((s) => s.id === tr.afterSegmentId);
+    const idx = orderedPieces().findIndex((p) => p.id === tr.afterSegmentId);
     const row = document.createElement('div');
     row.className = 'trans-row';
     const label = document.createElement('span');
@@ -1071,16 +1070,16 @@ function wireTransitionControls() {
     els.transDurationValue.textContent = `${parseFloat(els.transDurationSlider.value).toFixed(1)}s`;
   });
   els.transAddBtn.addEventListener('click', () => {
-    if (state.segments.length < 2) {
-      els.transStatus.textContent = 'There’s only one piece — use ✂ Split to make a cut first.';
+    if (orderedPieces().length < 2) {
+      els.transStatus.textContent = 'There’s only one piece — split, or add another clip, to make a boundary first.';
       return;
     }
-    const seg = boundaryNearestPlayhead();
-    if (!seg) {
-      els.transStatus.textContent = 'No touching cut near the playhead (transitions can’t span a black gap).';
+    const piece = boundaryNearestPlayhead();
+    if (!piece) {
+      els.transStatus.textContent = 'No touching boundary near the playhead (transitions can’t span a black gap).';
       return;
     }
-    addTransitionAfter(seg.id, parseFloat(els.transDurationSlider.value), transitionType);
+    addTransitionAfter(piece.id, parseFloat(els.transDurationSlider.value), transitionType);
     els.transStatus.textContent = 'Added — the ✦ badge on the cut marks it; click the badge (or ✕ below) to remove.';
   });
 }

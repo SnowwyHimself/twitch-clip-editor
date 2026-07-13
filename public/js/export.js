@@ -9,7 +9,7 @@
 // shows over exactly the same frames in the rendered file, whatever was
 // cut before it.
 
-import { state, on, keptSegments, sourceDuration, sourceToOutput } from './state.js';
+import { state, on, keptSegments, orderedPieces, sourceDuration, sourceToOutput } from './state.js';
 import { startExport, fetchJobStatus } from './api.js';
 
 const exportBtn = document.getElementById('export-btn');
@@ -140,14 +140,17 @@ function buildFormData() {
         kept.map((s) => ({ start: s.start, end: s.end, outStart: s.outStart, settings: s.settings || null }))
       )
     );
-    // Transitions as piece indexes (order matches the segments payload).
+    // Transitions as UNIFIED piece indexes (kept segments then appended clips,
+    // matching the server's stitched piece order) so a transition can sit at a
+    // cross-source boundary, not just between primary segments (C2).
+    const orderedIds = orderedPieces().map((p) => p.id);
     const transitions = state.transitions
       .map((tr) => ({
-        afterIndex: kept.findIndex((s) => s.id === tr.afterSegmentId),
+        afterIndex: orderedIds.indexOf(tr.afterSegmentId),
         duration: tr.duration,
         color: tr.type === 'black-flash' ? 'black' : 'white',
       }))
-      .filter((tr) => tr.afterIndex >= 0 && tr.afterIndex < kept.length - 1);
+      .filter((tr) => tr.afterIndex >= 0 && tr.afterIndex < orderedIds.length - 1);
     if (transitions.length > 0) {
       formData.append('transitions', JSON.stringify(transitions));
     }

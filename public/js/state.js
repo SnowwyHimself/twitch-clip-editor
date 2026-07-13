@@ -261,6 +261,8 @@ export function removeAppendedClip(id) {
   const i = state.appendedClips.findIndex((c) => c.id === id);
   if (i === -1) return;
   state.appendedClips.splice(i, 1);
+  // Drop any transition anchored to this clip's boundary (C2).
+  state.transitions = state.transitions.filter((tr) => tr.afterSegmentId !== id);
   if (isSelected('clip', id)) clearSelection();
   emit('segments');
 }
@@ -504,15 +506,39 @@ export function removeSegment(id) {
 
 let transitionCounter = 0;
 
-// Attaches a white-flash at the boundary after this piece (it must have a
-// following piece). One transition per boundary — re-adding replaces.
-export function addTransitionAfter(segmentId, duration, type = 'white-flash') {
-  const idx = state.segments.findIndex((s) => s.id === segmentId);
-  if (idx === -1 || idx === state.segments.length - 1) return null;
-  state.transitions = state.transitions.filter((tr) => tr.afterSegmentId !== segmentId);
+// All video pieces (primary segments + appended clips) in OUTPUT order, each as
+// { kind:'segment'|'clip', id, outStart, outEnd }. The single source of truth
+// for boundaries — a transition can sit after any piece whose next piece is
+// output-touching (segment→segment, segment→clip, or clip→clip).
+export function orderedPieces() {
+  const segs = state.segments
+    .map((s) => ({ kind: 'segment', id: s.id, outStart: s.outStart, outEnd: s.outStart + (s.end - s.start) }))
+    .sort((a, b) => a.outStart - b.outStart);
+  const clips = appendedLayout().map((it) => ({
+    kind: 'clip',
+    id: it.clip.id,
+    outStart: it.outStart,
+    outEnd: it.outEnd,
+  }));
+  return [...segs, ...clips];
+}
+
+// True if the piece at index i in orderedPieces has an output-touching next
+// piece (so a transition is meaningful there — it never spans a black gap).
+function boundaryTouches(pieces, i) {
+  return i >= 0 && i < pieces.length - 1 && pieces[i + 1].outStart - pieces[i].outEnd <= 0.05;
+}
+
+// Attaches a flash at the boundary after this piece (segment OR appended clip;
+// it must have a following touching piece). One transition per boundary.
+export function addTransitionAfter(pieceId, duration, type = 'white-flash') {
+  const pieces = orderedPieces();
+  const idx = pieces.findIndex((p) => p.id === pieceId);
+  if (!boundaryTouches(pieces, idx)) return null;
+  state.transitions = state.transitions.filter((tr) => tr.afterSegmentId !== pieceId);
   const tr = {
     id: `tr-${Date.now()}-${transitionCounter++}`,
-    afterSegmentId: segmentId,
+    afterSegmentId: pieceId, // a piece id (segment or clip) — name kept for compat
     type: type === 'black-flash' ? 'black-flash' : 'white-flash',
     duration,
   };

@@ -888,6 +888,25 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
   };
 
   const segs = segments || [];
+  // Fade construction for a piece at UNIFIED index u (segments then appended
+  // clips): a fade-OUT on its tail if a transition sits after it (and it has a
+  // following piece), and a fade-IN on its head if a transition sits after the
+  // PREVIOUS piece. Works at any boundary, cross-source included (C2).
+  const totalPieces = segs.length + (appended ? appended.length : 0);
+  const fadesFor = (u, len) => {
+    const out = [];
+    const trAfter = (transitions || []).find((t) => t.afterIndex === u);
+    if (trAfter && u < totalPieces - 1) {
+      const half = Math.min(trAfter.duration / 2, len / 2);
+      out.push(`fade=t=out:st=${(len - half).toFixed(3)}:d=${half.toFixed(3)}:color=${trAfter.color || 'white'}`);
+    }
+    const trBefore = (transitions || []).find((t) => t.afterIndex === u - 1);
+    if (trBefore) {
+      const half = Math.min(trBefore.duration / 2, len / 2);
+      out.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=${trBefore.color || 'white'}`);
+    }
+    return out.length ? `,${out.join(',')}` : '';
+  };
   if (segs.length === 0) {
     // No trim on the primary — the whole source is one piece.
     chain += `[0:v]${NV}[v${n}];`;
@@ -898,23 +917,13 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
       const gap = seg.outStart - cursor;
       if (gap > 0.01) addBlackFiller(gap);
       const len = seg.end - seg.start;
-      const fades = [];
-      const trAfter = (transitions || []).find((t) => t.afterIndex === i);
-      if (trAfter && i < segs.length - 1) {
-        const half = Math.min(trAfter.duration / 2, len / 2);
-        fades.push(`fade=t=out:st=${(len - half).toFixed(3)}:d=${half.toFixed(3)}:color=${trAfter.color || 'white'}`);
-      }
-      const trBefore = (transitions || []).find((t) => t.afterIndex === i - 1);
-      if (trBefore) {
-        const half = Math.min(trBefore.duration / 2, len / 2);
-        fades.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=${trBefore.color || 'white'}`);
-      }
-      const fadeChain = fades.length ? `,${fades.join(',')}` : '';
+      // Unified piece index i (segments precede appended clips) — a transition
+      // after the LAST segment now dips into the first appended clip (C2).
       chain += pieceVideo(
         `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS`,
         seg.settings,
         n,
-        fadeChain
+        fadesFor(i, len)
       );
       if (hasAudio) chain += `[0:a]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
       pushPair();
@@ -927,7 +936,9 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
     const s = clip.start.toFixed(3);
     const e = clip.end.toFixed(3);
     const len = (clip.end - clip.start).toFixed(3);
-    chain += pieceVideo(`[${inIdx}:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS`, clip.settings, n, '');
+    // Unified index for an appended clip = segs.length + idx (C2 transitions).
+    const fadeChain = fadesFor(segs.length + idx, clip.end - clip.start);
+    chain += pieceVideo(`[${inIdx}:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS`, clip.settings, n, fadeChain);
     if (hasAudio) {
       if (clip.hasAudio) {
         chain += `[${inIdx}:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
