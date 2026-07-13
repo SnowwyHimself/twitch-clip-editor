@@ -754,7 +754,84 @@ function buildSegmentFilter(segments, hasAudio, transitions) {
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, onProgress) {
+// Sequential multi-source concat: the primary clip's kept pieces (with the same
+// gap-filler + white-transition handling as buildSegmentFilter) followed by the
+// appended clips, in order. EVERY piece is normalized to a common WxH/fps/sar/
+// pix_fmt (the primary's) so concat — which demands identical link params —
+// accepts pieces from differently-encoded sources. Used only when there ARE
+// appended clips; the plain single-source path above is untouched otherwise.
+function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appended, appendedInputStart) {
+  const AFMT = 'aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo';
+  const NV = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p`;
+  let chain = '';
+  const pairLabels = [];
+  let n = 0;
+  let cursor = 0;
+  const pushPair = (v, a) => {
+    pairLabels.push(hasAudio ? `[v${n}][a${n}]` : `[v${n}]`);
+    n += 1;
+  };
+  const addBlackFiller = (gapSeconds) => {
+    const d = gapSeconds.toFixed(3);
+    chain += `[0:v]trim=start=0:end=${d},setpts=PTS-STARTPTS,drawbox=color=black:t=fill,${NV}[v${n}];`;
+    if (hasAudio) chain += `[0:a]atrim=start=0:end=${d},asetpts=PTS-STARTPTS,volume=0,${AFMT}[a${n}];`;
+    pushPair();
+  };
+
+  const segs = segments || [];
+  if (segs.length === 0) {
+    // No trim on the primary — the whole source is one piece.
+    chain += `[0:v]${NV}[v${n}];`;
+    if (hasAudio) chain += `[0:a]${AFMT}[a${n}];`;
+    pushPair();
+  } else {
+    segs.forEach((seg, i) => {
+      const gap = seg.outStart - cursor;
+      if (gap > 0.01) addBlackFiller(gap);
+      const len = seg.end - seg.start;
+      const fades = [];
+      const trAfter = (transitions || []).find((t) => t.afterIndex === i);
+      if (trAfter && i < segs.length - 1) {
+        const half = Math.min(trAfter.duration / 2, len / 2);
+        fades.push(`fade=t=out:st=${(len - half).toFixed(3)}:d=${half.toFixed(3)}:color=white`);
+      }
+      const trBefore = (transitions || []).find((t) => t.afterIndex === i - 1);
+      if (trBefore) {
+        const half = Math.min(trBefore.duration / 2, len / 2);
+        fades.push(`fade=t=in:st=0:d=${half.toFixed(3)}:color=white`);
+      }
+      const fadeChain = fades.length ? `,${fades.join(',')}` : '';
+      chain += `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS,${NV}${fadeChain}[v${n}];`;
+      if (hasAudio) chain += `[0:a]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
+      pushPair();
+      cursor = seg.outStart + len;
+    });
+  }
+
+  appended.forEach((clip, idx) => {
+    const inIdx = appendedInputStart + idx;
+    const s = clip.start.toFixed(3);
+    const e = clip.end.toFixed(3);
+    const len = (clip.end - clip.start).toFixed(3);
+    chain += `[${inIdx}:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS,${NV}[v${n}];`;
+    if (hasAudio) {
+      if (clip.hasAudio) {
+        chain += `[${inIdx}:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
+      } else {
+        // Silence of the exact length so its audio matches its video for concat.
+        chain += `anullsrc=r=44100:cl=stereo,atrim=end=${len},asetpts=PTS-STARTPTS,${AFMT}[a${n}];`;
+      }
+    }
+    pushPair();
+  });
+
+  const outLabels = hasAudio ? '[segv][sega]' : '[segv]';
+  chain += `${pairLabels.join('')}concat=n=${n}:v=1:a=${hasAudio ? 1 : 0}${outLabels};`;
+  return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
+}
+
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, onProgress) {
+  const hasAppended = Array.isArray(appended) && appended.length > 0;
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
   // straight [0:v]/[0:a]. A single kept range starting at output 0 (the
@@ -763,8 +840,14 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   // free-form gaps (a lone piece placed after black counts), transitions
   // — goes through the trim/filler/concat filter chain below.
   const noTrim = !segments || segments.length === 0;
+  // The fast input-side -ss/-t single-range path can't be used when appended
+  // clips are stitched — [0:v] must stay whole for the concat filter.
   const singleRange =
-    !noTrim && segments.length === 1 && segments[0].outStart <= 0.01 && (!transitions || transitions.length === 0);
+    !hasAppended &&
+    !noTrim &&
+    segments.length === 1 &&
+    segments[0].outStart <= 0.01 &&
+    (!transitions || transitions.length === 0);
   // -progress pipe:1 streams machine-readable key=value progress lines to
   // stdout (stderr keeps the normal log for error reporting) — parsed by
   // runFfmpegWithProgress so the job status can expose a real percentage.
@@ -774,6 +857,9 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     args.push('-t', (segments[0].end - segments[0].start).toFixed(3));
   }
   args.push('-i', inputPath);
+  // Appended clips are inputs 1..A (right after the primary), before overlays.
+  const appendedInputStart = 1;
+  if (hasAppended) for (const clip of appended) args.push('-i', clip.filePath);
 
   // Input order: main video is always 0; the media overlay (if any) comes
   // next so it renders underneath the text layers, which are always added
@@ -781,7 +867,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   // overlay/text combination in CapCut and similar editors stacks by
   // default.
   const overlayStages = [];
-  let nextInputIndex = 1;
+  let nextInputIndex = 1 + (hasAppended ? appended.length : 0);
   // Each overlay is its own input + composite stage, stacked in order (so a
   // later overlay sits on top). A video overlay is input-seeked by `offset`
   // (so a split video overlay's right half continues where it left off) and
@@ -859,7 +945,23 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   let segmentPrefix = '';
   let sourceVideoLabel = '[0:v]';
   let sourceAudioLabel = hasAudio ? '[0:a]' : null;
-  if (!noTrim && !singleRange) {
+  if (hasAppended) {
+    // Stitch primary + appended clips into one normalized [segv]/[sega].
+    const fps = Math.round(mediaInfo.fps || 30) || 30;
+    const built = buildStitchedFilter(
+      segments,
+      transitions || [],
+      hasAudio,
+      mediaInfo.width,
+      mediaInfo.height,
+      fps,
+      appended,
+      appendedInputStart
+    );
+    segmentPrefix = built.chain;
+    sourceVideoLabel = built.videoLabel;
+    sourceAudioLabel = built.audioLabel;
+  } else if (!noTrim && !singleRange) {
     const built = buildSegmentFilter(segments, hasAudio, transitions || []);
     segmentPrefix = built.chain;
     sourceVideoLabel = built.videoLabel;
@@ -878,7 +980,9 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   // resolves sourceAudioLabel to either a real [sega] filter label or
   // null (source had no audio at all), so it's mapped directly rather
   // than through the '?' suffix.
-  let audioMap = noTrim || singleRange ? '0:a?' : sourceAudioLabel;
+  // With appended clips the stitched [sega] IS the audio; otherwise the
+  // no-trim / single-range fast paths map input audio directly via 0:a?.
+  let audioMap = hasAppended ? sourceAudioLabel : noTrim || singleRange ? '0:a?' : sourceAudioLabel;
   if (speed !== 1 && hasAudio) {
     filterComplex += `;${sourceAudioLabel}atempo=${speed}[outa]`;
     audioMap = '[outa]';
@@ -1115,6 +1219,39 @@ function buildAudioOverlays(body, audioFiles) {
   });
 }
 
+// Appended clips (sequential multi-source). Each entry is either a URL clip
+// (re-resolved from the preview cache / downloaded at render time) or an
+// uploaded file (order-matched to the 'appendedVideo' files). start/end trim
+// the appended source. Their input paths are resolved later in processJob.
+function buildAppendedClips(body, appendedFiles) {
+  let meta = [];
+  try {
+    meta = JSON.parse(body.appendedClips || '[]');
+  } catch {
+    meta = [];
+  }
+  if (!Array.isArray(meta) || meta.length === 0) return [];
+  const files = appendedFiles || [];
+  let fileCursor = 0;
+  return meta.map((m) => {
+    const start = parseFloat(m.start);
+    const end = parseFloat(m.end);
+    const clip = {
+      kind: m.kind === 'file' ? 'file' : 'url',
+      start: Number.isFinite(start) ? Math.max(0, start) : 0,
+      end: Number.isFinite(end) && end > 0 ? end : null,
+    };
+    if (clip.kind === 'url') {
+      clip.url = typeof m.url === 'string' ? m.url : null;
+      clip.section = m.section && Number.isFinite(parseFloat(m.section.start)) ? m.section : null;
+    } else {
+      const f = files[fileCursor++];
+      clip.filePath = f ? f.path : null;
+    }
+    return clip;
+  });
+}
+
 // Main-clip audio settings: volume 0-200 (0 = muted, already collapsed by the
 // frontend) and head/tail fades in seconds.
 function buildMainAudio(body) {
@@ -1189,7 +1326,30 @@ function buildSection(body) {
   return { start, end };
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio) {
+// Resolves each appended clip to a local file path + probed info, so it can be
+// added as an ffmpeg input and stitched. URL clips reuse the preview cache
+// (downloading only if missing); file clips are already on disk. A clip that
+// fails to resolve is dropped (the render proceeds without it).
+async function resolveAppendedClips(appendedClips) {
+  const out = [];
+  for (const clip of appendedClips || []) {
+    try {
+      let filePath = clip.filePath;
+      if (clip.kind === 'url' && clip.url) filePath = await fetchPreviewSource(clip.url, clip.section || undefined);
+      if (!filePath || !fs.existsSync(filePath)) continue;
+      const info = await probeSource(filePath);
+      const start = Math.max(0, Math.min(clip.start || 0, info.duration || 0));
+      const end = clip.end && clip.end > start ? Math.min(clip.end, info.duration || clip.end) : info.duration || 0;
+      if (end - start < 0.05) continue;
+      out.push({ filePath, start, end, hasAudio: info.hasAudio });
+    } catch {
+      /* skip an appended clip that can't be resolved */
+    }
+  }
+  return out;
+}
+
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -1203,6 +1363,11 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     // the export progress percentage.
     const mediaInfo = await probeSource(inputPath);
 
+    // Resolve appended clips (download URL clips / probe files) so they can be
+    // stitched after the primary. Their total length extends the output.
+    const appended = await resolveAppendedClips(appendedClips);
+    const appendedTotal = appended.reduce((sum, c) => sum + (c.end - c.start), 0);
+
     captionOverlays = buildCaptionOverlays(jobId, textLayers, canvasW, canvasH);
 
     // Expected output length: the full output span — pieces plus any
@@ -1210,18 +1375,20 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     // stretched by speed. Capped at 0.99 until the process actually exits
     // cleanly, so the bar never shows "done" for a render that then fails
     // at the muxing stage.
-    const outputSpan =
+    const primarySpan =
       segments && segments.length > 0
         ? segments.reduce((max, s) => Math.max(max, s.outStart + (s.end - s.start)), 0)
         : mediaInfo.duration || 0;
-    const expectedDuration = outputSpan / speed;
+    // The stitched [segv]/[sega] (primary + appended) is sped uniformly, so the
+    // whole span is divided by speed.
+    const expectedDuration = (primarySpan + appendedTotal) / speed;
     const onProgress = (outTime) => {
       if (expectedDuration > 0) {
         setJob(jobId, { progress: Math.min(0.99, outTime / expectedDuration) });
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -1236,7 +1403,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio) {
+async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL (and
@@ -1244,7 +1411,7 @@ async function downloadAndProcess(jobId, url, section, aspectRatio, zoom, blur, 
     // a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, section));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, section, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -1270,6 +1437,7 @@ const uploadFields = upload.fields([
   { name: 'video', maxCount: 1 },
   { name: 'overlay', maxCount: 30 },
   { name: 'audioTrack', maxCount: 30 },
+  { name: 'appendedVideo', maxCount: 20 },
 ]);
 
 const app = express();
@@ -1379,7 +1547,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildKeyframes(req.body || {}),
     buildFaceTrack(req.body || {}),
     buildSplit(req.body || {}),
-    buildMainAudio(req.body || {})
+    buildMainAudio(req.body || {}),
+    buildAppendedClips(req.body || {}, req.files.appendedVideo)
   );
 });
 
@@ -1416,7 +1585,8 @@ app.post(
       buildKeyframes(req.body),
       buildFaceTrack(req.body),
       buildSplit(req.body),
-      buildMainAudio(req.body)
+      buildMainAudio(req.body),
+      buildAppendedClips(req.body, req.files.appendedVideo)
     );
   }
 );

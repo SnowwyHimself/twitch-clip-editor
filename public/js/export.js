@@ -177,6 +177,24 @@ function buildFormData() {
   }
   if (sounds.length > 0) formData.append('sounds', JSON.stringify(sounds));
 
+  // Appended clips (sequential multi-source) — each stitched after the primary.
+  // URL clips ride as metadata (the server re-resolves via the preview cache);
+  // file clips ride as 'appendedVideo' files, order-matched to hasFile entries.
+  const appended = [];
+  for (const clip of state.appendedClips) {
+    const s = clip.source;
+    const entry = { kind: s.kind, start: Number((clip.start || 0).toFixed(3)), end: Number((clip.end || 0).toFixed(3)) };
+    if (s.kind === 'url') {
+      entry.url = s.url;
+      if (s.section) entry.section = s.section;
+    } else {
+      formData.append('appendedVideo', s.file);
+      entry.hasFile = true;
+    }
+    appended.push(entry);
+  }
+  if (appended.length > 0) formData.append('appendedClips', JSON.stringify(appended));
+
   let endpoint;
   if (state.source.kind === 'url') {
     endpoint = '/api/process-url';
