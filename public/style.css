@@ -2073,6 +2073,27 @@ img.preset-thumb {
   background: rgba(124, 92, 255, 0.4);
 }
 
+/* Audio fade ramps on a clip bar: a translucent wedge showing the volume
+   envelope rising in / falling out, sized to the fade duration. */
+.tl-fade {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  background: rgba(10, 10, 14, 0.55);
+}
+.tl-fade-in {
+  left: 0;
+  /* opaque (silent) at the left, tapering to nothing at the fade-in end */
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+.tl-fade-out {
+  right: 0;
+  /* nothing at the fade-out start, growing opaque toward the right end */
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
 /* On-piece mute toggle (top-left). Sits above the drag surface; its own
    handlers stop propagation so clicking it never starts a drag. */
 .tl-seg-mute {

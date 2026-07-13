@@ -377,12 +377,41 @@ function layoutLayerBars() {
 }
 
 function layoutSoundBars() {
+  const pps = pxPerSecond();
   for (const s of state.sounds) {
     const el = soundBarEls.get(s.id);
     if (!el) continue;
     layoutClipBar(el, s);
     paintWaveform(el, s.url, s.offset || 0, s.end - s.start);
+    layoutFadeRamps(el, s, pps);
   }
+}
+
+// Draws the fade in/out as triangular envelope ramps at each end of a clip bar
+// (the standard DAW look), sized to the fade seconds. Clamped so the two ramps
+// never exceed the bar. Updates live because the sound row re-lays out on every
+// 'settings' emit (the fade sliders fire it).
+function layoutFadeRamps(el, clip, pps) {
+  const barPx = parseFloat(el.style.width) || 0;
+  const room = Math.max(0, barPx - 4);
+  const inPx = Math.max(0, Math.min(room, (clip.fadeIn || 0) * pps));
+  const outPx = Math.max(0, Math.min(room - inPx, (clip.fadeOut || 0) * pps));
+  let fin = el.querySelector('.tl-fade-in');
+  let fout = el.querySelector('.tl-fade-out');
+  if (!fin) {
+    fin = document.createElement('div');
+    fin.className = 'tl-fade tl-fade-in';
+    el.appendChild(fin);
+  }
+  if (!fout) {
+    fout = document.createElement('div');
+    fout.className = 'tl-fade tl-fade-out';
+    el.appendChild(fout);
+  }
+  fin.style.width = `${inPx}px`;
+  fin.style.display = inPx > 0.5 ? 'block' : 'none';
+  fout.style.width = `${outPx}px`;
+  fout.style.display = outPx > 0.5 ? 'block' : 'none';
 }
 
 function layoutOverlayBars() {
