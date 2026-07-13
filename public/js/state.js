@@ -754,6 +754,16 @@ export function addTextLayer(partial = {}, { select = true } = {}) {
     strokeColor: '#000000',
     uppercase: false,
     opacity: 1,
+    // D1 remainder — all default to the current look. Fractions are of font size.
+    shadowDistance: 0.07, // down-right offset magnitude
+    shadowBlur: 0.05,
+    shadowOpacity: 0.4,
+    bgOpacity: 1, // box/pill fill opacity
+    bgPadding: 1, // multiplier of the default box padding
+    bgRadius: 1, // multiplier of the default corner radius
+    letterSpacing: 0, // em (fraction of font size)
+    lineHeight: 1, // multiplier of the default line height
+    rotation: 0, // degrees
     xPercent: 50,
     yPercent: 25,
     wrapWidth: TEXT_WRAP_DEFAULT,

@@ -522,6 +522,35 @@
           </div>
 
           <div class="field-group">
+            <label class="field-label" for="text-rotation-slider">Rotation <span id="text-rotation-value">0°</span></label>
+            <input id="text-rotation-slider" type="range" min="-45" max="45" value="0" step="1" />
+            <label class="field-label" for="text-letterspacing-slider" style="margin-top:8px">Letter spacing <span id="text-letterspacing-value">0</span></label>
+            <input id="text-letterspacing-slider" type="range" min="-10" max="40" value="0" step="1" />
+            <label class="field-label" for="text-lineheight-slider" style="margin-top:8px">Line height <span id="text-lineheight-value">1.0</span></label>
+            <input id="text-lineheight-slider" type="range" min="70" max="200" value="100" step="1" />
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">Shadow (offset / blur / opacity)</label>
+            <label class="field-label" for="text-shadow-dist-slider" style="font-weight:400">Offset <span id="text-shadow-dist-value">7%</span></label>
+            <input id="text-shadow-dist-slider" type="range" min="0" max="25" value="7" step="1" />
+            <label class="field-label" for="text-shadow-blur-slider" style="font-weight:400">Blur <span id="text-shadow-blur-value">5%</span></label>
+            <input id="text-shadow-blur-slider" type="range" min="0" max="25" value="5" step="1" />
+            <label class="field-label" for="text-shadow-op-slider" style="font-weight:400">Opacity <span id="text-shadow-op-value">40%</span></label>
+            <input id="text-shadow-op-slider" type="range" min="0" max="100" value="40" step="1" />
+          </div>
+
+          <div class="field-group" id="text-bg-group">
+            <label class="field-label">Background pill (box style)</label>
+            <label class="field-label" for="text-bg-op-slider" style="font-weight:400">Opacity <span id="text-bg-op-value">100%</span></label>
+            <input id="text-bg-op-slider" type="range" min="0" max="100" value="100" step="1" />
+            <label class="field-label" for="text-bg-pad-slider" style="font-weight:400">Padding <span id="text-bg-pad-value">1.0x</span></label>
+            <input id="text-bg-pad-slider" type="range" min="50" max="250" value="100" step="1" />
+            <label class="field-label" for="text-bg-radius-slider" style="font-weight:400">Roundness <span id="text-bg-radius-value">1.0x</span></label>
+            <input id="text-bg-radius-slider" type="range" min="0" max="250" value="100" step="1" />
+          </div>
+
+          <div class="field-group">
             <label class="field-label">Timing (seconds)</label>
             <div class="timing-fields">
               <input id="layer-start" type="number" min="0" step="0.1" aria-label="Start time" />

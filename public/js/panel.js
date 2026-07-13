@@ -310,6 +310,20 @@ const TEXT_STYLE_PRESETS = [
   { name: 'Lower third', style: 'plain', color: '#ffffff', strokeWidth: 0, strokeColor: '#000000', uppercase: false, dropShadow: false },
 ];
 
+// D1 remainder slider mappings: prop = layer field, get(raw)=slider→value,
+// put(layer)=value→slider position, label(raw)=display. Shared by wire+refresh.
+const TEXT_SLIDER_SPECS = [
+  { id: 'text-rotation-slider', valId: 'text-rotation-value', prop: 'rotation', get: (v) => v, put: (l) => Math.round(l.rotation || 0), label: (v) => `${Math.round(v)}°` },
+  { id: 'text-letterspacing-slider', valId: 'text-letterspacing-value', prop: 'letterSpacing', get: (v) => v / 100, put: (l) => Math.round((l.letterSpacing || 0) * 100), label: (v) => String(Math.round(v)) },
+  { id: 'text-lineheight-slider', valId: 'text-lineheight-value', prop: 'lineHeight', get: (v) => v / 100, put: (l) => Math.round((l.lineHeight || 1) * 100), label: (v) => (v / 100).toFixed(1) },
+  { id: 'text-shadow-dist-slider', valId: 'text-shadow-dist-value', prop: 'shadowDistance', get: (v) => v / 100, put: (l) => Math.round((l.shadowDistance != null ? l.shadowDistance : 0.07) * 100), label: (v) => `${Math.round(v)}%` },
+  { id: 'text-shadow-blur-slider', valId: 'text-shadow-blur-value', prop: 'shadowBlur', get: (v) => v / 100, put: (l) => Math.round((l.shadowBlur != null ? l.shadowBlur : 0.05) * 100), label: (v) => `${Math.round(v)}%` },
+  { id: 'text-shadow-op-slider', valId: 'text-shadow-op-value', prop: 'shadowOpacity', get: (v) => v / 100, put: (l) => Math.round((l.shadowOpacity != null ? l.shadowOpacity : 0.4) * 100), label: (v) => `${Math.round(v)}%` },
+  { id: 'text-bg-op-slider', valId: 'text-bg-op-value', prop: 'bgOpacity', get: (v) => v / 100, put: (l) => Math.round((l.bgOpacity != null ? l.bgOpacity : 1) * 100), label: (v) => `${Math.round(v)}%` },
+  { id: 'text-bg-pad-slider', valId: 'text-bg-pad-value', prop: 'bgPadding', get: (v) => v / 100, put: (l) => Math.round((l.bgPadding != null ? l.bgPadding : 1) * 100), label: (v) => `${(v / 100).toFixed(1)}x` },
+  { id: 'text-bg-radius-slider', valId: 'text-bg-radius-value', prop: 'bgRadius', get: (v) => v / 100, put: (l) => Math.round((l.bgRadius != null ? l.bgRadius : 1) * 100), label: (v) => `${(v / 100).toFixed(1)}x` },
+];
+
 function buildTextStylePresets() {
   els.textStylePresets.innerHTML = '';
   for (const p of TEXT_STYLE_PRESETS) {
@@ -1643,6 +1657,16 @@ function wireTextControls() {
     const layer = selectedLayer();
     if (layer) updateLayer(layer.id, { opacity: parseFloat(els.textOpacitySlider.value) / 100 });
   });
+  // D1 remainder sliders — spec-driven so wiring + refresh share the mapping.
+  for (const spec of TEXT_SLIDER_SPECS) {
+    const slider = document.getElementById(spec.id);
+    slider.addEventListener('input', () => {
+      const raw = parseFloat(slider.value);
+      document.getElementById(spec.valId).textContent = spec.label(raw);
+      const layer = selectedLayer();
+      if (layer) updateLayer(layer.id, { [spec.prop]: spec.get(raw) });
+    });
+  }
   buildTextStylePresets();
 
   const commitTime = () => {
@@ -1715,6 +1739,14 @@ function refreshTextPanel() {
   const op = Math.round((layer.opacity != null ? layer.opacity : 1) * 100);
   if (document.activeElement !== els.textOpacitySlider) els.textOpacitySlider.value = op;
   els.textOpacityValue.textContent = `${op}%`;
+  for (const spec of TEXT_SLIDER_SPECS) {
+    const slider = document.getElementById(spec.id);
+    const pos = spec.put(layer);
+    if (document.activeElement !== slider) slider.value = pos;
+    document.getElementById(spec.valId).textContent = spec.label(pos);
+  }
+  // Background-pill controls only matter for the box style.
+  document.getElementById('text-bg-group').classList.toggle('hidden', layer.style !== 'box');
   if (document.activeElement !== els.layerStart) els.layerStart.value = layer.start.toFixed(2);
   if (document.activeElement !== els.layerEnd) els.layerEnd.value = layer.end.toFixed(2);
   const full = !!layer.fullDuration;

@@ -1320,6 +1320,15 @@ function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
       opacity: layer.opacity,
       karaoke: !!layer.karaoke,
       karaokeColor: layer.karaokeColor,
+      shadowDistance: layer.shadowDistance,
+      shadowBlur: layer.shadowBlur,
+      shadowOpacity: layer.shadowOpacity,
+      bgOpacity: layer.bgOpacity,
+      bgPadding: layer.bgPadding,
+      bgRadius: layer.bgRadius,
+      letterSpacing: layer.letterSpacing,
+      lineHeight: layer.lineHeight,
+      rotation: layer.rotation,
     };
     let pngIdx = 0;
     // Renders one caption PNG (a base with emphasizeWordIndex=-1, or a word
@@ -1747,6 +1756,16 @@ function buildTextLayers(body) {
       strokeColor: l && typeof l.strokeColor === 'string' ? l.strokeColor : '#000000',
       uppercase: !!(l && l.uppercase),
       opacity: l && Number.isFinite(parseFloat(l.opacity)) ? Math.max(0, Math.min(1, parseFloat(l.opacity))) : 1,
+      // D1 remainder — clamped fractions/multipliers/degrees.
+      shadowDistance: l && Number.isFinite(parseFloat(l.shadowDistance)) ? Math.max(0, Math.min(0.4, parseFloat(l.shadowDistance))) : 0.07,
+      shadowBlur: l && Number.isFinite(parseFloat(l.shadowBlur)) ? Math.max(0, Math.min(0.4, parseFloat(l.shadowBlur))) : 0.05,
+      shadowOpacity: l && Number.isFinite(parseFloat(l.shadowOpacity)) ? Math.max(0, Math.min(1, parseFloat(l.shadowOpacity))) : 0.4,
+      bgOpacity: l && Number.isFinite(parseFloat(l.bgOpacity)) ? Math.max(0, Math.min(1, parseFloat(l.bgOpacity))) : 1,
+      bgPadding: l && Number.isFinite(parseFloat(l.bgPadding)) ? Math.max(0.25, Math.min(3, parseFloat(l.bgPadding))) : 1,
+      bgRadius: l && Number.isFinite(parseFloat(l.bgRadius)) ? Math.max(0, Math.min(3, parseFloat(l.bgRadius))) : 1,
+      letterSpacing: l && Number.isFinite(parseFloat(l.letterSpacing)) ? Math.max(-0.2, Math.min(1, parseFloat(l.letterSpacing))) : 0,
+      lineHeight: l && Number.isFinite(parseFloat(l.lineHeight)) ? Math.max(0.7, Math.min(2.5, parseFloat(l.lineHeight))) : 1,
+      rotation: l && Number.isFinite(parseFloat(l.rotation)) ? Math.max(-180, Math.min(180, parseFloat(l.rotation))) : 0,
       // D2 karaoke: emphasis + per-word rel timings.
       karaoke: !!(l && l.karaoke),
       karaokeColor: l && typeof l.karaokeColor === 'string' ? l.karaokeColor : '#ffe600',

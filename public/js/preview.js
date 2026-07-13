@@ -104,10 +104,13 @@ let previewObjectUrl = null;
 // browser's shrink-to-fit width calculation for an absolutely-positioned
 // auto-width box, making word-wrap depend on position. Transforms are
 // paint-only and never feed back into layout.
-function setCenterTransform(el, centerXPx, centerYPx, frameWidth, frameHeight) {
+function setCenterTransform(el, centerXPx, centerYPx, frameWidth, frameHeight, rotationDeg = 0) {
   const offsetX = centerXPx - frameWidth / 2;
   const offsetY = centerYPx - frameHeight / 2;
-  el.style.transform = `translate(calc(-50% + ${offsetX.toFixed(2)}px), calc(-50% + ${offsetY.toFixed(2)}px))`;
+  // Rotation spins around the element's own centre (default transform-origin),
+  // matching the export's rotate-about-centre in the caption SVG (D1).
+  const rot = rotationDeg ? ` rotate(${rotationDeg}deg)` : '';
+  el.style.transform = `translate(calc(-50% + ${offsetX.toFixed(2)}px), calc(-50% + ${offsetY.toFixed(2)}px))${rot}`;
 }
 
 // 0-100 "center position" percent -> pixel center, clamped so the content
@@ -321,9 +324,10 @@ function updateLayerEl(layer) {
 
   const fontSizePx = layer.fontSize * scale;
   inner.style.fontSize = `${fontSizePx.toFixed(2)}px`;
-  inner.style.lineHeight = String(PREVIEW_LINE_HEIGHT_RATIO);
-  // D1: uppercase (set before the wrap measurement so widths reflect it) and
-  // per-layer opacity.
+  // D1: line-height + letter-spacing multipliers, uppercase, opacity — all set
+  // BEFORE the wrap measurement so widths reflect them (parity with caption.js).
+  inner.style.lineHeight = String(PREVIEW_LINE_HEIGHT_RATIO * (layer.lineHeight || 1));
+  inner.style.letterSpacing = `${((layer.letterSpacing || 0) * fontSizePx).toFixed(2)}px`;
   inner.style.textTransform = layer.uppercase ? 'uppercase' : 'none';
   root.style.opacity = String(layer.opacity != null ? layer.opacity : 1);
   // Per-layer wrap width (fraction of canvas width). The server's opentype
@@ -341,10 +345,14 @@ function updateLayerEl(layer) {
   const naturalPx = root.offsetWidth; // reflow at the unwrapped width
   root.style.width = `${Math.min(naturalPx, wrapPx).toFixed(2)}px`;
 
-  const shadowOffsetX = (fontSizePx * 0.05).toFixed(2);
-  const shadowOffsetY = (fontSizePx * 0.07).toFixed(2);
-  const shadowBlur = (fontSizePx * 0.05).toFixed(2);
-  const shadow = `drop-shadow(${shadowOffsetX}px ${shadowOffsetY}px ${shadowBlur}px rgba(0,0,0,0.4))`;
+  // D1: configurable shadow (distance/blur as fractions of font size, opacity).
+  const shDist = layer.shadowDistance != null ? layer.shadowDistance : 0.07;
+  const shBlur = layer.shadowBlur != null ? layer.shadowBlur : 0.05;
+  const shOp = layer.shadowOpacity != null ? layer.shadowOpacity : 0.4;
+  const shadowOffsetX = (fontSizePx * shDist * 0.7).toFixed(2);
+  const shadowOffsetY = (fontSizePx * shDist).toFixed(2);
+  const shadowBlur = (fontSizePx * shBlur).toFixed(2);
+  const shadow = `drop-shadow(${shadowOffsetX}px ${shadowOffsetY}px ${shadowBlur}px rgba(0,0,0,${shOp}))`;
 
   if (layer.style === 'outline' || layer.style === 'plain') {
     fillers.innerHTML = '';
@@ -358,16 +366,20 @@ function updateLayerEl(layer) {
     inner.style.webkitTextStroke = `${strokePx.toFixed(2)}px ${layer.strokeColor || 'black'}`;
     inner.style.filter = layer.dropShadow ? shadow : 'none';
   } else {
-    const paddingYPx = PREVIEW_BOX_PADDING_Y * scale;
-    const paddingXPx = PREVIEW_BOX_PADDING_X * scale;
-    const singleLineBoxHeight = fontSizePx * PREVIEW_LINE_HEIGHT_RATIO + paddingYPx * 2;
-    const radiusPx = singleLineBoxHeight * PREVIEW_BOX_RADIUS_RATIO;
+    // D1: configurable box padding / radius (multipliers) + fill opacity.
+    const padMult = layer.bgPadding != null ? layer.bgPadding : 1;
+    const radMult = layer.bgRadius != null ? layer.bgRadius : 1;
+    const paddingYPx = PREVIEW_BOX_PADDING_Y * scale * padMult;
+    const paddingXPx = PREVIEW_BOX_PADDING_X * scale * padMult;
+    const singleLineBoxHeight = fontSizePx * PREVIEW_LINE_HEIGHT_RATIO * (layer.lineHeight || 1) + paddingYPx * 2;
+    const radiusPx = singleLineBoxHeight * PREVIEW_BOX_RADIUS_RATIO * radMult;
     inner.style.color = getContrastTextColor(layer.color);
     inner.style.webkitTextStroke = '0';
     inner.style.filter = 'none';
     // One shared filter on the pills container so the connected stack
     // casts a single unified shadow, matching caption.js's <g filter>.
     fillers.style.filter = layer.dropShadow ? shadow : 'none';
+    fillers.style.opacity = String(layer.bgOpacity != null ? layer.bgOpacity : 1);
     applyBoxPills(root, inner, fillers, scale, paddingXPx, paddingYPx, radiusPx, layer.color);
   }
 
@@ -380,7 +392,7 @@ function updateLayerEl(layer) {
     applyCaptionEntrance(layer, entry, fgVideo.currentTime || 0);
   } else {
     root.style.opacity = '';
-    setCenterTransform(root, centerX, centerY, frameWidth, frameHeight);
+    setCenterTransform(root, centerX, centerY, frameWidth, frameHeight, layer.rotation || 0);
   }
 }
 
@@ -404,7 +416,7 @@ function applyCaptionEntrance(layer, entry, srcT) {
   const anim = layer.animation || 'none';
   if (anim === 'none' || srcT < layer.start) {
     entry.root.style.opacity = '';
-    setCenterTransform(entry.root, base.x, base.y, width, height);
+    setCenterTransform(entry.root, base.x, base.y, width, height, layer.rotation || 0);
     return;
   }
   const p = Math.min(1, (srcT - layer.start) / CAP_ANIM_DURATION);
@@ -420,7 +432,7 @@ function applyCaptionEntrance(layer, entry, srcT) {
   } else if (anim === 'shake') {
     dx = Math.sin(p * CAP_SHAKE_CYCLES * 2 * Math.PI) * (1 - p) * height * CAP_SHAKE_FRAC;
   }
-  setCenterTransform(entry.root, base.x + dx, base.y + dy, width, height);
+  setCenterTransform(entry.root, base.x + dx, base.y + dy, width, height, layer.rotation || 0);
 }
 
 // Shown while the playhead is inside the layer's range, or while selected

@@ -230,9 +230,12 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
-function measureWidth(font, text, fontSize) {
+// letterSpacingPx (D1) adds after every character, matching CSS letter-spacing
+// (preview) and the SVG letter-spacing attribute — so wrap widths agree.
+function measureWidth(font, text, fontSize, letterSpacingPx = 0) {
+  const ls = letterSpacingPx ? letterSpacingPx * [...text].length : 0;
   try {
-    return font.getAdvanceWidth(text, fontSize);
+    return font.getAdvanceWidth(text, fontSize) + ls;
   } catch (err) {
     // Some display fonts (e.g. Bangers, Paytone One) carry GSUB tables
     // opentype.js can't apply and throw while shaping. This width only feeds
@@ -245,7 +248,7 @@ function measureWidth(font, text, fontSize) {
       const glyph = font.charToGlyph(ch);
       width += (glyph.advanceWidth || 0) * scale;
     }
-    return width;
+    return width + ls;
   }
 }
 
@@ -278,7 +281,7 @@ function tokenizeSegments(text) {
 // A small gap is added on each side of an emoji token — without it, emoji
 // glyphs (which have no side bearing of their own, unlike text glyphs) sit
 // visibly tighter against neighboring text than word-spacing elsewhere.
-function layoutLineSegments(font, line, fontSize, emojiSize) {
+function layoutLineSegments(font, line, fontSize, emojiSize, letterSpacingPx = 0) {
   const emojiGap = fontSize * 0.08;
   const tokens = tokenizeSegments(line);
   let x = 0;
@@ -290,7 +293,7 @@ function layoutLineSegments(font, line, fontSize, emojiSize) {
       if (i < tokens.length - 1) x += emojiGap;
       return item;
     }
-    const width = measureWidth(font, seg.value, fontSize);
+    const width = measureWidth(font, seg.value, fontSize, letterSpacingPx);
     const item = { ...seg, x, width };
     x += width;
     return item;
@@ -298,13 +301,13 @@ function layoutLineSegments(font, line, fontSize, emojiSize) {
   return { segments, totalWidth: x };
 }
 
-function measureLineWidth(font, line, fontSize, emojiSize) {
-  return layoutLineSegments(font, line, fontSize, emojiSize).totalWidth;
+function measureLineWidth(font, line, fontSize, emojiSize, letterSpacingPx = 0) {
+  return layoutLineSegments(font, line, fontSize, emojiSize, letterSpacingPx).totalWidth;
 }
 
 // Splits on explicit newlines first (preserves the user's manual line breaks),
 // then greedily word-wraps each of those lines to fit maxWidth.
-function wrapText(font, text, fontSize, maxWidth, emojiSize) {
+function wrapText(font, text, fontSize, maxWidth, emojiSize, letterSpacingPx = 0) {
   const paragraphs = text.replace(/\r\n/g, '\n').split('\n');
   const lines = [];
 
@@ -318,7 +321,7 @@ function wrapText(font, text, fontSize, maxWidth, emojiSize) {
     let currentLine = '';
     for (const word of words) {
       const candidate = currentLine ? `${currentLine} ${word}` : word;
-      if (currentLine && measureLineWidth(font, candidate, fontSize, emojiSize) > maxWidth) {
+      if (currentLine && measureLineWidth(font, candidate, fontSize, emojiSize, letterSpacingPx) > maxWidth) {
         lines.push(currentLine);
         currentLine = word;
       } else {
@@ -347,11 +350,24 @@ function getContrastTextColor(hexColor) {
 // Soft, down-and-right offset shadow (CapCut-style). Scaled relative to
 // fontSize rather than fixed pixels so it stays proportional if FONT_SIZE
 // ever changes.
-function buildDropShadowFilterDef(fontSize) {
-  const dx = (fontSize * 0.05).toFixed(2);
-  const dy = (fontSize * 0.07).toFixed(2);
-  const blur = (fontSize * 0.05).toFixed(2);
-  return `<defs><filter id="dropshadow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${blur}" flood-color="black" flood-opacity="0.4"/></filter></defs>`;
+function buildDropShadowFilterDef(fontSize, dist = 0.07, blur = 0.05, opacity = 0.4) {
+  const dx = (fontSize * dist * 0.7).toFixed(2);
+  const dy = (fontSize * dist).toFixed(2);
+  const b = (fontSize * blur).toFixed(2);
+  return `<defs><filter id="dropshadow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${b}" flood-color="black" flood-opacity="${opacity}"/></filter></defs>`;
+}
+
+// Wraps SVG body in a rotate-about-centre group, growing the canvas to the
+// rotated bounding box so nothing clips. The overlay still centres the PNG, and
+// the preview rotates the element about its own centre — so they match (D1).
+function wrapRotation(body, width, height, rotationDeg) {
+  const deg = Number(rotationDeg) || 0;
+  if (!deg) return { body, width, height };
+  const rad = (Math.abs(deg) * Math.PI) / 180;
+  const nw = Math.ceil(width * Math.cos(rad) + height * Math.sin(rad));
+  const nh = Math.ceil(width * Math.sin(rad) + height * Math.cos(rad));
+  const wrapped = `<g transform="rotate(${deg} ${(nw / 2).toFixed(2)} ${(nh / 2).toFixed(2)})"><g transform="translate(${((nw - width) / 2).toFixed(2)} ${((nh - height) / 2).toFixed(2)})">${body}</g></g>`;
+  return { body: wrapped, width: nw, height: nh };
 }
 
 // Outline style: white fill, black stroke. This is the ONLY function in the
@@ -362,20 +378,21 @@ function buildDropShadowFilterDef(fontSize) {
 // differ only in whether a black stroke is drawn around the text at all,
 // so a single builder with stroke=false covers "Plain" instead of
 // duplicating the whole line-layout/drop-shadow-grouping logic.
-function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, strokePct = OUTLINE_THICKNESS, strokeColor = 'black', opacity = 1, karaoke = false, emphasizeWordIndex = -1, karaokeColor = '#ffe600' }) {
+function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, strokePct = OUTLINE_THICKNESS, strokeColor = 'black', opacity = 1, karaoke = false, emphasizeWordIndex = -1, karaokeColor = '#ffe600', letterSpacingPx = 0, lineHeightMult = 1, shadowDist = 0.07, shadowBlur = 0.05, shadowOpacity = 0.4, rotation = 0 }) {
   const textColor = color || '#ffffff';
   const ascenderPx = (font.ascender / font.unitsPerEm) * fontSize;
   const descenderPx = (Math.abs(font.descender) / font.unitsPerEm) * fontSize;
-  const lineHeight = ascenderPx + descenderPx;
+  const lineHeight = (ascenderPx + descenderPx) * lineHeightMult;
   const textBlockHeight = lineHeight * lines.length;
   const strokeWidth = fontSize * (Math.max(0, strokePct) / 100);
   const stroke = strokeWidth > 0;
+  const lsAttr = letterSpacingPx ? ` letter-spacing="${letterSpacingPx.toFixed(2)}"` : '';
 
   // Cropped tightly to the widest line (plus stroke/safety margin) rather
   // than always spanning the full canvas width — this is what lets the
   // server position the caption anywhere horizontally via the ffmpeg
   // overlay's x, the same way it already does vertically with height.
-  const maxLineWidth = Math.max(...lines.map((line) => measureLineWidth(font, line, fontSize, emojiSize)));
+  const maxLineWidth = Math.max(...lines.map((line) => measureLineWidth(font, line, fontSize, emojiSize, letterSpacingPx)));
   const width = Math.ceil(maxLineWidth + strokeWidth + OUTER_PADDING * 2);
   const height = Math.ceil(textBlockHeight + OUTER_PADDING * 2);
   const textTop = OUTER_PADDING;
@@ -384,13 +401,13 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
     ? ` stroke="${strokeColor}" stroke-width="${strokeWidth.toFixed(2)}" stroke-linejoin="round" style="paint-order:stroke"`
     : '';
   const textEl = (x, y, fill, value) =>
-    `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="600" fill="${fill}"${strokeAttrs} text-anchor="start">${escapeXml(value)}</text>`;
-  let elements = dropShadow ? buildDropShadowFilterDef(fontSize) : '';
+    `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="600" fill="${fill}"${strokeAttrs}${lsAttr} text-anchor="start">${escapeXml(value)}</text>`;
+  let elements = dropShadow ? buildDropShadowFilterDef(fontSize, shadowDist, shadowBlur, shadowOpacity) : '';
   let wordCounter = 0; // global word index across lines (karaoke)
   lines.forEach((line, i) => {
     const baselineY = textTop + i * lineHeight + ascenderPx;
     const lineTop = textTop + i * lineHeight;
-    const { segments, totalWidth } = layoutLineSegments(font, line, fontSize, emojiSize);
+    const { segments, totalWidth } = layoutLineSegments(font, line, fontSize, emojiSize, letterSpacingPx);
     const startX = width / 2 - totalWidth / 2;
 
     let lineContent = '';
@@ -412,10 +429,10 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
             if (word) {
               const fill = wordCounter === emphasizeWordIndex ? karaokeColor : textColor;
               lineContent += textEl(wx, baselineY, fill, word);
-              wx += measureWidth(font, word, fontSize);
+              wx += measureWidth(font, word, fontSize, letterSpacingPx);
               wordCounter += 1;
             }
-            if (k < parts.length - 1) wx += measureWidth(font, ' ', fontSize);
+            if (k < parts.length - 1) wx += measureWidth(font, ' ', fontSize, letterSpacingPx);
           });
         } else {
           lineContent += textEl(segX, baselineY, textColor, seg.value);
@@ -426,9 +443,10 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
     elements += dropShadow ? `<g filter="url(#dropshadow)">${lineContent}</g>` : lineContent;
   });
 
-  const body = opacity < 1 ? `<g opacity="${opacity.toFixed(3)}">${elements}</g>` : elements;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`;
-  return { svg, width, height };
+  const inner = opacity < 1 ? `<g opacity="${opacity.toFixed(3)}">${elements}</g>` : elements;
+  const r = wrapRotation(inner, width, height, rotation);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${r.width}" height="${r.height}" viewBox="0 0 ${r.width} ${r.height}">${r.body}</svg>`;
+  return { svg, width: r.width, height: r.height };
 }
 
 // Box style: solid black fill text on a white rounded box. No stroke
@@ -441,13 +459,16 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
 // left a visible gap between them — a short line floated in its own detached
 // bubble under a long one — which read as broken. One shared box removes any
 // seam.) The drop shadow (when on) sits under the box, not the text.
-function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color, opacity = 1 }) {
+function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color, opacity = 1, bgOpacity = 1, bgPadding = 1, bgRadius = 1, letterSpacingPx = 0, lineHeightMult = 1, shadowDist = 0.07, shadowBlur = 0.05, shadowOpacity = 0.4, rotation = 0 }) {
   const boxColor = color || '#ffffff';
   const textColor = getContrastTextColor(boxColor);
   const ascenderPx = (font.ascender / font.unitsPerEm) * fontSize;
   const descenderPx = (Math.abs(font.descender) / font.unitsPerEm) * fontSize;
-  const lineHeight = ascenderPx + descenderPx;
-  const lineWidths = lines.map((line) => measureLineWidth(font, line, fontSize, emojiSize));
+  const lineHeight = (ascenderPx + descenderPx) * lineHeightMult;
+  const padX = BOX_PADDING_X * bgPadding;
+  const padY = BOX_PADDING_Y * bgPadding;
+  const lsAttr = letterSpacingPx ? ` letter-spacing="${letterSpacingPx.toFixed(2)}"` : '';
+  const lineWidths = lines.map((line) => measureLineWidth(font, line, fontSize, emojiSize, letterSpacingPx));
 
   const boxY = OUTER_PADDING;
   const lineCount = lines.length;
@@ -456,10 +477,10 @@ function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color, opac
   // single-line box's height would be), rather than each row's own actual
   // height — keeps corners visually uniform across the whole stack even
   // though first/last rows are taller (they carry the outer padding).
-  const singleLineBoxHeight = lineHeight + BOX_PADDING_Y * 2;
-  const boxRadius = singleLineBoxHeight * BOX_RADIUS_RATIO;
+  const singleLineBoxHeight = lineHeight + padY * 2;
+  const boxRadius = singleLineBoxHeight * BOX_RADIUS_RATIO * bgRadius;
 
-  const rectWidths = lineWidths.map((w) => w + BOX_PADDING_X * 2);
+  const rectWidths = lineWidths.map((w) => w + padX * 2);
   // Cropped tightly to the widest row (plus safety margin) rather than
   // always spanning the full canvas width — lets the server position the
   // caption anywhere horizontally via the ffmpeg overlay's x, the same way
@@ -468,8 +489,8 @@ function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color, opac
 
   let rowTop = boxY;
   const rows = lines.map((line, i) => {
-    const topPad = i === 0 ? BOX_PADDING_Y : 0;
-    const bottomPad = i === lineCount - 1 ? BOX_PADDING_Y : 0;
+    const topPad = i === 0 ? padY : 0;
+    const bottomPad = i === lineCount - 1 ? padY : 0;
     const top = rowTop;
     const bottom = top + topPad + lineHeight + bottomPad;
     rowTop = bottom;
@@ -488,9 +509,10 @@ function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color, opac
   const boxX = width / 2 - boxWidth / 2;
   const boxTop = rows[0].top;
   const boxHeight = rows[lineCount - 1].bottom - boxTop;
-  const boxRects = `<rect x="${boxX.toFixed(2)}" y="${boxTop.toFixed(2)}" width="${boxWidth.toFixed(2)}" height="${boxHeight.toFixed(2)}" rx="${boxRadius.toFixed(2)}" ry="${boxRadius.toFixed(2)}" fill="${boxColor}"/>`;
+  const bgOpAttr = bgOpacity < 1 ? ` fill-opacity="${bgOpacity.toFixed(3)}"` : '';
+  const boxRects = `<rect x="${boxX.toFixed(2)}" y="${boxTop.toFixed(2)}" width="${boxWidth.toFixed(2)}" height="${boxHeight.toFixed(2)}" rx="${boxRadius.toFixed(2)}" ry="${boxRadius.toFixed(2)}" fill="${boxColor}"${bgOpAttr}/>`;
 
-  let elements = dropShadow ? buildDropShadowFilterDef(fontSize) : '';
+  let elements = dropShadow ? buildDropShadowFilterDef(fontSize, shadowDist, shadowBlur, shadowOpacity) : '';
   // Grouped under one filter so the connected stack casts a single unified
   // shadow instead of each row casting (and overlapping) its own.
   elements += dropShadow ? `<g filter="url(#dropshadow)">${boxRects}</g>` : boxRects;
@@ -498,7 +520,7 @@ function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color, opac
   lines.forEach((line, i) => {
     const row = rows[i];
     const baselineY = row.textTop + ascenderPx;
-    const { segments, totalWidth } = layoutLineSegments(font, line, fontSize, emojiSize);
+    const { segments, totalWidth } = layoutLineSegments(font, line, fontSize, emojiSize, letterSpacingPx);
     const startX = width / 2 - totalWidth / 2;
 
     segments.forEach((seg) => {
@@ -510,14 +532,15 @@ function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color, opac
           elements += `<image x="${segX.toFixed(2)}" y="${emojiY.toFixed(2)}" width="${emojiSize}" height="${emojiSize}" href="data:image/png;base64,${emojiBase64}"/>`;
         }
       } else if (seg.value) {
-        elements += `<text x="${segX.toFixed(2)}" y="${baselineY.toFixed(2)}" font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="600" fill="${textColor}" text-anchor="start">${escapeXml(seg.value)}</text>`;
+        elements += `<text x="${segX.toFixed(2)}" y="${baselineY.toFixed(2)}" font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="600" fill="${textColor}"${lsAttr} text-anchor="start">${escapeXml(seg.value)}</text>`;
       }
     });
   });
 
-  const body = opacity < 1 ? `<g opacity="${opacity.toFixed(3)}">${elements}</g>` : elements;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`;
-  return { svg, width, height };
+  const inner = opacity < 1 ? `<g opacity="${opacity.toFixed(3)}">${elements}</g>` : elements;
+  const r = wrapRotation(inner, width, height, rotation);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${r.width}" height="${r.height}" viewBox="0 0 ${r.width} ${r.height}">${r.body}</svg>`;
+  return { svg, width: r.width, height: r.height };
 }
 
 // --- Emoji rendering ---------------------------------------------------
@@ -631,6 +654,15 @@ function renderCaptionPng({
   karaoke,
   emphasizeWordIndex,
   karaokeColor,
+  shadowDistance,
+  shadowBlur,
+  shadowOpacity,
+  bgOpacity,
+  bgPadding,
+  bgRadius,
+  letterSpacing,
+  lineHeight,
+  rotation,
 }) {
   const { path: fontPath } = resolveFontEntry(fontId);
   const font = loadFontFromPath(fontPath);
@@ -638,12 +670,14 @@ function renderCaptionPng({
   const emojiSize = resolvedFontSize * EMOJI_SIZE_RATIO;
   // D1: uppercase before wrapping so word-wrap widths match the preview.
   const displayText = (uppercase ? String(text).toUpperCase() : String(text)).trim();
+  // D1: letter-spacing (em → px) folds into measurement so wrapping matches.
+  const letterSpacingPx = (Number.isFinite(letterSpacing) ? letterSpacing : 0) * resolvedFontSize;
   // Per-layer wrap width (fraction of canvas width); falls back to the legacy
   // fixed ratio. Multiplying canvas width by the same ratio the preview uses
   // keeps word-wrap identical between preview and render.
   const wrapRatio = Number.isFinite(wrapWidth) ? wrapWidth : MAX_TEXT_WIDTH_RATIO;
   const maxTextWidth = Math.round((canvasWidth || DEFAULT_CANVAS_W) * wrapRatio);
-  const lines = wrapText(font, displayText, resolvedFontSize, maxTextWidth, emojiSize);
+  const lines = wrapText(font, displayText, resolvedFontSize, maxTextWidth, emojiSize, letterSpacingPx);
 
   // D1: configurable stroke (% of font size; null follows the style) + colour,
   // and group opacity. Mirrors preview.js updateLayerEl.
@@ -663,6 +697,16 @@ function renderCaptionPng({
     karaoke: !!karaoke,
     emphasizeWordIndex: Number.isFinite(emphasizeWordIndex) ? emphasizeWordIndex : -1,
     karaokeColor: karaokeColor || '#ffe600',
+    // D1 remainder.
+    letterSpacingPx,
+    lineHeightMult: Number.isFinite(lineHeight) ? lineHeight : 1,
+    shadowDist: Number.isFinite(shadowDistance) ? shadowDistance : 0.07,
+    shadowBlur: Number.isFinite(shadowBlur) ? shadowBlur : 0.05,
+    shadowOpacity: Number.isFinite(shadowOpacity) ? shadowOpacity : 0.4,
+    bgOpacity: Number.isFinite(bgOpacity) ? bgOpacity : 1,
+    bgPadding: Number.isFinite(bgPadding) ? bgPadding : 1,
+    bgRadius: Number.isFinite(bgRadius) ? bgRadius : 1,
+    rotation: Number.isFinite(rotation) ? rotation : 0,
   };
   let svg, width, height;
   if (style === 'box') {
