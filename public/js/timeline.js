@@ -63,6 +63,27 @@ import {
 } from './state.js';
 import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './preview.js';
 import { getPeaks, drawWaveform } from './waveform.js';
+import { getFilmstrip, drawFilmstrip } from './filmstrip.js';
+
+// Paints a filmstrip (video-frame thumbnails) behind a video-track bar's label,
+// showing the [offsetSec, offsetSec+lenSec] slice it plays. Cached per URL, so
+// cheap to re-call on relayout/zoom; skipped silently if frames can't be read.
+function paintFilmstrip(el, url, offsetSec, lenSec) {
+  if (!url) return;
+  let canvas = el.querySelector('canvas.tl-filmstrip');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.className = 'tl-filmstrip';
+    el.insertBefore(canvas, el.firstChild);
+  }
+  getFilmstrip(url).then((data) => {
+    if (!data) {
+      canvas.remove();
+      return;
+    }
+    drawFilmstrip(canvas, data, offsetSec, lenSec);
+  });
+}
 
 // Paints (or refreshes) a clip's waveform: a canvas behind the bar's label
 // showing the [offsetSec, offsetSec+lenSec] slice of its audio. Peaks are
@@ -230,15 +251,15 @@ function layoutVideoTrack() {
     if (!el) continue;
     el.style.left = `${seg.outStart * pps}px`;
     el.style.width = `${Math.max(6, (seg.end - seg.start) * pps)}px`;
-    // The main clip's own audio, sliced to this piece's [start,end].
-    paintWaveform(el, srcUrl, seg.start, seg.end - seg.start);
+    // Video-frame thumbnails for this piece's [start,end] slice.
+    paintFilmstrip(el, srcUrl, seg.start, seg.end - seg.start);
   }
   for (const item of appendedLayout()) {
     const el = appendedClipEls.get(item.clip.id);
     if (!el) continue;
     el.style.left = `${item.outStart * pps}px`;
     el.style.width = `${Math.max(6, (item.outEnd - item.outStart) * pps)}px`;
-    paintWaveform(el, item.clip.source.previewUrl, item.clip.start, item.outEnd - item.outStart);
+    paintFilmstrip(el, item.clip.source.previewUrl, item.clip.start, item.outEnd - item.outStart);
   }
   layoutTransitionBadges();
 }
