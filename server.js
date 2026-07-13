@@ -1082,6 +1082,12 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   const crf = String((exportOpts && exportOpts.crf) || 19);
   const outputArgs = ['-filter_complex', filterComplex, '-map', mapVideoLabel];
   if (audioMap) outputArgs.push('-map', audioMap);
+  // Animated captions ride a `-loop 1 -t (end+margin)` image input; that margin
+  // can outlast the video and pad the render with a frozen tail. -shortest ends
+  // the output with the (bounded) video/audio instead. Only added when such a
+  // looped input exists, so nothing else changes.
+  const hasLoopedCaption = captionOverlays.some((c) => c.animation === 'fade' || c.animation === 'slide');
+  if (hasLoopedCaption) outputArgs.push('-shortest');
   args.push(
     ...outputArgs,
     '-c:v', 'libx264',
