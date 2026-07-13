@@ -496,6 +496,49 @@ body {
   display: none;
 }
 
+/* Safe-zone guides (preview only, never rendered): the dashed inner box is the
+   area platform UI leaves clear; the labels mark what sits in each margin. */
+.safe-zone {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+.safe-zone-inner {
+  position: absolute;
+  top: 7%;
+  bottom: 18%;
+  left: 5%;
+  right: 12%;
+  border: 1.5px dashed rgba(255, 255, 255, 0.75);
+  border-radius: 6px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.14);
+}
+.safe-zone-tag {
+  position: absolute;
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+}
+.safe-zone-tag-top {
+  top: 2%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.safe-zone-tag-bottom {
+  bottom: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.safe-zone-tag-right {
+  top: 50%;
+  right: 2%;
+  transform: rotate(90deg);
+  transform-origin: right center;
+}
+
 .preview-placeholder {
   display: none;
   position: absolute;

@@ -182,6 +182,8 @@ function lookupElements() {
     colorSaturation: byId('color-saturation'),
     colorSaturationValue: byId('color-saturation-value'),
     colorResetBtn: byId('color-reset-btn'),
+    safeZoneToggle: byId('safe-zone-toggle'),
+    safeZone: byId('safe-zone'),
     // Text tab
     textInput: byId('caption-text'),
     emojiBtn: byId('emoji-picker-btn'),
@@ -357,6 +359,17 @@ function wireVideoControls() {
     setColor({ brightness: 0, contrast: 0, saturation: 0 });
     refreshVideoPanel();
   });
+  // Safe-zone guides — a preview aid, persisted (not in the project/export).
+  const SAFE_ZONE_KEY = 'clipEditor.safeZones.v1';
+  const applySafeZone = (on) => {
+    els.safeZone.classList.toggle('hidden', !on);
+    els.safeZoneToggle.checked = on;
+  };
+  els.safeZoneToggle.addEventListener('change', () => {
+    localStorage.setItem(SAFE_ZONE_KEY, els.safeZoneToggle.checked ? '1' : '0');
+    applySafeZone(els.safeZoneToggle.checked);
+  });
+  applySafeZone(localStorage.getItem(SAFE_ZONE_KEY) === '1');
   // Position lock: when on, applying a preset never moves the clip (panX/panY
   // stay put). Persisted so the choice sticks across sessions. Default on —
   // position is per-clip framing, not something a shared "look" should hijack.
