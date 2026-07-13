@@ -2073,6 +2073,21 @@ img.preset-thumb {
   background: rgba(124, 92, 255, 0.4);
 }
 
+/* Timing-nudge label + numeric input on one row. */
+.cap-timing-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.cap-timing-input {
+  width: 64px;
+  flex: none;
+  padding: 4px 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Audio fade ramps on a clip bar: a translucent wedge showing the volume
    envelope rising in / falling out, sized to the fade duration. */
 .tl-fade {

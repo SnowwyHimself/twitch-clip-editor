@@ -220,6 +220,7 @@ function lookupElements() {
     capYSlider: byId('cap-y-slider'),
     capYValue: byId('cap-y-value'),
     capTimingSlider: byId('cap-timing-slider'),
+    capTimingInput: byId('cap-timing-input'),
     capTimingValue: byId('cap-timing-value'),
     transcriptGroup: byId('transcript-group'),
     transcriptList: byId('transcript-list'),
@@ -1172,11 +1173,22 @@ function wireCaptionControls() {
     applyCaptionStyle();
   });
 
-  els.capTimingSlider.addEventListener('input', () => {
-    const v = parseFloat(els.capTimingSlider.value);
+  // Slider and numeric input both drive timingOffset (±3s); each keeps the
+  // other in sync. The numeric box allows an exact value beyond easy dragging.
+  const setTimingOffset = (raw, { fromInput = false } = {}) => {
+    let v = parseFloat(raw);
+    if (!Number.isFinite(v)) return;
+    v = Math.max(-3, Math.min(3, v));
     state.captionSettings.timingOffset = v;
+    els.capTimingSlider.value = v;
+    if (!fromInput) els.capTimingInput.value = v.toFixed(2);
     els.capTimingValue.textContent = `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
     applyCaptionTiming();
+  };
+  els.capTimingSlider.addEventListener('input', () => setTimingOffset(els.capTimingSlider.value));
+  els.capTimingInput.addEventListener('input', () => setTimingOffset(els.capTimingInput.value, { fromInput: true }));
+  els.capTimingInput.addEventListener('blur', () => {
+    els.capTimingInput.value = (state.captionSettings.timingOffset || 0).toFixed(2);
   });
   els.captionsVisibleToggle.addEventListener('change', () => {
     state.captionsHidden = !els.captionsVisibleToggle.checked;
