@@ -81,6 +81,10 @@ export const state = {
   // Split/Delete buttons and the panel can act on whatever's selected,
   // regardless of type.
   sel: null,
+  // Additional video pieces selected via shift-click (B6 multi-select), as
+  // { kind:'segment'|'clip', id }. state.sel is the primary; edits to per-piece
+  // video settings apply to all of these together.
+  selPieces: [],
 
   // 'snap' (CapCut): pieces always close up, deletes ripple. 'free'
   // (Premiere): pieces sit wherever they're dropped; output gaps play as
@@ -246,6 +250,7 @@ export function addAppendedClip(source) {
     start: 0,
     end: Number.isFinite(source.duration) ? source.duration : 0,
     duration: Number.isFinite(source.duration) ? source.duration : 0,
+    settings: defaultPieceSettings(), // its own reframe/blur/grade (B6)
   };
   state.appendedClips.push(clip);
   emit('segments'); // the video track + output duration change
@@ -358,18 +363,97 @@ export function setTimelineMode(mode) {
 
 let segmentCounter = 0;
 
-function newSegment(start, end, outStart) {
-  return { id: `seg-${Date.now()}-${segmentCounter++}`, start, end, outStart };
+// Per-piece video settings (B6). Each segment/appended clip carries its own
+// reframe (zoom/pan), background blur, and colour grade — layout/split, speed,
+// mirror, keyframes and face-tracking remain global for now. state.zoom/panX/
+// panY/blur/color act as the EDIT MIRROR of the current edit-target piece (so
+// the Video-panel code is unchanged); the preview reads each piece's settings
+// live at the playhead, and the export builds each piece with its own.
+export function defaultPieceSettings() {
+  return { zoom: 1, panX: 0, panY: 0, blur: 0, color: { brightness: 0, contrast: 0, saturation: 0 } };
+}
+
+// Snapshot the global edit-mirror into a settings object (used to seed a new
+// piece so a split/append inherits the look you're currently editing).
+function currentVideoSettings() {
+  return {
+    zoom: state.zoom,
+    panX: state.panX,
+    panY: state.panY,
+    blur: state.blur,
+    color: { ...(state.color || { brightness: 0, contrast: 0, saturation: 0 }) },
+  };
+}
+
+function cloneSettings(s) {
+  const d = defaultPieceSettings();
+  if (!s) return d;
+  return {
+    zoom: Number.isFinite(s.zoom) ? s.zoom : d.zoom,
+    panX: Number.isFinite(s.panX) ? s.panX : d.panX,
+    panY: Number.isFinite(s.panY) ? s.panY : d.panY,
+    blur: Number.isFinite(s.blur) ? s.blur : d.blur,
+    color: { ...d.color, ...(s.color || {}) },
+  };
+}
+
+// Ensures a piece has a valid settings object (older projects / appended clips
+// created before B6 won't have one).
+export function pieceSettings(piece) {
+  if (!piece) return defaultPieceSettings();
+  if (!piece.settings) piece.settings = defaultPieceSettings();
+  return piece.settings;
+}
+
+function newSegment(start, end, outStart, settings) {
+  return {
+    id: `seg-${Date.now()}-${segmentCounter++}`,
+    start,
+    end,
+    outStart,
+    settings: settings || defaultPieceSettings(),
+  };
+}
+
+// The video piece (primary segment OR appended clip) at an OUTPUT time, as
+// { kind:'segment'|'clip', id, piece }. Null in an output gap. (pieceAtOutput
+// above is the segment-only version the playback gap logic relies on.)
+export function pieceRefAtOutput(outT) {
+  for (const seg of state.segments) {
+    const len = seg.end - seg.start;
+    if (outT >= seg.outStart - 0.001 && outT < seg.outStart + len + 0.001) {
+      return { kind: 'segment', id: seg.id, piece: seg };
+    }
+  }
+  for (const item of appendedLayout()) {
+    if (outT >= item.outStart - 0.001 && outT < item.outEnd + 0.001) {
+      return { kind: 'clip', id: item.clip.id, piece: item.clip };
+    }
+  }
+  return null;
+}
+
+// Settings of the piece at an output time (defaults in a gap / before load).
+export function pieceSettingsAtOutput(outT) {
+  const hit = pieceRefAtOutput(outT);
+  return hit ? pieceSettings(hit.piece) : defaultPieceSettings();
 }
 
 export function resetSegments() {
   const duration = sourceDuration();
   state.segments = duration > 0 ? [newSegment(0, duration, 0)] : [];
   state.sel = null;
+  state.selPieces = [];
   state.transitions = [];
   state.keyframes = [];
   state.faceTrack = { enabled: false, zoom: 1, samples: [] };
   state.audio = { volumePercent: 100, muted: false, fadeIn: 0, fadeOut: 0 };
+  // Reset the per-piece edit mirror to defaults; the fresh segment already holds
+  // defaultPieceSettings, so mirror and piece agree until a preset auto-applies.
+  state.zoom = 1;
+  state.panX = 0;
+  state.panY = 0;
+  state.blur = 0;
   state.color = { brightness: 0, contrast: 0, saturation: 0 };
   state.appendedClips = []; // a fresh primary clip starts with no stitched clips
   emit('segments');
@@ -387,7 +471,9 @@ export function splitSegmentAt(time) {
   );
   if (idx === -1) return null;
   const seg = state.segments[idx];
-  const right = newSegment(time, seg.end, seg.outStart + (time - seg.start));
+  // The right half inherits the left half's per-piece settings (a split keeps
+  // one clip's look on both sides until you change one).
+  const right = newSegment(time, seg.end, seg.outStart + (time - seg.start), cloneSettings(seg.settings));
   seg.end = time;
   state.segments.splice(idx + 1, 0, right);
   // A transition sitting after the split piece belongs after the RIGHT
@@ -452,19 +538,122 @@ export function transitionAfter(segmentId) {
 
 export function select(kind, id) {
   if (id == null) return clearSelection();
-  if (state.sel && state.sel.kind === kind && state.sel.id === id) return;
+  // A plain (non-shift) selection resets any multi-piece set.
+  state.selPieces = kind === 'segment' || kind === 'clip' ? [{ kind, id }] : [];
+  if (state.sel && state.sel.kind === kind && state.sel.id === id) {
+    emit('selection'); // still refresh (selPieces may have changed)
+    return;
+  }
   state.sel = { kind, id };
+  loadEditTargetIntoGlobals();
+  emit('selection');
+}
+
+// Shift-click a video piece: toggle it in the multi-selection. The last one
+// clicked becomes the primary (what the panel reads); its settings load into
+// the edit mirror.
+export function togglePieceSelection(kind, id) {
+  if (kind !== 'segment' && kind !== 'clip') return select(kind, id);
+  const i = state.selPieces.findIndex((p) => p.kind === kind && p.id === id);
+  if (i === -1) {
+    state.selPieces.push({ kind, id });
+    state.sel = { kind, id };
+  } else {
+    state.selPieces.splice(i, 1);
+    // Primary falls back to the last still-selected piece (or clears).
+    const last = state.selPieces[state.selPieces.length - 1];
+    state.sel = last ? { ...last } : null;
+  }
+  loadEditTargetIntoGlobals();
   emit('selection');
 }
 
 export function clearSelection() {
-  if (!state.sel) return;
+  if (!state.sel && state.selPieces.length === 0) return;
   state.sel = null;
+  state.selPieces = [];
   emit('selection');
 }
 
 export function isSelected(kind, id) {
+  if ((kind === 'segment' || kind === 'clip') && state.selPieces.some((p) => p.kind === kind && p.id === id)) {
+    return true;
+  }
   return !!state.sel && state.sel.kind === kind && state.sel.id === id;
+}
+
+// --- per-piece video settings (B6) ------------------------------------------
+
+function findPiece(kind, id) {
+  return kind === 'segment'
+    ? state.segments.find((s) => s.id === id)
+    : state.appendedClips.find((c) => c.id === id);
+}
+
+// The pieces the Video panel edits: the multi-selection if any, else the single
+// selected piece, else the piece under the playhead (so there's always a
+// target once a clip is loaded).
+export function editTargetPieces(playheadOutTime) {
+  const refs = state.selPieces.length
+    ? state.selPieces
+    : state.sel && (state.sel.kind === 'segment' || state.sel.kind === 'clip')
+      ? [state.sel]
+      : [];
+  let pieces = refs.map((r) => findPiece(r.kind, r.id)).filter(Boolean);
+  if (pieces.length === 0) {
+    const hit = playheadOutTime != null ? pieceRefAtOutput(playheadOutTime) : null;
+    if (hit) pieces = [hit.piece];
+    else if (state.segments[0]) pieces = [state.segments[0]];
+  }
+  return pieces;
+}
+
+// The piece whose settings fill the panel (the primary of the edit targets).
+export function primaryEditPiece(playheadOutTime) {
+  return editTargetPieces(playheadOutTime)[0] || null;
+}
+
+// Copy the primary edit-target piece's settings into the global edit mirror
+// (state.zoom/panX/panY/blur/color) so the unchanged Video-panel code shows
+// them. Called when the selection changes.
+export function loadEditTargetIntoGlobals(playheadOutTime) {
+  const piece = primaryEditPiece(playheadOutTime);
+  if (!piece) return;
+  const s = pieceSettings(piece);
+  state.zoom = s.zoom;
+  state.panX = s.panX;
+  state.panY = s.panY;
+  state.blur = s.blur;
+  state.color = { ...s.color };
+}
+
+// Write the current global edit-mirror values onto every edit-target piece —
+// called after a Video-panel slider changes. Emits 'settings' so preview +
+// timeline refresh.
+export function commitVideoSettings(playheadOutTime) {
+  const snapshot = currentVideoSettings();
+  for (const piece of editTargetPieces(playheadOutTime)) {
+    piece.settings = cloneSettings(snapshot);
+  }
+  emit('settings');
+}
+
+// "Apply to all clips": copy one piece's settings to every piece.
+export function applyVideoSettingsToAllPieces(sourceSettings) {
+  const snap = cloneSettings(sourceSettings);
+  for (const seg of state.segments) seg.settings = cloneSettings(snap);
+  for (const clip of state.appendedClips) clip.settings = cloneSettings(snap);
+  emit('settings');
+}
+
+// Project migration: a piece without its own settings (a project saved before
+// B6) inherits the project's old global zoom/pan/blur/color, currently sitting
+// in the edit mirror. New-format pieces keep their own settings.
+export function migrateLegacyPieceSettings() {
+  const legacy = currentVideoSettings();
+  for (const seg of state.segments) if (!seg.settings) seg.settings = cloneSettings(legacy);
+  for (const clip of state.appendedClips) if (!clip.settings) clip.settings = cloneSettings(legacy);
+  loadEditTargetIntoGlobals();
 }
 
 export function selectLayer(id) {

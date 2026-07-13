@@ -41,6 +41,9 @@ import {
   faceTrackActive,
   faceTrackAt,
   faceTrackZoom,
+  pieceSettingsAtOutput,
+  pieceRefAtOutput,
+  commitVideoSettings,
 } from './state.js';
 
 const previewArea = document.getElementById('preview-area');
@@ -1266,10 +1269,13 @@ export function setPlaceholder(text) {
 // --- global refresh -------------------------------------------------------------
 
 // The clip's live transform: the interpolated keyframe value at the current
-// source time when keyframes exist, otherwise the static slider values.
+// source time when keyframes exist (keyframes stay global), otherwise the
+// zoom/pan of the piece currently under the playhead (B6 per-piece settings).
 function currentClipTransform() {
   const kf = keyframeTransformAt(fgVideo.currentTime || 0);
-  return kf || { zoom: state.zoom, panX: state.panX, panY: state.panY };
+  if (kf) return kf;
+  const s = pieceSettingsAtOutput(getCurrentOutputTime());
+  return { zoom: s.zoom, panX: s.panX, panY: s.panY };
 }
 
 // Applies just the foreground zoom/pan transform (called every frame while
@@ -1439,9 +1445,10 @@ function attachSplitDivider() {
 }
 
 // CSS equivalent of the export's color grade (empty when neutral). Brightness
-// is multiplicative here vs additive in ffmpeg eq — close, not exact.
+// is multiplicative here vs additive in ffmpeg eq — close, not exact. Grade is
+// per-piece (the piece under the playhead).
 function colorFilterCss() {
-  const { brightness = 0, contrast = 0, saturation = 0 } = state.color || {};
+  const { brightness = 0, contrast = 0, saturation = 0 } = pieceSettingsAtOutput(getCurrentOutputTime()).color || {};
   if (brightness === 0 && contrast === 0 && saturation === 0) return '';
   return `brightness(${(1 + brightness / 100).toFixed(3)}) contrast(${(1 + contrast / 100).toFixed(
     3
@@ -1459,9 +1466,10 @@ function updateAll() {
   for (const v of [splitTopVideo, splitBottomVideo]) if (v) v.style.filter = grade;
 
   // The reframe / split fill the frame, so no blur background shows behind.
-  if (!faceTrackActive() && !splitActive() && state.blur > 0) {
+  const pieceBlur = pieceSettingsAtOutput(getCurrentOutputTime()).blur || 0;
+  if (!faceTrackActive() && !splitActive() && pieceBlur > 0) {
     bgVideo.classList.remove('hidden');
-    bgVideo.style.filter = `blur(${(state.blur * PREVIEW_BLUR_CSS_SCALE).toFixed(1)}px) ${grade}`.trim();
+    bgVideo.style.filter = `blur(${(pieceBlur * PREVIEW_BLUR_CSS_SCALE).toFixed(1)}px) ${grade}`.trim();
   } else {
     bgVideo.classList.add('hidden');
     bgVideo.style.filter = grade;
@@ -1627,11 +1635,14 @@ function attachClipDrag() {
     state.panX = panX;
     state.panY = panY;
     // When the clip is keyframed, dragging edits the keyframe at the playhead
-    // (same as nudging the Position sliders); otherwise it's the static pan.
+    // (same as nudging the Position sliders); otherwise it's the static pan,
+    // committed onto the piece under the playhead (B6 per-piece).
     if (state.keyframes.length) {
       addKeyframe(fgVideo.currentTime || 0, { zoom: state.zoom, panX: state.panX, panY: state.panY });
+      emit('settings');
+    } else {
+      commitVideoSettings(getCurrentOutputTime());
     }
-    emit('settings');
   };
 
   const onUp = (e) => {
@@ -1739,7 +1750,8 @@ export function initPreview() {
     if (outT !== lastOutTime) {
       lastOutTime = outT;
       // Keyframes / face-tracking animate the transform, so re-apply it as the
-      // playhead moves (playing or scrubbing), not just on settings.
+      // playhead moves (playing or scrubbing), not just on settings. Crossing
+      // into a new piece (per-piece settings) is handled by the 'time' listener.
       if (state.keyframes.length || faceTrackActive()) applyClipTransform();
       seekSlider.value = outT;
       updateTimeLabel();
@@ -1797,11 +1809,21 @@ export function initPreview() {
     syncLayerEls();
     updateClipOutline();
   });
-  on('time', () => {
+  let lastLookPieceId = null;
+  on('time', ({ out } = {}) => {
     updateLayerVisibility();
-    // Keep the animated transform in step when the playhead moves via a seek
-    // (not just the rAF tick), so keyframes / face-tracking track scrubbing.
-    if (state.keyframes.length || faceTrackActive()) applyClipTransform();
+    // Crossing into a different piece swaps its per-piece zoom/pan/blur/grade,
+    // so refresh the whole look (playing or scrubbing). The id guard keeps this
+    // to boundary crossings, not every frame.
+    const ref = pieceRefAtOutput(out != null ? out : getCurrentOutputTime());
+    const id = ref ? ref.id : null;
+    if (id !== lastLookPieceId) {
+      lastLookPieceId = id;
+      updateAll();
+    } else if (state.keyframes.length || faceTrackActive()) {
+      // Keep the animated transform in step when the playhead moves via a seek.
+      applyClipTransform();
+    }
   });
   window.addEventListener('resize', () => {
     fitPreviewFrame();

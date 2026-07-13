@@ -4,7 +4,7 @@
 // re-resolve through the existing preview-cache, file sources re-resolve by
 // path (packaged app) or prompt the user to re-locate the file.
 
-import { state, emit, on, off, resetHistory } from './state.js';
+import { state, emit, on, off, resetHistory, migrateLegacyPieceSettings } from './state.js';
 import { attachSource, setPlaceholder } from './preview.js';
 import { fetchPreviewSource } from './api.js';
 
@@ -317,6 +317,10 @@ function applyStateFields(data, overlays, sounds, appendedClips) {
   state.sounds = sounds;
   state.appendedClips = appendedClips || [];
   state.sel = null;
+  state.selPieces = [];
+  // Per-piece settings (B6): pre-B6 projects carry only the old global values —
+  // push them onto every piece; new-format pieces keep their own.
+  migrateLegacyPieceSettings();
 }
 
 // Opens a saved project by id. Returns { ok } or { ok:false, reason }.

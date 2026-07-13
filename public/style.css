@@ -2041,6 +2041,20 @@ img.preset-thumb {
   font-size: var(--fs-md);
 }
 
+/* Per-clip settings header (B6): label + "Apply to all" on one row. */
+.perclip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: 4px;
+}
+.perclip-apply {
+  flex: none;
+  padding: 4px 8px;
+  font-size: var(--fs-xs);
+}
+
 /* Timing-nudge label + numeric input on one row. */
 .cap-timing-row {
   display: flex;

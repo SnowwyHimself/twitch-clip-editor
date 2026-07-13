@@ -136,7 +136,9 @@ function buildFormData() {
     // filler for any output gap between consecutive pieces.
     formData.append(
       'segments',
-      JSON.stringify(kept.map((s) => ({ start: s.start, end: s.end, outStart: s.outStart })))
+      JSON.stringify(
+        kept.map((s) => ({ start: s.start, end: s.end, outStart: s.outStart, settings: s.settings || null }))
+      )
     );
     // Transitions as piece indexes (order matches the segments payload).
     const transitions = state.transitions
@@ -208,7 +210,12 @@ function buildFormData() {
   const appended = [];
   for (const clip of state.appendedClips) {
     const s = clip.source;
-    const entry = { kind: s.kind, start: Number((clip.start || 0).toFixed(3)), end: Number((clip.end || 0).toFixed(3)) };
+    const entry = {
+      kind: s.kind,
+      start: Number((clip.start || 0).toFixed(3)),
+      end: Number((clip.end || 0).toFixed(3)),
+      settings: clip.settings || null,
+    };
     if (s.kind === 'url') {
       entry.url = s.url;
     } else {

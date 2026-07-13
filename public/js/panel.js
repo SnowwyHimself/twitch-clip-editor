@@ -38,6 +38,10 @@ import {
   setAudio,
   clampVolumePercent,
   setColor,
+  commitVideoSettings,
+  applyVideoSettingsToAllPieces,
+  editTargetPieces,
+  pieceSettings,
   clampColorValue,
   addKeyframe,
   removeKeyframe,
@@ -113,6 +117,9 @@ function lookupElements() {
     facecamZoomValue: byId('facecam-zoom-value'),
     gameplayZoom: byId('gameplay-zoom'),
     gameplayZoomValue: byId('gameplay-zoom-value'),
+    perclipRow: byId('perclip-row'),
+    perclipLabel: byId('perclip-label'),
+    applyAllBtn: byId('apply-all-btn'),
     zoomSlider: byId('zoom-slider'),
     zoomValue: byId('zoom-value'),
     blurSlider: byId('blur-slider'),
@@ -309,28 +316,31 @@ function wireVideoControls() {
     if (state.keyframes.length === 0) return;
     addKeyframe(getCurrentTime(), { zoom: state.zoom, panX: state.panX, panY: state.panY });
   };
+  // Video reframe/blur/grade edits write the global mirror then commit it onto
+  // the selected piece(s) via commitVideoSettings (B6 per-piece).
+  const commitVideo = () => commitVideoSettings(getCurrentOutputTime());
   els.zoomSlider.addEventListener('input', () => {
     state.zoom = parseFloat(els.zoomSlider.value) / 100;
     els.zoomValue.textContent = `${els.zoomSlider.value}%`;
     keyframeEditIfActive();
-    emit('settings');
+    commitVideo();
   });
   els.blurSlider.addEventListener('input', () => {
     state.blur = parseFloat(els.blurSlider.value);
     els.blurValue.textContent = `${els.blurSlider.value}%`;
-    emit('settings');
+    commitVideo();
   });
   els.panXSlider.addEventListener('input', () => {
     state.panX = parseFloat(els.panXSlider.value);
     els.panXValue.textContent = els.panXSlider.value;
     keyframeEditIfActive();
-    emit('settings');
+    commitVideo();
   });
   els.panYSlider.addEventListener('input', () => {
     state.panY = parseFloat(els.panYSlider.value);
     els.panYValue.textContent = els.panYSlider.value;
     keyframeEditIfActive();
-    emit('settings');
+    commitVideo();
   });
   els.speedSlider.addEventListener('input', () => {
     state.speed = parseFloat(els.speedSlider.value);
@@ -359,15 +369,27 @@ function wireVideoControls() {
   const wireColor = (slider, valueEl, key) => {
     slider.addEventListener('input', () => {
       const v = clampColorValue(slider.value);
-      setColor({ [key]: v });
+      state.color = { ...state.color, [key]: v };
+      commitVideo();
       valueEl.textContent = String(v);
     });
   };
   wireColor(els.colorBrightness, els.colorBrightnessValue, 'brightness');
   wireColor(els.colorContrast, els.colorContrastValue, 'contrast');
   wireColor(els.colorSaturation, els.colorSaturationValue, 'saturation');
+  els.applyAllBtn.addEventListener('click', async () => {
+    const primary = editTargetPieces(getCurrentOutputTime())[0];
+    if (!primary) return;
+    const ok = await confirmDialog({
+      title: 'Apply to all clips?',
+      note: "Copies this clip's zoom, position, blur and colour to every clip on the timeline.",
+      confirmLabel: 'Apply to all',
+    });
+    if (ok) applyVideoSettingsToAllPieces(pieceSettings(primary));
+  });
   els.colorResetBtn.addEventListener('click', () => {
-    setColor({ brightness: 0, contrast: 0, saturation: 0 });
+    state.color = { brightness: 0, contrast: 0, saturation: 0 };
+    commitVideo();
     refreshVideoPanel();
   });
   // Safe-zone guides — a preview aid, persisted (not in the project/export).
@@ -684,7 +706,9 @@ function applyPresetSettings(s) {
   if (typeof s.mirror === 'boolean') state.mirror = s.mirror;
   buildAspectButtons();
   refreshVideoPanel();
-  emit('settings');
+  // Commit the preset's reframe/blur onto the edit-target piece(s) (B6). speed
+  // and mirror stay global; commitVideoSettings still emits 'settings' for them.
+  commitVideoSettings(getCurrentOutputTime());
 }
 
 // Adds a preset's saved text layers to the current clip — each starts at t=0
@@ -1549,6 +1573,16 @@ function refreshTextPanel() {
   els.layerEnd.disabled = full;
 }
 
+// Per-clip header: shown once there are 2+ pieces; the label reflects how many
+// pieces the current edit touches (multi-select).
+function updatePerClipHeader() {
+  const pieceCount = state.segments.length + state.appendedClips.length;
+  els.perclipRow.classList.toggle('hidden', pieceCount < 2);
+  if (pieceCount < 2) return;
+  const targets = editTargetPieces(getCurrentOutputTime());
+  els.perclipLabel.textContent = targets.length > 1 ? `Editing ${targets.length} clips` : 'Editing this clip';
+}
+
 function refreshVideoPanel() {
   // Skip whichever control the user is actively dragging so this (fired on
   // every 'settings', including from drag-to-pan) never fights their input.
@@ -1578,6 +1612,7 @@ function refreshVideoPanel() {
   els.colorContrastValue.textContent = String(col.contrast);
   if (a !== els.colorSaturation) els.colorSaturation.value = col.saturation;
   els.colorSaturationValue.textContent = String(col.saturation);
+  updatePerClipHeader();
   updateLayoutUI();
 }
 

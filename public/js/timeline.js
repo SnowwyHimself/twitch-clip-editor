@@ -33,6 +33,7 @@ import {
   clearSelection,
   selectSound,
   selectOverlay,
+  togglePieceSelection,
   selectedLayer,
   selectedSegment,
   selectedSound,
@@ -336,7 +337,16 @@ function attachAppendedClipDrag(el, clip) {
   let moved = false;
   el.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
+    if (e.shiftKey) {
+      togglePieceSelection('clip', clip.id);
+      return;
+    }
     selectClip(clip.id);
+    const item = appendedLayout().find((it) => it.clip.id === clip.id);
+    if (item) {
+      const outT = getCurrentOutputTime();
+      if (outT < item.outStart || outT >= item.outEnd) seekOutput(item.outStart + 0.001);
+    }
     startX = e.clientX;
     dragging = true;
     moved = false;
@@ -682,7 +692,17 @@ function renderVideoTrack() {
 function attachSegmentMoveDrag(el, seg, prev, next) {
   el.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
+    // Shift-click toggles this piece in the multi-selection (B6) — no drag.
+    if (e.shiftKey) {
+      togglePieceSelection('segment', seg.id);
+      return;
+    }
     selectSegment(seg.id);
+    // Seek into the piece so the preview shows its per-piece look while editing,
+    // unless the playhead is already inside it.
+    const segLen = seg.end - seg.start;
+    const outT = getCurrentOutputTime();
+    if (outT < seg.outStart || outT >= seg.outStart + segLen) seekOutput(seg.outStart + 0.001);
     el.setPointerCapture(e.pointerId);
 
     const pps = pxPerSecond();
