@@ -1694,6 +1694,13 @@ img.preset-thumb {
   width: 100%;
 }
 
+/* Delete-all-captions button: full-width; uses .danger-btn styling so it reads
+   as destructive next to the (reversible) Show-captions toggle above it. */
+.captions-remove-all {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
 /* Timing fields */
 
 .timing-fields {

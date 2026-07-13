@@ -25,6 +25,7 @@ import {
   defaultFontId,
   sourceDuration,
   outputDuration,
+  MIN_LAYER_SECONDS,
   addTransitionAfter,
   removeTransition,
   orderedPieces,
@@ -246,6 +247,7 @@ function lookupElements() {
     capPresetName: byId('cap-preset-name'),
     capPresetSaveBtn: byId('cap-preset-save-btn'),
     captionsVisibleToggle: byId('captions-visible-toggle'),
+    captionsRemoveAllBtn: byId('captions-remove-all-btn'),
   };
 }
 
@@ -1350,6 +1352,20 @@ function wireCaptionControls() {
     state.captionsHidden = !els.captionsVisibleToggle.checked;
     emit('layers'); // re-evaluate caption visibility in the preview + timeline
   });
+  // Permanently delete every caption layer (hand-made text is untouched). Unlike
+  // the Show-captions toggle this can't be undone by flipping it back, so confirm.
+  els.captionsRemoveAllBtn.addEventListener('click', async () => {
+    const count = state.layers.filter((l) => l.group === 'caption').length;
+    if (count === 0) return;
+    const ok = await confirmDialog({
+      title: 'Remove all captions?',
+      note: `Deletes all ${count} caption ${count === 1 ? 'block' : 'blocks'}. Your own text layers are kept. You can regenerate captions afterwards.`,
+      confirmLabel: 'Remove all',
+    });
+    if (!ok) return;
+    removeCaptionLayers();
+    els.capStatus.textContent = 'All captions removed. Generate again any time.';
+  });
   on('layers', renderTranscript);
   renderTranscript();
   wireCaptionPresets();
@@ -1523,6 +1539,7 @@ function clockLabel(sec) {
 function renderTranscript() {
   const caps = state.layers.filter((l) => l.group === 'caption');
   els.transcriptGroup.classList.toggle('hidden', caps.length === 0);
+  els.captionsRemoveAllBtn.classList.toggle('hidden', caps.length === 0);
   if (document.activeElement && document.activeElement.classList.contains('transcript-input')) return;
   els.transcriptList.innerHTML = '';
   for (const layer of caps.slice().sort((a, b) => a.start - b.start)) {
@@ -1686,15 +1703,49 @@ function wireTextControls() {
   els.layerEnd.addEventListener('change', commitTime);
 
   // "Apply to whole video": checked pins the layer to [0, outputDuration] and
-  // keeps it there as clips change; unchecked freezes it at the current times
-  // and it becomes a normal layer again.
+  // keeps it there as clips change; unchecked restores the timing it had before
+  // pinning (stashed on pin) so it goes back to a normal, non-spanning layer.
   els.layerFullToggle.addEventListener('change', () => {
     const layer = selectedLayer();
     if (!layer) return;
     if (els.layerFullToggle.checked) {
-      updateLayer(layer.id, { fullDuration: true, start: 0, end: outputDuration() });
+      updateLayer(layer.id, {
+        fullDuration: true,
+        preFullStart: layer.start,
+        preFullEnd: layer.end,
+        start: 0,
+        end: outputDuration(),
+      });
     } else {
-      updateLayer(layer.id, { fullDuration: false });
+      // Prefer the pre-pin span; fall back to the caption's raw whisper timing
+      // (+ nudge), then to a short default — so unpinning never leaves the layer
+      // stretched across the whole timeline.
+      const dur = outputDuration();
+      let start = layer.preFullStart;
+      let end = layer.preFullEnd;
+      // Self-heal a caption whose stashed span still covers (nearly) the whole
+      // video — that means it was pinned from an already-pinned state (e.g. old
+      // saved data from before this fix), so the stash is garbage. Whisper time
+      // is the caption's true home, so drop back to it.
+      const stashSpansAll =
+        Number.isFinite(start) && Number.isFinite(end) && start <= 0.05 && end >= dur - 0.05;
+      if (layer.group === 'caption' && stashSpansAll) {
+        start = undefined;
+        end = undefined;
+      }
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        if (layer.group === 'caption' && Number.isFinite(layer.baseStart) && Number.isFinite(layer.baseEnd)) {
+          const off = state.captionSettings.timingOffset || 0;
+          start = Math.max(0, layer.baseStart + off);
+          end = start + (layer.baseEnd - layer.baseStart);
+        } else {
+          start = Math.min(layer.start, Math.max(0, dur - 3));
+          end = Math.min(dur, start + 3);
+        }
+      }
+      start = Math.max(0, Math.min(start, dur));
+      end = Math.max(start + MIN_LAYER_SECONDS, Math.min(end, dur));
+      updateLayer(layer.id, { fullDuration: false, start, end, preFullStart: undefined, preFullEnd: undefined });
     }
   });
 
