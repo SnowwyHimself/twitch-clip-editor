@@ -2041,6 +2041,33 @@ img.preset-thumb {
   font-size: var(--fs-md);
 }
 
+/* D1 text style presets: a compact grid of styled sample thumbnails. */
+.text-style-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-1);
+}
+.text-style-preset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  cursor: pointer;
+  overflow: hidden;
+}
+.text-style-preset:hover {
+  border-color: var(--border-light);
+  background: var(--panel-3);
+}
+.tsp-sample {
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1;
+}
+
 /* Per-clip settings header (B6): label + "Apply to all" on one row. */
 .perclip-header {
   display: flex;

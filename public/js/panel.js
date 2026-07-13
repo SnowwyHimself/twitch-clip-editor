@@ -209,6 +209,13 @@ function lookupElements() {
     fontSizeSlider: byId('font-size-slider'),
     fontSizeValue: byId('font-size-value'),
     dropShadowToggle: byId('drop-shadow-toggle'),
+    textStylePresets: byId('text-style-presets'),
+    strokeWidthSlider: byId('stroke-width-slider'),
+    strokeWidthValue: byId('stroke-width-value'),
+    strokeColorPicker: byId('stroke-color-picker'),
+    uppercaseToggle: byId('uppercase-toggle'),
+    textOpacitySlider: byId('text-opacity-slider'),
+    textOpacityValue: byId('text-opacity-value'),
     layerStart: byId('layer-start'),
     layerEnd: byId('layer-end'),
     layerFullToggle: byId('layer-full-toggle'),
@@ -286,6 +293,57 @@ function buildColorPicker(container, onPick) {
 
 function markActiveSwatch(container, hex) {
   container.querySelectorAll('.color-swatch').forEach((b) => b.classList.toggle('active', b.dataset.hex === hex));
+}
+
+// D1 one-click text style presets — designed combos of style/colour/stroke/
+// case/shadow. Applied to the selected layer.
+const TEXT_STYLE_PRESETS = [
+  { name: 'Bold outline', style: 'outline', color: '#ffffff', strokeWidth: 18, strokeColor: '#000000', uppercase: true, dropShadow: false },
+  { name: 'Clean white', style: 'plain', color: '#ffffff', strokeWidth: 0, strokeColor: '#000000', uppercase: false, dropShadow: true },
+  { name: 'Pill caption', style: 'box', color: '#ffffff', strokeWidth: 0, strokeColor: '#000000', uppercase: false, dropShadow: false },
+  { name: 'Yellow pop', style: 'outline', color: '#ffd23f', strokeWidth: 16, strokeColor: '#000000', uppercase: true, dropShadow: false },
+  { name: 'Accent edge', style: 'outline', color: '#ffffff', strokeWidth: 14, strokeColor: '#7c5cff', uppercase: false, dropShadow: false },
+  { name: 'Red hit', style: 'outline', color: '#ff5c5c', strokeWidth: 16, strokeColor: '#000000', uppercase: true, dropShadow: false },
+  { name: 'Soft shadow', style: 'plain', color: '#ffffff', strokeWidth: 0, strokeColor: '#000000', uppercase: false, dropShadow: true },
+  { name: 'Lower third', style: 'plain', color: '#ffffff', strokeWidth: 0, strokeColor: '#000000', uppercase: false, dropShadow: false },
+];
+
+function buildTextStylePresets() {
+  els.textStylePresets.innerHTML = '';
+  for (const p of TEXT_STYLE_PRESETS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'text-style-preset';
+    btn.title = p.name;
+    const sample = document.createElement('span');
+    sample.className = 'tsp-sample';
+    sample.textContent = 'Aa';
+    if (p.style === 'box') {
+      sample.style.background = p.color;
+      sample.style.color = '#111';
+      sample.style.padding = '0 4px';
+      sample.style.borderRadius = '4px';
+    } else {
+      sample.style.color = p.color;
+      if (p.strokeWidth > 0) sample.style.webkitTextStroke = `1px ${p.strokeColor}`;
+    }
+    if (p.uppercase) sample.style.textTransform = 'uppercase';
+    btn.appendChild(sample);
+    btn.addEventListener('click', () => {
+      const layer = selectedLayer();
+      if (!layer) return;
+      updateLayer(layer.id, {
+        style: p.style,
+        color: p.color,
+        strokeWidth: p.strokeWidth,
+        strokeColor: p.strokeColor,
+        uppercase: p.uppercase,
+        dropShadow: p.dropShadow,
+      });
+      refreshTextPanel();
+    });
+    els.textStylePresets.appendChild(btn);
+  }
 }
 
 // --- video panel ------------------------------------------------------------------
@@ -1502,6 +1560,27 @@ function wireTextControls() {
     if (layer) updateLayer(layer.id, { dropShadow: els.dropShadowToggle.checked });
   });
 
+  // D1 text options: stroke, uppercase, opacity, and one-click style presets.
+  els.strokeWidthSlider.addEventListener('input', () => {
+    els.strokeWidthValue.textContent = `${els.strokeWidthSlider.value}%`;
+    const layer = selectedLayer();
+    if (layer) updateLayer(layer.id, { strokeWidth: parseFloat(els.strokeWidthSlider.value) });
+  });
+  buildColorPicker(els.strokeColorPicker, (hex) => {
+    const layer = selectedLayer();
+    if (layer) updateLayer(layer.id, { strokeColor: hex });
+  });
+  els.uppercaseToggle.addEventListener('change', () => {
+    const layer = selectedLayer();
+    if (layer) updateLayer(layer.id, { uppercase: els.uppercaseToggle.checked });
+  });
+  els.textOpacitySlider.addEventListener('input', () => {
+    els.textOpacityValue.textContent = `${els.textOpacitySlider.value}%`;
+    const layer = selectedLayer();
+    if (layer) updateLayer(layer.id, { opacity: parseFloat(els.textOpacitySlider.value) / 100 });
+  });
+  buildTextStylePresets();
+
   const commitTime = () => {
     const layer = selectedLayer();
     if (!layer) return;
@@ -1563,6 +1642,15 @@ function refreshTextPanel() {
   els.fontSizeSlider.value = layer.fontSize;
   els.fontSizeValue.textContent = `${layer.fontSize}px`;
   els.dropShadowToggle.checked = layer.dropShadow;
+  // D1 controls. strokeWidth null follows the style (outline 15% / else 0).
+  const strokePct = layer.strokeWidth != null ? layer.strokeWidth : layer.style === 'outline' ? 15 : 0;
+  if (document.activeElement !== els.strokeWidthSlider) els.strokeWidthSlider.value = strokePct;
+  els.strokeWidthValue.textContent = `${Math.round(strokePct)}%`;
+  markActiveSwatch(els.strokeColorPicker, layer.strokeColor || '#000000');
+  els.uppercaseToggle.checked = !!layer.uppercase;
+  const op = Math.round((layer.opacity != null ? layer.opacity : 1) * 100);
+  if (document.activeElement !== els.textOpacitySlider) els.textOpacitySlider.value = op;
+  els.textOpacityValue.textContent = `${op}%`;
   if (document.activeElement !== els.layerStart) els.layerStart.value = layer.start.toFixed(2);
   if (document.activeElement !== els.layerEnd) els.layerEnd.value = layer.end.toFixed(2);
   const full = !!layer.fullDuration;

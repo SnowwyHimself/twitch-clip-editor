@@ -296,6 +296,10 @@ function updateLayerEl(layer) {
   const fontSizePx = layer.fontSize * scale;
   inner.style.fontSize = `${fontSizePx.toFixed(2)}px`;
   inner.style.lineHeight = String(PREVIEW_LINE_HEIGHT_RATIO);
+  // D1: uppercase (set before the wrap measurement so widths reflect it) and
+  // per-layer opacity.
+  inner.style.textTransform = layer.uppercase ? 'uppercase' : 'none';
+  root.style.opacity = String(layer.opacity != null ? layer.opacity : 1);
   // Per-layer wrap width (fraction of canvas width). The server's opentype
   // word-wrap wraps at canvasWidth*wrapRatio, so the preview must wrap at
   // frameWidth*wrapRatio for identical line breaks. An absolutely-positioned
@@ -319,9 +323,13 @@ function updateLayerEl(layer) {
   if (layer.style === 'outline' || layer.style === 'plain') {
     fillers.innerHTML = '';
     fillers.style.filter = 'none';
-    const strokePx = layer.style === 'outline' ? fontSizePx * (PREVIEW_OUTLINE_THICKNESS / 100) : 0;
+    // D1: configurable stroke — width % defaults to the style (outline thickness
+    // or none), colour defaults to black. Mirrors caption.js resolveStroke.
+    const strokePctDefault = layer.style === 'outline' ? PREVIEW_OUTLINE_THICKNESS : 0;
+    const strokePct = layer.strokeWidth != null ? layer.strokeWidth : strokePctDefault;
+    const strokePx = fontSizePx * (strokePct / 100);
     inner.style.color = layer.color;
-    inner.style.webkitTextStroke = `${strokePx.toFixed(2)}px black`;
+    inner.style.webkitTextStroke = `${strokePx.toFixed(2)}px ${layer.strokeColor || 'black'}`;
     inner.style.filter = layer.dropShadow ? shadow : 'none';
   } else {
     const paddingYPx = PREVIEW_BOX_PADDING_Y * scale;

@@ -1286,6 +1286,10 @@ function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
       color: layer.color,
       canvasWidth: canvasW,
       wrapWidth: layer.wrapWidth,
+      strokeWidth: layer.strokeWidth, // % of font size; null/undefined = style default
+      strokeColor: layer.strokeColor,
+      uppercase: layer.uppercase,
+      opacity: layer.opacity,
     });
     const x = resolvePositionCoordinate(layer.xPercent, width, canvasW);
     const y = resolvePositionCoordinate(layer.yPercent, height, canvasH);

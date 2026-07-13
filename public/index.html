@@ -483,6 +483,30 @@
           </div>
 
           <div class="field-group">
+            <label class="field-label">Style presets</label>
+            <div id="text-style-presets" class="text-style-presets"></div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="stroke-width-slider">Outline width <span id="stroke-width-value">0%</span></label>
+            <input id="stroke-width-slider" type="range" min="0" max="30" value="0" step="1" />
+            <label class="field-label" for="stroke-color-picker" style="margin-top:8px">Outline color</label>
+            <div id="stroke-color-picker" class="color-picker"></div>
+          </div>
+
+          <div class="field-group">
+            <label class="switch-row" for="uppercase-toggle">
+              <span class="field-label switch-label">Uppercase</span>
+              <span class="switch">
+                <input type="checkbox" id="uppercase-toggle" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+            <label class="field-label" for="text-opacity-slider" style="margin-top:8px">Opacity <span id="text-opacity-value">100%</span></label>
+            <input id="text-opacity-slider" type="range" min="0" max="100" value="100" step="1" />
+          </div>
+
+          <div class="field-group">
             <label class="field-label">Timing (seconds)</label>
             <div class="timing-fields">
               <input id="layer-start" type="number" min="0" step="0.1" aria-label="Start time" />

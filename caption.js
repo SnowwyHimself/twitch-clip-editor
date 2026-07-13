@@ -362,13 +362,14 @@ function buildDropShadowFilterDef(fontSize) {
 // differ only in whether a black stroke is drawn around the text at all,
 // so a single builder with stroke=false covers "Plain" instead of
 // duplicating the whole line-layout/drop-shadow-grouping logic.
-function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, stroke = true }) {
+function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, strokePct = OUTLINE_THICKNESS, strokeColor = 'black', opacity = 1 }) {
   const textColor = color || '#ffffff';
   const ascenderPx = (font.ascender / font.unitsPerEm) * fontSize;
   const descenderPx = (Math.abs(font.descender) / font.unitsPerEm) * fontSize;
   const lineHeight = ascenderPx + descenderPx;
   const textBlockHeight = lineHeight * lines.length;
-  const strokeWidth = stroke ? fontSize * (OUTLINE_THICKNESS / 100) : 0;
+  const strokeWidth = fontSize * (Math.max(0, strokePct) / 100);
+  const stroke = strokeWidth > 0;
 
   // Cropped tightly to the widest line (plus stroke/safety margin) rather
   // than always spanning the full canvas width — this is what lets the
@@ -397,7 +398,7 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
         }
       } else if (seg.value) {
         const strokeAttrs = stroke
-          ? ` stroke="black" stroke-width="${strokeWidth.toFixed(2)}" stroke-linejoin="round" style="paint-order:stroke"`
+          ? ` stroke="${strokeColor}" stroke-width="${strokeWidth.toFixed(2)}" stroke-linejoin="round" style="paint-order:stroke"`
           : '';
         lineContent += `<text x="${segX.toFixed(2)}" y="${baselineY.toFixed(2)}" font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="600" fill="${textColor}"${strokeAttrs} text-anchor="start">${escapeXml(seg.value)}</text>`;
       }
@@ -406,7 +407,8 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
     elements += dropShadow ? `<g filter="url(#dropshadow)">${lineContent}</g>` : lineContent;
   });
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${elements}</svg>`;
+  const body = opacity < 1 ? `<g opacity="${opacity.toFixed(3)}">${elements}</g>` : elements;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`;
   return { svg, width, height };
 }
 
@@ -420,7 +422,7 @@ function buildOutlineSvg({ lines, font, fontSize, emojiSize, dropShadow, color, 
 // left a visible gap between them — a short line floated in its own detached
 // bubble under a long one — which read as broken. One shared box removes any
 // seam.) The drop shadow (when on) sits under the box, not the text.
-function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color }) {
+function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color, opacity = 1 }) {
   const boxColor = color || '#ffffff';
   const textColor = getContrastTextColor(boxColor);
   const ascenderPx = (font.ascender / font.unitsPerEm) * fontSize;
@@ -494,7 +496,8 @@ function buildBoxSvg({ lines, font, fontSize, emojiSize, dropShadow, color }) {
     });
   });
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${elements}</svg>`;
+  const body = opacity < 1 ? `<g opacity="${opacity.toFixed(3)}">${elements}</g>` : elements;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`;
   return { svg, width, height };
 }
 
@@ -593,24 +596,52 @@ function getEmojiPngBase64(emojiChar) {
 // boundary shrinking along with the text. It IS scaled with canvasWidth
 // (defaulting to the original 1080px canvas this was tuned against) so
 // switching aspect ratios keeps the same proportional side margins.
-function renderCaptionPng({ text, style, fontId, dropShadow, fontSize, color, canvasWidth, wrapWidth }) {
+function renderCaptionPng({
+  text,
+  style,
+  fontId,
+  dropShadow,
+  fontSize,
+  color,
+  canvasWidth,
+  wrapWidth,
+  strokeWidth,
+  strokeColor,
+  uppercase,
+  opacity,
+}) {
   const { path: fontPath } = resolveFontEntry(fontId);
   const font = loadFontFromPath(fontPath);
   const resolvedFontSize = fontSize || FONT_SIZE;
   const emojiSize = resolvedFontSize * EMOJI_SIZE_RATIO;
+  // D1: uppercase before wrapping so word-wrap widths match the preview.
+  const displayText = (uppercase ? String(text).toUpperCase() : String(text)).trim();
   // Per-layer wrap width (fraction of canvas width); falls back to the legacy
   // fixed ratio. Multiplying canvas width by the same ratio the preview uses
   // keeps word-wrap identical between preview and render.
   const wrapRatio = Number.isFinite(wrapWidth) ? wrapWidth : MAX_TEXT_WIDTH_RATIO;
   const maxTextWidth = Math.round((canvasWidth || DEFAULT_CANVAS_W) * wrapRatio);
-  const lines = wrapText(font, text.trim(), resolvedFontSize, maxTextWidth, emojiSize);
+  const lines = wrapText(font, displayText, resolvedFontSize, maxTextWidth, emojiSize);
 
-  const buildArgs = { lines, font, fontSize: resolvedFontSize, emojiSize, dropShadow: !!dropShadow, color };
+  // D1: configurable stroke (% of font size; null follows the style) + colour,
+  // and group opacity. Mirrors preview.js updateLayerEl.
+  const defaultStrokePct = style === 'outline' ? OUTLINE_THICKNESS : 0;
+  const strokePct = Number.isFinite(strokeWidth) ? strokeWidth : defaultStrokePct;
+  const groupOpacity = Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1;
+  const buildArgs = {
+    lines,
+    font,
+    fontSize: resolvedFontSize,
+    emojiSize,
+    dropShadow: !!dropShadow,
+    color,
+    strokePct,
+    strokeColor: strokeColor || 'black',
+    opacity: groupOpacity,
+  };
   let svg, width, height;
   if (style === 'box') {
     ({ svg, width, height } = buildBoxSvg(buildArgs));
-  } else if (style === 'plain') {
-    ({ svg, width, height } = buildOutlineSvg({ ...buildArgs, stroke: false }));
   } else {
     ({ svg, width, height } = buildOutlineSvg(buildArgs));
   }

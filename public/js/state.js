@@ -740,6 +740,13 @@ export function addTextLayer(partial = {}, { select = true } = {}) {
     fontSize: 64,
     color: '#ffffff',
     dropShadow: false,
+    // D1 text options. strokeWidth is % of font size (null = follow the style:
+    // outline→OUTLINE_THICKNESS, plain/box→0). uppercase/opacity apply to any
+    // style. All default to the pre-D1 look so existing captions are unchanged.
+    strokeWidth: null,
+    strokeColor: '#000000',
+    uppercase: false,
+    opacity: 1,
     xPercent: 50,
     yPercent: 25,
     wrapWidth: TEXT_WRAP_DEFAULT,
