@@ -1294,6 +1294,18 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     }
   }
 
+  // Loudness normalization (Feature 8): the LAST step in the audio chain, on the
+  // final mix — so per-clip volume, fades and ducking are all preserved and only
+  // the overall loudness is retargeted to a short-form-friendly -14 LUFS
+  // (single-pass loudnorm; TP -1.5 dBTP true-peak ceiling, LRA 11).
+  const wantsLoudnorm = exportOpts && exportOpts.normalizeLoudness;
+  const anyAudio = hasAudio || (audioOverlays && audioOverlays.length > 0);
+  if (wantsLoudnorm && audioMap && anyAudio) {
+    const inLabel = audioMap === '0:a?' ? '[0:a]' : audioMap;
+    filterComplex += `;${inLabel}loudnorm=I=-14:TP=-1.5:LRA=11[normaudio]`;
+    audioMap = '[normaudio]';
+  }
+
   // Export options: downscale the finished frame to the chosen resolution
   // (the "p" value targets the short side, so it works for portrait and
   // landscape), and use the chosen CRF (lower = higher quality/larger file).
@@ -1599,7 +1611,10 @@ function buildExportOpts(body) {
   const crfRaw = parseInt(body.crf, 10);
   const crf = Number.isFinite(crfRaw) ? Math.min(35, Math.max(12, crfRaw)) : 19;
   const resRaw = parseInt(body.outHeight, 10);
-  return { crf, targetRes: Number.isFinite(resRaw) && resRaw > 0 ? resRaw : null };
+  // Loudness normalization defaults ON (short-form platforms expect consistent
+  // loudness); the client sends 'false' to opt out.
+  const normalizeLoudness = String(body.normalizeLoudness) !== 'false';
+  return { crf, targetRes: Number.isFinite(resRaw) && resRaw > 0 ? resRaw : null, normalizeLoudness };
 }
 
 // Color grade { brightness, contrast, saturation }, each -100..100.

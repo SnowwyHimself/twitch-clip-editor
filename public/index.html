@@ -725,6 +725,16 @@
             <option value="25">Smaller (lower quality)</option>
           </select>
         </div>
+        <div class="field-group">
+          <label class="switch-row" for="export-loudness">
+            <span class="field-label switch-label">Normalize loudness</span>
+            <span class="switch">
+              <input type="checkbox" id="export-loudness" checked />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <p class="field-hint">Evens out the final volume to a consistent level (−14 LUFS) so clips from different streams don't come out too quiet or too loud.</p>
+        </div>
         <button type="button" id="export-start-btn" class="primary-btn full-width">Render</button>
       </div>
       <div id="export-progress" class="hidden">

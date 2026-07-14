@@ -25,6 +25,7 @@ const progressPane = document.getElementById('export-progress');
 const startRenderBtn = document.getElementById('export-start-btn');
 const resolutionSelect = document.getElementById('export-resolution');
 const qualitySelect = document.getElementById('export-quality');
+const loudnessToggle = document.getElementById('export-loudness');
 
 const EXPORT_OPTS_KEY = 'clipEditor.exportOpts.v1';
 let pollHandle = null;
@@ -107,6 +108,8 @@ function buildFormData() {
   // Export options — output height (px) + x264 CRF (lower = higher quality).
   formData.append('outHeight', resolutionSelect.value);
   formData.append('crf', qualitySelect.value);
+  // Loudness normalization to a consistent -14 LUFS (Feature 8); choice remembered.
+  formData.append('normalizeLoudness', loudnessToggle && loudnessToggle.checked ? 'true' : 'false');
   formData.append('layout', state.layout || 'fill');
   if (state.layout === 'split') formData.append('split', JSON.stringify(state.split));
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));
@@ -332,7 +335,10 @@ async function startRender() {
   showProgress();
   setExporting(true);
   modalStatus.textContent = 'Starting...';
-  localStorage.setItem(EXPORT_OPTS_KEY, JSON.stringify({ res: resolutionSelect.value, crf: qualitySelect.value }));
+  localStorage.setItem(
+    EXPORT_OPTS_KEY,
+    JSON.stringify({ res: resolutionSelect.value, crf: qualitySelect.value, loudness: !loudnessToggle || loudnessToggle.checked })
+  );
   try {
     const { endpoint, formData } = buildFormData();
     const { jobId } = await startExport(endpoint, formData);
@@ -350,6 +356,8 @@ export function initExport() {
     const saved = JSON.parse(localStorage.getItem(EXPORT_OPTS_KEY) || '{}');
     if (saved.res) resolutionSelect.value = saved.res;
     if (saved.crf) qualitySelect.value = saved.crf;
+    // Loudness defaults ON; only an explicit stored `false` unchecks it.
+    if (loudnessToggle) loudnessToggle.checked = saved.loudness !== false;
   } catch {
     /* defaults */
   }
