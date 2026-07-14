@@ -2,8 +2,11 @@
 
 Clip Editor is a **local desktop app**. It edits Twitch clips on your machine
 using bundled `ffmpeg`, `yt-dlp`, and `whisper.cpp`. There is **no cloud, no
-account, and no telemetry** — nothing about you or your clips is sent anywhere,
-with one narrow exception: an update check (see below), which you can turn off.
+account, and no telemetry** — nothing about you or your clips is ever sent
+anywhere. The app only reaches the network for three narrow, non-tracking
+reasons: fetching a Twitch clip *you* paste, an update check (which you can turn
+off), and — only if you ask for it — a one-time caption-model download. All three
+are described below.
 
 ## How it's built
 
@@ -47,9 +50,22 @@ Everything stays under your OS user-data folder for the app
 - **projects/** — your saved projects (JSON + any imported media)
 - **preview-cache/**, **downloads/** — clips fetched from Twitch for preview/export
 - **uploads/**, **outputs/** — files you import and the videos you export
-- **models/** — the offline speech model used for auto-captions
+- **models/** — the offline speech models used for auto-captions (the bundled
+  Fast model, plus any Better/Best model you download — see below)
 
 Nothing here is uploaded. Delete the folder to wipe all app data.
+
+## Caption models — user-initiated downloads (Hugging Face)
+
+Auto-captions run entirely on your machine with `whisper.cpp`. The **Fast** model
+ships bundled, so captions work offline out of the box. Choosing the **Better**
+or **Best** quality tier downloads that one model file, **once**, only when *you*
+pick it — from the official whisper.cpp model repository on Hugging Face
+(`huggingface.co/ggerganov/whisper.cpp`). It's saved to `models/` in your app
+data, verified against its exact expected size, and reused forever after; a
+cancelled or corrupt download is deleted, never left half-written. No clip audio
+or text ever leaves your machine — only the model file comes *in*. You can remove
+a downloaded model any time from **Caption quality** settings to reclaim disk.
 
 ## Updates — the only background network activity
 
@@ -61,8 +77,9 @@ Click it to relaunch into the new version, or ignore it and it applies the next
 time you quit.
 
 - **Turn it off:** menu → **Automatic Updates** (uncheck). With it off, the app
-  makes **no** network requests on its own — it only ever talks to Twitch when
-  *you* paste a clip link.
+  makes **no** network requests on its own — it only talks to Twitch when *you*
+  paste a clip link, or to Hugging Face when *you* choose to download a
+  higher-quality caption model.
 - **Check manually:** menu → **Check for Updates…**
 
 ## Signing note
