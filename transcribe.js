@@ -271,9 +271,20 @@ async function transcribeSource(
   const jsonPath = `${outBase}.json`;
 
   try {
-    // whisper.cpp wants 16kHz mono PCM — extract it regardless of what the
-    // source container/codec is.
-    await runCommand(ffmpegBin, ['-y', '-i', inputPath, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath]);
+    // whisper.cpp wants 16kHz mono PCM. A transcription-ONLY pre-pass cleans the
+    // audio for the recognizer without ever touching the exported video's audio
+    // (that's a separate ffmpeg run in server.js): high-pass at 80 Hz to cut game
+    // rumble / music bass, then dynaudnorm to even out speech loudness under loud
+    // game audio. Both are amplitude-only (no time shift), so the DTW word timing
+    // that aligns to this WAV is unchanged.
+    //   Chose dynaudnorm over speechnorm after A/B testing on a messy gameplay
+    //   clip: speechnorm's expansion DROPPED real speech (45 -> 17 words), while
+    //   dynaudnorm's smooth windowed normalization kept it all (45 -> 47) and
+    //   still improved consistency. f=200:g=5 is responsive but not pumpy.
+    const TRANSCRIBE_AF = 'highpass=f=80,dynaudnorm=f=200:g=5';
+    await runCommand(ffmpegBin, [
+      '-y', '-i', inputPath, '-vn', '-af', TRANSCRIBE_AF, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath,
+    ]);
 
     const args = [
       '-m', modelPath,
@@ -282,6 +293,12 @@ async function transcribeSource(
       '-of', outBase,
       '-ml', mode === 'words' ? '1' : String(MAX_SEGMENT_CHARS),
       '-sow',           // split on word boundaries, never mid-word
+      '-bs', '5',       // beam search (size 5) — more accurate than greedy; the
+                        // temperature-fallback defaults are kept
+      '-mc', '0',       // no cross-segment context carryover: prevents the
+                        // repeated-phrase hallucination loops whisper falls into
+                        // on long/noisy clips. DTW alignment is per-token against
+                        // the audio, so dropping text context doesn't affect it.
     ];
     if (dtwPreset) args.push('--dtw', dtwPreset);
 
