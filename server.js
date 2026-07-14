@@ -1346,7 +1346,13 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   const anyAudio = hasAudio || (audioOverlays && audioOverlays.length > 0);
   if (wantsLoudnorm && audioMap && anyAudio) {
     const inLabel = audioMap === '0:a?' ? '[0:a]' : audioMap;
-    filterComplex += `;${inLabel}loudnorm=I=-14:TP=-1.5:LRA=11[normaudio]`;
+    // loudnorm resamples internally and emits a non-standard rate (96 kHz here),
+    // which some platforms reject; aformat restores the pipeline's 44.1 kHz
+    // stereo fltp (matching AFMT and the loudnorm-off path) so every export is
+    // consistent. aformat (not a bare aresample) also re-pins the channel layout,
+    // which loudnorm leaves ambiguous — otherwise the multi-source concat/amix
+    // path fails with "Cannot select channel layout" at the encoder.
+    filterComplex += `;${inLabel}loudnorm=I=-14:TP=-1.5:LRA=11,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[normaudio]`;
     audioMap = '[normaudio]';
   }
 
