@@ -51,6 +51,18 @@
         <div id="preview-overlays" class="preview-overlays"></div>
         <div id="text-layers" class="text-layers"></div>
         <img id="preview-watermark" class="preview-watermark hidden" alt="" />
+        <!-- Main-clip crop overlay: shown only while crop mode is on. The dim
+             mask lies outside the kept rectangle; the rectangle carries 4 edge
+             handles. Sits above the videos, below the flash. -->
+        <div id="preview-crop" class="preview-crop hidden">
+          <div class="preview-crop-mask"></div>
+          <div id="preview-crop-rect" class="preview-crop-rect">
+            <div class="crop-h crop-h-top" data-edge="top"></div>
+            <div class="crop-h crop-h-bottom" data-edge="bottom"></div>
+            <div class="crop-h crop-h-left" data-edge="left"></div>
+            <div class="crop-h crop-h-right" data-edge="right"></div>
+          </div>
+        </div>
         <div id="preview-flash" class="preview-flash"></div>
       </div>
       <div id="preview-controls" class="preview-controls hidden">
@@ -156,6 +168,14 @@
         <div class="field-group fill-only">
           <label class="field-label" for="zoom-slider">Zoom <span id="zoom-value">100%</span></label>
           <input id="zoom-slider" type="range" min="100" max="200" value="100" step="1" />
+        </div>
+        <div class="field-group fill-only" id="crop-group">
+          <div class="kf-row">
+            <span class="field-label">Crop <span id="crop-value" class="crop-value"></span></span>
+            <button type="button" id="crop-reset-btn" class="link-btn hidden">Reset</button>
+          </div>
+          <button type="button" id="crop-mode-btn" class="secondary-btn full-width icon-text-btn"><span data-icon="crop"></span> <span class="crop-btn-label">Crop the frame</span></button>
+          <p class="field-hint" id="crop-hint">Drag the edges on the preview to trim the frame. The kept area fills the video.</p>
         </div>
         <details class="insp-adv" data-adv="clip-transform">
           <summary>Advanced</summary>

@@ -850,6 +850,85 @@ input[type="text"] {
   right: 2px;
 }
 
+/* Main-clip crop overlay (crop mode). The container spans the frame; the mask
+   is a semi-opaque cover with a transparent hole punched by the rect via a big
+   box-shadow (so everything OUTSIDE the kept rectangle is dimmed). */
+.preview-crop {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  overflow: hidden; /* clips the rect's dimming box-shadow to the frame */
+  touch-action: none;
+}
+.preview-crop.hidden {
+  display: none;
+}
+.preview-crop-rect {
+  position: absolute;
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); /* dims everything outside */
+  box-sizing: border-box;
+}
+/* Rule-of-thirds guides inside the kept rectangle. */
+.preview-crop-rect::before,
+.preview-crop-rect::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.preview-crop-rect::before {
+  background:
+    linear-gradient(to right, transparent calc(33.33% - 0.5px), rgba(255, 255, 255, 0.35) calc(33.33% - 0.5px) calc(33.33% + 0.5px), transparent calc(33.33% + 0.5px)),
+    linear-gradient(to right, transparent calc(66.66% - 0.5px), rgba(255, 255, 255, 0.35) calc(66.66% - 0.5px) calc(66.66% + 0.5px), transparent calc(66.66% + 0.5px));
+}
+.preview-crop-rect::after {
+  background:
+    linear-gradient(to bottom, transparent calc(33.33% - 0.5px), rgba(255, 255, 255, 0.35) calc(33.33% - 0.5px) calc(33.33% + 0.5px), transparent calc(33.33% + 0.5px)),
+    linear-gradient(to bottom, transparent calc(66.66% - 0.5px), rgba(255, 255, 255, 0.35) calc(66.66% - 0.5px) calc(66.66% + 0.5px), transparent calc(66.66% + 0.5px));
+}
+.crop-h {
+  position: absolute;
+  background: #fff;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  z-index: 7;
+  touch-action: none;
+}
+.crop-h-top,
+.crop-h-bottom {
+  left: 50%;
+  width: 34px;
+  height: 7px;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+.crop-h-left,
+.crop-h-right {
+  top: 50%;
+  width: 7px;
+  height: 34px;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+.crop-h-top {
+  top: -4px;
+}
+.crop-h-bottom {
+  bottom: -4px;
+}
+.crop-h-left {
+  left: -4px;
+}
+.crop-h-right {
+  right: -4px;
+}
+.crop-value {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Hidden by the playhead being outside the overlay's clip range (kept in
    layout, unlike .hidden, so it can still be measured/edited). */
 .preview-overlay.overlay-hidden {

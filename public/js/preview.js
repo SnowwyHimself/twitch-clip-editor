@@ -38,6 +38,8 @@ import {
   keyframeTransformAt,
   addKeyframe,
   clampCropValue,
+  clampMainCropValue,
+  setMainCrop,
   clampWrapWidth,
   faceTrackActive,
   faceTrackAt,
@@ -1658,7 +1660,161 @@ function applyCropView() {
   bgVideo.style.setProperty('object-view-box', val);
 }
 
+// --- crop mode (interactive handles) ---------------------------------------
+// The main clip REFLOWS when cropped (the kept region refills the frame), so a
+// live edge-drag on the filled result would chase a moving target. Instead crop
+// mode shows the WHOLE source (object-fit contain, no zoom/pan) with a draggable
+// rectangle marking the kept region; on exit the normal view reflows to the
+// filled crop. The rectangle maps linearly to source %, so handles are exact.
+const previewCrop = document.getElementById('preview-crop');
+const cropRect = document.getElementById('preview-crop-rect');
+const cropModeBtn = document.getElementById('crop-mode-btn');
+const cropResetBtn = document.getElementById('crop-reset-btn');
+const cropValueEl = document.getElementById('crop-value');
+let cropMode = false;
+
+function currentCrop() {
+  return state.crop || { top: 0, bottom: 0, left: 0, right: 0 };
+}
+
+// The full (uncropped) source fit into the frame with object-fit contain — the
+// linear source→screen map the crop rectangle and handles live in.
+function cropFitRect() {
+  const { width: fw, height: fh } = frameSize();
+  const srcW = (state.source && state.source.width) || fgVideo.videoWidth || fw;
+  const srcH = (state.source && state.source.height) || fgVideo.videoHeight || fh;
+  const a = srcW / srcH;
+  const fa = fw / fh;
+  let w;
+  let h;
+  if (a > fa) {
+    w = fw;
+    h = fw / a;
+  } else {
+    h = fh;
+    w = fh * a;
+  }
+  return { left: (fw - w) / 2, top: (fh - h) / 2, w, h };
+}
+
+function layoutCropOverlay() {
+  const R = cropFitRect();
+  const c = currentCrop();
+  cropRect.style.left = `${(R.left + (c.left / 100) * R.w).toFixed(1)}px`;
+  cropRect.style.top = `${(R.top + (c.top / 100) * R.h).toFixed(1)}px`;
+  cropRect.style.width = `${(R.w * (1 - (c.left + c.right) / 100)).toFixed(1)}px`;
+  cropRect.style.height = `${(R.h * (1 - (c.top + c.bottom) / 100)).toFixed(1)}px`;
+}
+
+// Crop-mode footage view: the whole source, undistorted, no zoom/pan/mirror/grade
+// so the rectangle selects a true source region.
+function applyCropModeView() {
+  fgVideo.style.setProperty('object-view-box', 'none');
+  fgVideo.style.objectFit = 'contain';
+  fgVideo.style.objectPosition = '';
+  fgVideo.style.transformOrigin = '';
+  fgVideo.style.transform = 'none';
+  fgVideo.style.filter = '';
+  bgVideo.classList.add('hidden');
+}
+
+function refreshCropUI() {
+  const c = currentCrop();
+  const any = c.top + c.bottom + c.left + c.right > 0.001;
+  if (cropValueEl) {
+    cropValueEl.textContent = any
+      ? `L${Math.round(c.left)} R${Math.round(c.right)} T${Math.round(c.top)} B${Math.round(c.bottom)}`
+      : '';
+  }
+  if (cropResetBtn) cropResetBtn.classList.toggle('hidden', !any);
+  if (cropModeBtn) {
+    cropModeBtn.classList.toggle('active', cropMode);
+    const label = cropModeBtn.querySelector('.crop-btn-label');
+    if (label) label.textContent = cropMode ? 'Done cropping' : any ? 'Adjust crop' : 'Crop the frame';
+  }
+}
+
+function enterCropMode() {
+  if (!state.source || splitActive() || faceTrackActive()) return;
+  cropMode = true;
+  previewCrop.classList.remove('hidden');
+  previewFrame.classList.add('cropping');
+  updateAll();
+}
+
+function exitCropMode() {
+  if (!cropMode) return;
+  cropMode = false;
+  previewCrop.classList.add('hidden');
+  previewFrame.classList.remove('cropping');
+  fgVideo.style.objectFit = '';
+  updateAll();
+}
+
+function toggleCropMode() {
+  if (cropMode) exitCropMode();
+  else enterCropMode();
+}
+
+function attachCropHandle(handle, edge) {
+  handle.addEventListener('pointerdown', (e) => {
+    if (!cropMode) return;
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {}
+    const onMove = (ev) => {
+      const R = cropFitRect();
+      const rect = previewFrame.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      let val;
+      if (edge === 'left') val = ((x - R.left) / R.w) * 100;
+      else if (edge === 'right') val = ((R.left + R.w - x) / R.w) * 100;
+      else if (edge === 'top') val = ((y - R.top) / R.h) * 100;
+      else val = ((R.top + R.h - y) / R.h) * 100;
+      const clamped = clampMainCropValue(currentCrop(), edge, val);
+      setMainCrop({ [edge]: clamped }); // emits 'settings' -> updateAll relays the overlay
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  });
+}
+
+function wireCrop() {
+  if (!previewCrop) return;
+  if (cropModeBtn) cropModeBtn.addEventListener('click', toggleCropMode);
+  if (cropResetBtn) {
+    cropResetBtn.addEventListener('click', () => {
+      setMainCrop({ top: 0, bottom: 0, left: 0, right: 0 });
+    });
+  }
+  for (const h of previewCrop.querySelectorAll('.crop-h')) attachCropHandle(h, h.dataset.edge);
+  refreshCropUI();
+}
+
 function updateAll() {
+  // Crop mode owns the footage view: show the whole source with the crop
+  // rectangle. Split/face-track override crop entirely, so bail out of it.
+  if (cropMode) {
+    if (splitActive() || faceTrackActive()) {
+      exitCropMode();
+    } else {
+      applyCropModeView();
+      layoutCropOverlay();
+      refreshCropUI();
+      syncOverlayEls();
+      syncLayerEls();
+      return;
+    }
+  }
   applyClipTransform();
   applyCropView();
   bgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
@@ -1684,6 +1840,7 @@ function updateAll() {
 
   syncSplit();
   updateClipOutline();
+  refreshCropUI();
 
   syncOverlayEls();
   syncLayerEls();
@@ -2000,6 +2157,7 @@ export function initPreview() {
   attachSplitRegionDrag(splitTop, 'facecam');
   attachSplitRegionDrag(splitBottom, 'gameplay');
   attachSplitDivider();
+  wireCrop();
   previewFrame.addEventListener('pointerdown', (e) => {
     if (e.target === previewFrame) selectLayer(null);
   });
@@ -2021,6 +2179,9 @@ export function initPreview() {
     document.fonts.addEventListener('loadingdone', () => syncLayerEls());
   }
   on('selection', () => {
+    // Leaving the clip (selecting a text/overlay/etc.) closes crop mode so its
+    // overlay never lingers over an unrelated inspector.
+    if (cropMode && !selectedSegment() && !(state.sel && state.sel.kind === 'clip')) exitCropMode();
     syncLayerEls();
     updateClipOutline();
   });
