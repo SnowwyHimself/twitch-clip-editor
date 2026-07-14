@@ -463,6 +463,7 @@
           <div class="field-group">
             <label class="field-label" for="font-select">Font</label>
             <select id="font-select" class="font-select"></select>
+            <button type="button" id="font-import-btn" class="link-btn font-import-btn">Import a font…</button>
           </div>
 
           <div class="field-group">
@@ -609,6 +610,7 @@
         <div class="field-group">
           <label class="field-label" for="cap-font-select">Font</label>
           <select id="cap-font-select" class="font-select"></select>
+          <button type="button" id="cap-font-import-btn" class="link-btn font-import-btn">Import a font…</button>
         </div>
         <div class="field-group">
           <label class="field-label">Color</label>
@@ -734,6 +736,7 @@
       </div>
       <input id="overlay-file" type="file" accept="image/*,video/*" hidden />
       <input id="audio-file" type="file" accept="audio/*" hidden />
+      <input id="font-import-file" type="file" accept=".ttf,.otf,font/ttf,font/otf" hidden />
       <span class="toolbar-sep"></span>
       <div class="tl-zoom" title="Zoom the timeline (⌘/Ctrl+scroll or +/−). Double-click the slider to fit.">
         <button type="button" id="tl-zoom-fit" class="secondary-btn tl-zoom-fit" title="Fit the whole project (double-click the slider)">Fit</button>

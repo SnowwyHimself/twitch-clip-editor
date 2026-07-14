@@ -98,6 +98,16 @@ const PREVIEW_FONT_CSS_FAMILY = {
   'luckiest-guy': '"Luckiest Guy Preview", cursive',
 };
 
+// Resolve a layer's fontId to a CSS font-family. Library fonts use the id
+// `lib:<uuid>` and are @font-face'd at runtime as `libfont-<uuid>` (see
+// library.js registerLibraryFonts) — the same family name the picker uses.
+export function previewFontFamily(fontId) {
+  if (typeof fontId === 'string' && fontId.startsWith('lib:')) {
+    return `"libfont-${fontId.slice(4)}", sans-serif`;
+  }
+  return PREVIEW_FONT_CSS_FAMILY[fontId] || PREVIEW_FONT_CSS_FAMILY.montserrat;
+}
+
 let previewObjectUrl = null;
 
 // --- geometry helpers (ported unchanged from the pre-editor preview) ------
@@ -323,7 +333,7 @@ function updateLayerEl(layer) {
 
   root.classList.toggle('selected', isSelected('layer', layer.id));
   root.classList.toggle('style-box', layer.style === 'box');
-  inner.style.fontFamily = PREVIEW_FONT_CSS_FAMILY[layer.fontId] || PREVIEW_FONT_CSS_FAMILY.montserrat;
+  inner.style.fontFamily = previewFontFamily(layer.fontId);
   inner.innerHTML = layer.karaoke && Array.isArray(layer.words) ? captionHtmlKaraoke(layer.text) : captionHtml(layer.text);
 
   const fontSizePx = layer.fontSize * scale;

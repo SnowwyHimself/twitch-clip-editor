@@ -1998,6 +1998,10 @@ img.preset-thumb {
 .lib-type-group {
   margin-top: var(--space-2);
 }
+.font-import-btn {
+  margin-top: var(--space-1);
+  display: inline-block;
+}
 .library-empty {
   margin: 0;
   font-style: italic;

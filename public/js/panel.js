@@ -72,7 +72,7 @@ import { trackSelectedFace } from './facetrack.js';
 import { confirmDialog } from './confirm.js';
 import { icon } from './icons.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile, libraryItemAsFile, libraryFileUrl } from './api.js';
-import { loadLibrary, renderLibrarySection, saveToLibrary, onLibraryChange } from './library.js';
+import { loadLibrary, renderLibrarySection, saveToLibrary, onLibraryChange, libraryItems } from './library.js';
 import { showContextMenu } from './menu.js';
 
 const CAPTION_COLORS = [
@@ -228,6 +228,9 @@ function lookupElements() {
     emojiPanel: byId('emoji-panel'),
     styleButtons: () => document.querySelectorAll('[data-caption-style]'),
     fontSelect: byId('font-select'),
+    fontImportBtn: byId('font-import-btn'),
+    capFontImportBtn: byId('cap-font-import-btn'),
+    fontImportFile: byId('font-import-file'),
     colorPicker: byId('color-picker'),
     fontSizeSlider: byId('font-size-slider'),
     fontSizeValue: byId('font-size-value'),
@@ -408,13 +411,68 @@ function forceInspector(which, title) {
 // --- shared builders --------------------------------------------------------------
 
 function buildFontOptions(select) {
+  const prev = select.value; // preserve the selection across rebuilds (library changes)
   select.innerHTML = '';
+  const builtin = document.createElement('optgroup');
+  builtin.label = 'Built-in';
   for (const font of state.fonts) {
     const option = document.createElement('option');
     option.value = font.id;
     option.textContent = font.available ? font.label : `${font.label} (not installed)`;
     option.disabled = !font.available;
-    select.appendChild(option);
+    builtin.appendChild(option);
+  }
+  select.appendChild(builtin);
+  // "My fonts": imported library fonts, each option rendered in its own typeface.
+  const fonts = libraryItems('fonts');
+  if (fonts.length) {
+    const group = document.createElement('optgroup');
+    group.label = 'My fonts';
+    for (const it of fonts) {
+      const option = document.createElement('option');
+      option.value = `lib:${it.id}`;
+      option.textContent = it.name;
+      option.style.fontFamily = `libfont-${it.id}`;
+      group.appendChild(option);
+    }
+    select.appendChild(group);
+  }
+  if (prev) select.value = prev;
+}
+
+// Font import: adds a .ttf/.otf to the library, then applies it to whatever the
+// user is editing (the text layer or the caption group) by selecting its new
+// `lib:<id>` option and firing the existing change handler. The library refresh
+// (saveToLibrary) has already registered the @font-face + rebuilt both selects.
+let fontImportTarget = 'text';
+function wireFontImport() {
+  if (els.fontImportBtn) {
+    els.fontImportBtn.addEventListener('click', () => {
+      fontImportTarget = 'text';
+      els.fontImportFile.click();
+    });
+  }
+  if (els.capFontImportBtn) {
+    els.capFontImportBtn.addEventListener('click', () => {
+      fontImportTarget = 'caption';
+      els.fontImportFile.click();
+    });
+  }
+  if (els.fontImportFile) {
+    els.fontImportFile.addEventListener('change', async () => {
+      const file = els.fontImportFile.files[0];
+      els.fontImportFile.value = '';
+      if (!file) return;
+      try {
+        const { item } = await saveToLibrary('fonts', file);
+        const select = fontImportTarget === 'caption' ? els.capFontSelect : els.fontSelect;
+        select.value = `lib:${item.id}`;
+        select.dispatchEvent(new Event('change'));
+      } catch (err) {
+        // Server rejects woff2 / non-font with a friendly message.
+        alert(err && err.message ? err.message : 'Could not import that font.');
+      }
+    });
   }
 }
 
@@ -2128,11 +2186,16 @@ export function initPanel() {
   loadLibrary().then(() => {
     buildOverlayLibrary();
     buildAudioLibrary();
+    buildFontOptions(els.fontSelect);
+    buildFontOptions(els.capFontSelect);
   });
   onLibraryChange(() => {
     buildOverlayLibrary();
     buildAudioLibrary();
+    buildFontOptions(els.fontSelect);
+    buildFontOptions(els.capFontSelect);
   });
+  wireFontImport();
   refreshVideoPanel();
   refreshTextPanel();
   refreshOverlayPanel();

@@ -17,7 +17,25 @@ export async function loadLibrary(force = false) {
   } catch {
     cache = [];
   }
+  registerLibraryFonts();
   return cache;
+}
+
+// Register an @font-face for every library font so the live preview can render
+// it — family name `libfont-<id>`, matching preview.js previewFontFamily(). The
+// same file is loaded server-side for export (caption.js), so preview and render
+// use identical glyphs. Rebuilt whenever the library changes.
+function registerLibraryFonts() {
+  let styleEl = document.getElementById('library-font-faces');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'library-font-faces';
+    document.head.appendChild(styleEl);
+  }
+  styleEl.textContent = (cache || [])
+    .filter((it) => it.category === 'fonts')
+    .map((it) => `@font-face{font-family:'libfont-${it.id}';src:url('${it.url || `/api/library/file/${it.id}`}');font-display:swap;}`)
+    .join('\n');
 }
 export function libraryItems(category) {
   const items = cache || [];

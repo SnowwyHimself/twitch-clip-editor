@@ -240,7 +240,31 @@ function getFontOptions() {
   }));
 }
 
+// Personal-library font resolution. A library font id is `lib:<uuid>`; look it
+// up in the library index and return its stored file. Returns null when the id
+// isn't a library font, or when the entry/file is gone — the caller then falls
+// back to the default bundled font, so a deleted library font never crashes an
+// export (graceful "missing asset"). storedName is a server-generated leaf, but
+// we reject any separator defensively before joining.
+const LIBRARY_FONTS_DIR = path.join(DATA_ROOT, 'library', 'fonts');
+const LIBRARY_INDEX_FILE = path.join(DATA_ROOT, 'library', 'library.json');
+function resolveLibraryFontPath(fontId) {
+  if (typeof fontId !== 'string' || !fontId.startsWith('lib:')) return null;
+  const id = fontId.slice(4);
+  try {
+    const idx = JSON.parse(fs.readFileSync(LIBRARY_INDEX_FILE, 'utf8'));
+    const it = (idx.items || []).find((x) => x.id === id && x.category === 'fonts');
+    if (!it || !it.storedName || /[\\/]/.test(it.storedName)) return null;
+    const p = path.join(LIBRARY_FONTS_DIR, it.storedName);
+    return fs.existsSync(p) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveFontEntry(fontId) {
+  const libPath = resolveLibraryFontPath(fontId);
+  if (libPath) return { id: fontId, path: libPath };
   const id = FONT_REGISTRY[fontId] ? fontId : resolveDefaultFontId();
   return { id, path: FONT_REGISTRY[id].path };
 }
