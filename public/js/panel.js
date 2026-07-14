@@ -30,6 +30,11 @@ import {
   updateTransition,
   selectedTransition,
   clearSelection,
+  copyStyle,
+  pasteStyle,
+  canPasteStyle,
+  styleKindForSelection,
+  duplicateLayer,
   addOverlay,
   updateOverlay,
   removeOverlay,
@@ -67,6 +72,7 @@ import { trackSelectedFace } from './facetrack.js';
 import { confirmDialog } from './confirm.js';
 import { icon } from './icons.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile } from './api.js';
+import { showContextMenu } from './menu.js';
 
 const CAPTION_COLORS = [
   { hex: '#ffffff', label: 'White' },
@@ -107,6 +113,7 @@ function lookupElements() {
     },
     inspectorTitle: byId('inspector-title'),
     inspectorSub: byId('inspector-sub'),
+    inspectorOverflow: byId('inspector-overflow'),
     addMenuBtn: byId('add-menu-btn'),
     addMenu: byId('add-menu'),
     // Relocatable blocks the router moves between inspectors (single DOM node,
@@ -328,6 +335,9 @@ function captionPositionLabel(layer) {
 function routeSelection() {
   const sel = state.sel;
   const kind = sel && sel.kind;
+
+  // Overflow (⋯) menu is available whenever the selection has a copyable style.
+  els.inspectorOverflow.classList.toggle('hidden', !styleKindForSelection());
 
   if (state.selPieces.length > 1) {
     mountPresetSlot('clip');
@@ -2016,6 +2026,10 @@ export function initPanel() {
 
   wireAddMenu();
   wireDisclosure();
+  els.inspectorOverflow.addEventListener('click', () => {
+    const r = els.inspectorOverflow.getBoundingClientRect();
+    openStyleMenu(r.right, r.bottom + 4);
+  });
 
   // The panel is a pure function of the selection: re-route whenever it changes.
   on('selection', routeSelection);
@@ -2055,6 +2069,25 @@ export function initPanel() {
   });
 
   routeSelection(); // start on the Project inspector
+}
+
+// --- copy/paste-style + duplicate menu (Feature 6) --------------------------------
+// Built from the current selection; shared by the timeline right-click and the
+// inspector overflow (⋯) button. Style = visual props only (not content/timing).
+export function openStyleMenu(x, y) {
+  const kind = styleKindForSelection();
+  if (!kind) return; // nothing stylable selected
+  const noun = kind === 'clip' ? 'clip' : kind === 'caption' ? 'caption' : 'text';
+  const items = [
+    { label: `Copy ${noun} style`, onClick: () => copyStyle() },
+    { label: `Paste ${noun} style`, disabled: !canPasteStyle(), onClick: () => pasteStyle() },
+  ];
+  if (kind === 'text' || kind === 'caption') {
+    const l = selectedLayer();
+    items.push({ separator: true });
+    items.push({ label: 'Duplicate', onClick: () => l && duplicateLayer(l.id) });
+  }
+  showContextMenu(x, y, items);
 }
 
 // --- + Add menu -------------------------------------------------------------------

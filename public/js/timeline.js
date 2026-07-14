@@ -69,6 +69,7 @@ import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './previe
 import { getPeaks, drawWaveform } from './waveform.js';
 import { getFilmstrip, drawFilmstrip } from './filmstrip.js';
 import { icon } from './icons.js';
+import { openStyleMenu } from './panel.js';
 
 // Paints a filmstrip (video-frame thumbnails) behind a video-track bar's label,
 // showing the [offsetSec, offsetSec+lenSec] slice it plays. Cached per URL, so
@@ -413,6 +414,11 @@ function attachAppendedClipDrag(el, clip) {
   };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    selectClip(clip.id);
+    openStyleMenu(e.clientX, e.clientY);
+  });
 }
 
 // Edge-trim an appended clip: the left grip moves its in-point (start), the
@@ -784,6 +790,11 @@ function attachSegmentMoveDrag(el, seg, prev, next) {
     el.addEventListener('pointermove', onMove);
     el.addEventListener('pointerup', onUp);
   });
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    selectSegment(seg.id);
+    openStyleMenu(e.clientX, e.clientY);
+  });
 }
 
 // Per-piece trim handles, in SOURCE time. Bounds reach over cut footage —
@@ -1004,6 +1015,12 @@ function attachClipBarDrag(bar, leftEdge, rightEdge, clip, opts) {
   bar.addEventListener('pointerdown', (e) => startDrag(e, 'move'));
   leftEdge.addEventListener('pointerdown', (e) => startDrag(e, 'left'));
   rightEdge.addEventListener('pointerdown', (e) => startDrag(e, 'right'));
+  // Right-click: select this clip, then Copy/Paste style + Duplicate (Feature 6).
+  bar.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    opts.onSelect();
+    openStyleMenu(e.clientX, e.clientY);
+  });
 }
 
 function renderLayerRows() {

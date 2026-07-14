@@ -9,6 +9,7 @@ import {
   emit,
   addTextLayer,
   selectedLayer,
+  duplicateLayer,
   removeLayer,
   selectedSegment,
   removeSegment,
@@ -254,6 +255,15 @@ function wireShortcuts() {
       return;
     }
     if (isTypingTarget(e.target)) return;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+      // ⌘D / Ctrl+D duplicates the selected text/caption layer.
+      const layer = selectedLayer();
+      if (layer) {
+        e.preventDefault();
+        duplicateLayer(layer.id);
+      }
+      return;
+    }
     if (e.key === ' ') {
       e.preventDefault();
       togglePlay();

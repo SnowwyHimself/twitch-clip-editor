@@ -1206,6 +1206,102 @@ export function applyCaptionStyle() {
   emit('layers');
 }
 
+// --- copy / paste style (visual props only — never content/timing/position) ---
+// One in-session clipboard, tagged by kind so Paste only applies to the same
+// type. Text-layer style, the caption GROUP look, and a clip's video settings.
+const TEXT_STYLE_KEYS = [
+  'style', 'fontId', 'fontSize', 'color', 'dropShadow', 'strokeWidth', 'strokeColor',
+  'uppercase', 'opacity', 'rotation', 'letterSpacing', 'lineHeight',
+  'shadowDistance', 'shadowBlur', 'shadowOpacity', 'bgOpacity', 'bgPadding', 'bgRadius',
+  'wrapWidth', 'animation', 'karaoke', 'karaokeColor',
+];
+const CAPTION_STYLE_KEYS = [
+  'style', 'fontId', 'fontSize', 'color', 'dropShadow', 'strokeWidth', 'strokeColor',
+  'uppercase', 'yPercent', 'animation', 'karaoke', 'karaokeColor',
+];
+const CLIP_STYLE_KEYS = ['zoom', 'panX', 'panY', 'blur', 'speed', 'mirror', 'layout'];
+
+let styleClipboard = null; // { kind: 'text' | 'caption' | 'clip', style: {...} }
+
+function pick(obj, keys) {
+  const out = {};
+  for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
+  return out;
+}
+
+// What kind of style would Copy grab / Paste apply for a given selection? Drives
+// the context-menu / overflow-menu enablement.
+export function styleKindForSelection() {
+  const sel = state.sel;
+  if (!sel) return null;
+  if (sel.kind === 'segment' || sel.kind === 'clip') return 'clip';
+  if (sel.kind === 'layer') {
+    const l = state.layers.find((x) => x.id === sel.id);
+    return l ? (l.group === 'caption' ? 'caption' : 'text') : null;
+  }
+  return null;
+}
+
+export function canPasteStyle() {
+  return !!styleClipboard && styleClipboard.kind === styleKindForSelection();
+}
+
+// Copy the current selection's style into the clipboard.
+export function copyStyle() {
+  const kind = styleKindForSelection();
+  if (kind === 'clip') {
+    styleClipboard = {
+      kind,
+      style: { ...pick(state, CLIP_STYLE_KEYS), color: { ...state.color }, split: JSON.parse(JSON.stringify(state.split || {})) },
+    };
+  } else if (kind === 'caption') {
+    styleClipboard = { kind, style: pick(state.captionSettings, CAPTION_STYLE_KEYS) };
+  } else if (kind === 'text') {
+    const l = selectedLayer();
+    if (l) styleClipboard = { kind, style: pick(l, TEXT_STYLE_KEYS) };
+  }
+  return styleClipboard;
+}
+
+// Paste the clipboard onto the current selection (all same-type pieces/layers on
+// multi-select). No-op if the clipboard kind doesn't match.
+export function pasteStyle() {
+  if (!canPasteStyle()) return;
+  const { kind, style } = styleClipboard;
+  if (kind === 'clip') {
+    Object.assign(state, pick(style, CLIP_STYLE_KEYS));
+    if (style.color) state.color = { ...style.color };
+    if (style.split) state.split = JSON.parse(JSON.stringify(style.split));
+    commitVideoSettings(); // writes to every piece + emits 'settings'
+  } else if (kind === 'caption') {
+    Object.assign(state.captionSettings, style);
+    applyCaptionStyle(); // pushes onto every caption layer + emits 'layers'
+  } else if (kind === 'text') {
+    // Apply to the whole multi-selection if any, else the single selected layer.
+    const ids = state.selPieces.length
+      ? [] // pieces aren't text; ignore
+      : state.sel && state.sel.kind === 'layer'
+        ? [state.sel.id]
+        : [];
+    for (const id of ids) {
+      const l = state.layers.find((x) => x.id === id);
+      if (l) Object.assign(l, style);
+    }
+    emit('layers');
+  }
+}
+
+// Duplicate a text/caption layer (⌘D, the Duplicate button, the context menu).
+// The copy is nudged down slightly and auto-selected.
+export function duplicateLayer(id) {
+  const layer = state.layers.find((l) => l.id === id);
+  if (!layer) return null;
+  const copy = { ...layer };
+  delete copy.id;
+  copy.yPercent = Math.min(100, (copy.yPercent || 50) + 8);
+  return addTextLayer(copy);
+}
+
 // Re-times every caption from its original whisper time + the current
 // timingOffset. baseStart/baseEnd are the untouched whisper times, so
 // dragging the nudge slider back and forth is always relative to those
