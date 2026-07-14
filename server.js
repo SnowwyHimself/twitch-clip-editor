@@ -48,7 +48,23 @@ const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
 // userData so it's shared across projects and survives app updates.
 const BRAND_DIR = path.join(DATA_ROOT, 'brand-kit');
 
-for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR, PROJECTS_DIR, BRAND_DIR]) {
+// Personal asset library: sounds/music/overlays/fonts a user imports once and
+// reuses across every project. Global, per-user, survives updates (userData).
+// A flat library.json index sits at the root; each category holds the files.
+const LIBRARY_DIR = path.join(DATA_ROOT, 'library');
+const LIBRARY_CATEGORIES = ['sounds', 'music', 'overlays', 'fonts'];
+const LIBRARY_INDEX = path.join(LIBRARY_DIR, 'library.json');
+// Accepted extensions per category. woff2 is intentionally excluded from fonts:
+// the export renderer (resvg-js / opentype.js) loads glyphs from ttf/otf, so a
+// woff2 would preview but fail to export — reject it up front with a message.
+const LIBRARY_EXT = {
+  sounds: /\.(mp3|wav|ogg|m4a|aac|flac)$/i,
+  music: /\.(mp3|wav|ogg|m4a|aac|flac)$/i,
+  overlays: /\.(png|jpe?g|gif|webp|webm|mp4|mov)$/i,
+  fonts: /\.(ttf|otf)$/i,
+};
+
+for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR, PROJECTS_DIR, BRAND_DIR, LIBRARY_DIR, ...LIBRARY_CATEGORIES.map((c) => path.join(LIBRARY_DIR, c))]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -2358,6 +2374,155 @@ app.get('/api/overlay-presets', (req, res) => {
 
 app.get('/api/fonts', (req, res) => {
   res.json({ fonts: getFontOptions() });
+});
+
+// --- personal asset library (sounds / music / overlays / fonts) --------------
+// Global, per-user, survives updates. A flat library.json index + one file per
+// entry under library/<category>/. Files are content-addressed (sha256) so a
+// re-import of the same bytes dedupes to the existing entry. Stored filenames are
+// `<id><ext>` (id is a random uuid) so no user string ever forms a path; the
+// original name is kept only as metadata. Every file read goes through
+// resolveInside for containment, and all routes sit behind the token guard above.
+function readLibrary() {
+  try {
+    const data = JSON.parse(fs.readFileSync(LIBRARY_INDEX, 'utf8'));
+    return Array.isArray(data.items) ? data : { items: [] };
+  } catch {
+    return { items: [] };
+  }
+}
+function writeLibrary(data) {
+  fs.writeFileSync(LIBRARY_INDEX, JSON.stringify({ items: data.items }, null, 2));
+}
+function libraryDisplayName(filename) {
+  return String(filename)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[-_]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase()) || 'Untitled';
+}
+// The absolute on-disk path for an entry, kept inside its category folder.
+function libraryEntryPath(entry) {
+  return resolveInside(path.join(LIBRARY_DIR, entry.category), entry.storedName);
+}
+// What the client sees: the stored metadata + a same-origin URL it can drop into
+// <audio>/<img>/<video> or an @font-face src (token rides the HttpOnly cookie).
+function libraryEntryPublic(entry) {
+  return {
+    id: entry.id,
+    category: entry.category,
+    name: entry.name,
+    filename: entry.filename,
+    hash: entry.hash,
+    size: entry.size,
+    addedAt: entry.addedAt,
+    url: `/api/library/file/${entry.id}`,
+  };
+}
+function libraryFind(id) {
+  return readLibrary().items.find((it) => it.id === String(id)) || null;
+}
+// Store a buffer under a category, deduping by content hash. Returns
+// { entry, deduped }. Throws on a bad category (caller validates the extension).
+function libraryAdd(category, buffer, originalName) {
+  if (!LIBRARY_CATEGORIES.includes(category)) throw new Error('bad category');
+  const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+  const data = readLibrary();
+  const existing = data.items.find((it) => it.category === category && it.hash === hash);
+  if (existing) return { entry: existing, deduped: true };
+  const leaf = safeLeaf(originalName) || 'file';
+  const ext = (path.extname(leaf) || '').toLowerCase();
+  const id = crypto.randomUUID();
+  const storedName = `${id}${ext}`;
+  fs.writeFileSync(resolveInside(path.join(LIBRARY_DIR, category), storedName), buffer);
+  const entry = {
+    id,
+    category,
+    name: libraryDisplayName(leaf),
+    filename: leaf,
+    storedName,
+    hash,
+    size: buffer.length,
+    addedAt: new Date().toISOString(),
+  };
+  data.items.push(entry);
+  writeLibrary(data);
+  return { entry, deduped: false };
+}
+function libraryRemove(id) {
+  const data = readLibrary();
+  const i = data.items.findIndex((it) => it.id === String(id));
+  if (i === -1) return false;
+  const [entry] = data.items.splice(i, 1);
+  try {
+    fs.unlinkSync(libraryEntryPath(entry));
+  } catch {
+    /* file already gone — index cleanup still proceeds */
+  }
+  writeLibrary(data);
+  return true;
+}
+function libraryRename(id, name) {
+  const data = readLibrary();
+  const entry = data.items.find((it) => it.id === String(id));
+  if (!entry) return null;
+  const clean = String(name == null ? '' : name).replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 120);
+  if (clean) entry.name = clean;
+  writeLibrary(data);
+  return entry;
+}
+
+const libraryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
+
+app.get('/api/library', (req, res) => {
+  res.json({ items: readLibrary().items.map(libraryEntryPublic) });
+});
+
+app.post('/api/library/import', libraryUpload.single('file'), (req, res) => {
+  const category = String((req.body && req.body.category) || '');
+  if (!LIBRARY_CATEGORIES.includes(category)) return res.status(400).json({ error: 'bad category' });
+  if (!req.file) return res.status(400).json({ error: 'no file' });
+  const name = req.file.originalname || 'file';
+  if (!LIBRARY_EXT[category].test(name)) {
+    const msg =
+      category === 'fonts'
+        ? 'Only .ttf and .otf fonts are supported (woff2 renders in preview but not in exports).'
+        : `Unsupported file type for ${category}.`;
+    return res.status(400).json({ error: msg });
+  }
+  try {
+    const { entry, deduped } = libraryAdd(category, req.file.buffer, name);
+    res.json({ item: libraryEntryPublic(entry), deduped });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/library/rename', (req, res) => {
+  const entry = libraryRename(req.body && req.body.id, req.body && req.body.name);
+  if (!entry) return res.status(404).json({ error: 'not found' });
+  res.json({ item: libraryEntryPublic(entry) });
+});
+
+app.post('/api/library/remove', (req, res) => {
+  const ok = libraryRemove(req.body && req.body.id);
+  res.json({ ok });
+});
+
+// Serve one library file (used by <audio>/<img>/<video>/@font-face and the
+// export upload path). resolveInside guarantees containment; the entry's
+// storedName is server-generated, never user input.
+app.get('/api/library/file/:id', (req, res) => {
+  const entry = libraryFind(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'not found' });
+  let abs;
+  try {
+    abs = libraryEntryPath(entry);
+  } catch {
+    return res.status(400).json({ error: 'bad path' });
+  }
+  if (!fs.existsSync(abs)) return res.status(404).json({ error: 'file missing' });
+  res.sendFile(abs);
 });
 
 app.get('/api/aspect-ratios', (req, res) => {
