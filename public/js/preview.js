@@ -291,6 +291,7 @@ function createLayerEl(layer) {
   }
   layersContainer.appendChild(root);
   attachLayerDrag(root, layer.id);
+  attachInlineEdit(root, inner, layer.id);
   const entry = { root, inner, fillers };
   layerEls.set(layer.id, entry);
   return entry;
@@ -450,6 +451,10 @@ function updateLayerVisibility() {
   for (const layer of state.layers) {
     const entry = layerEls.get(layer.id);
     if (!entry) continue;
+    if (editingLayerId === layer.id) {
+      entry.root.classList.remove('time-hidden'); // keep it on screen while typing
+      continue; // and don't run entrance/karaoke over the caret
+    }
     const hiddenByToggle = state.captionsHidden && layer.group === 'caption';
     const inRange = !gap && !onAppended && t >= layer.start && t < layer.end;
     const visible = !hiddenByToggle && (inRange || isSelected('layer', layer.id));
@@ -469,6 +474,7 @@ function attachLayerDrag(el, layerId) {
   let startCenter = null;
 
   el.addEventListener('pointerdown', (e) => {
+    if (editingLayerId === layerId) return; // inline-editing: let caret/selection work
     selectLayer(layerId);
     dragging = true;
     el.setPointerCapture(e.pointerId);
@@ -523,6 +529,73 @@ function attachLayerDrag(el, layerId) {
   };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
+}
+
+// --- inline text editing (double-click a text/caption layer in the preview) ---
+// CapCut-style: double-click puts the layer into contenteditable mode right in
+// the preview — type, Enter to commit, Escape to cancel. The inspector's text
+// field stays in sync live via the 'text-live' event (no full re-render, so the
+// caret never jumps). Committing emits 'layers' for the real update + history.
+let editingLayerId = null;
+
+function attachInlineEdit(root, inner, layerId) {
+  root.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startInlineEdit(layerId);
+  });
+}
+
+function startInlineEdit(layerId) {
+  const entry = layerEls.get(layerId);
+  const layer = state.layers.find((l) => l.id === layerId);
+  if (!entry || !layer || editingLayerId === layerId) return;
+  editingLayerId = layerId;
+  selectLayer(layerId); // ensure selected → visible + its inspector open
+  const { root, inner } = entry;
+  const originalText = layer.text;
+
+  root.classList.add('editing');
+  root.classList.remove('time-hidden');
+  // Plain text while editing (drop karaoke/box markup); restored on commit.
+  inner.textContent = layer.text;
+  inner.setAttribute('contenteditable', 'true');
+  inner.focus();
+  const range = document.createRange();
+  range.selectNodeContents(inner);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+
+  const onInput = () => {
+    layer.text = inner.textContent;
+    emit('text-live', { id: layerId }); // live inspector sync, no re-render
+  };
+  const finish = (commit) => {
+    inner.removeEventListener('input', onInput);
+    inner.removeEventListener('keydown', onKey);
+    inner.removeEventListener('blur', onBlur);
+    inner.removeAttribute('contenteditable');
+    root.classList.remove('editing');
+    editingLayerId = null;
+    const typed = inner.textContent.replace(/\s+/g, ' ').trim();
+    layer.text = commit ? typed || originalText : originalText;
+    emit('layers'); // full re-render (restores markup) + history
+  };
+  const onKey = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      finish(true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      finish(false);
+    }
+    e.stopPropagation(); // keep timeline/global shortcuts from firing mid-type
+  };
+  const onBlur = () => finish(true);
+  inner.addEventListener('input', onInput);
+  inner.addEventListener('keydown', onKey);
+  inner.addEventListener('blur', onBlur);
 }
 
 // Drag a side handle to set THIS layer's wrap width. The box stays centered on

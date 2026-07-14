@@ -914,6 +914,18 @@ input[type="text"] {
   cursor: grabbing;
 }
 
+/* Inline edit mode (double-click) — a dashed accent frame + text caret. */
+.preview-caption.editing {
+  outline: 2px dashed rgba(var(--accent-rgb), 0.9);
+  outline-offset: 4px;
+  cursor: text;
+}
+.preview-caption.editing .preview-caption-inner {
+  cursor: text;
+  caret-color: #fff;
+  outline: none;
+}
+
 /* Hidden by playhead time but still measurable (pill math needs layout) —
    visibility, never display. */
 .preview-caption.time-hidden {

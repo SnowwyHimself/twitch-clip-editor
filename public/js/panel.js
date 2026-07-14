@@ -2029,6 +2029,14 @@ export function initPanel() {
       refreshCaptionBlock(layer);
     }
   });
+  // Live text from inline preview editing (Feature 5) — mirror into the
+  // inspector's text field without a full refresh (so nothing fights the caret).
+  on('text-live', (d) => {
+    const layer = selectedLayer();
+    if (!layer || (d && d.id && d.id !== layer.id)) return;
+    const field = layer.group === 'caption' ? els.capBlockText : els.textInput;
+    if (field && document.activeElement !== field) field.value = layer.text;
+  });
   on('settings', () => {
     refreshVideoPanel(); // keep the sliders in sync with drag-to-pan
     refreshOverlayPanel();
