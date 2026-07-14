@@ -4,6 +4,7 @@ uploads/*
 outputs/*
 captions/*
 emoji-cache/*
+font-cache/*
 preview-cache/*
 .DS_Store
 *.log

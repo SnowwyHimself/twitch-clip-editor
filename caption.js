@@ -18,6 +18,40 @@ const EMOJI_SIZE_RATIO = 0.85; // emoji glyphs render slightly smaller than the 
 
 const DATA_ROOT = process.env.CLIP_EDITOR_DATA_DIR || __dirname;
 const EMOJI_CACHE_DIR = path.join(DATA_ROOT, 'emoji-cache');
+const FONT_CACHE_DIR = path.join(DATA_ROOT, 'font-cache');
+
+// resvg loads font files with its OWN (Rust) file reader, which — unlike Node's
+// `fs` — cannot see inside Electron's `app.asar`. In a packaged build the bundled
+// fonts live in app.asar, so resvg silently loads zero glyphs while the caption
+// BOX still renders (the box is sized by the opentype measurement pass, which
+// reads via asar-aware Node fs) — the classic "blank box, no text" export bug.
+// Mirror the font out to a real, writable dir (read via Node fs, write to
+// userData) and give resvg that path. Only needed for asar paths, so dev/source
+// runs use the original path untouched. Cached per source path.
+const realFontPaths = new Map();
+function realFontPath(fontPath) {
+  if (!fontPath.includes('app.asar')) return fontPath; // dev / already on real fs
+  if (realFontPaths.has(fontPath)) return realFontPaths.get(fontPath);
+  let usable = fontPath;
+  try {
+    const dest = path.join(FONT_CACHE_DIR, path.basename(fontPath));
+    let sameSize = false;
+    try {
+      sameSize = fs.statSync(dest).size === fs.statSync(fontPath).size;
+    } catch {
+      /* dest missing -> copy */
+    }
+    if (!sameSize) {
+      fs.mkdirSync(FONT_CACHE_DIR, { recursive: true });
+      fs.writeFileSync(dest, fs.readFileSync(fontPath)); // readFileSync is asar-aware
+    }
+    usable = dest;
+  } catch {
+    usable = fontPath; // extraction failed -> no worse than before
+  }
+  realFontPaths.set(fontPath, usable);
+  return usable;
+}
 const TWEMOJI_DIR = path.join(__dirname, 'assets', 'emoji', 'twemoji');
 
 // Bundled fonts, all free/open-licensed (SIL OFL or Apache) and downloaded
@@ -720,7 +754,9 @@ function renderCaptionPng({
   const resvg = new Resvg(svg, {
     fitTo: { mode: 'width', value: width },
     font: {
-      fontFiles: [fontPath],
+      // realFontPath mirrors the font out of app.asar in packaged builds so
+      // resvg's non-asar-aware reader can actually load the glyphs.
+      fontFiles: [realFontPath(fontPath)],
       loadSystemFonts: false,
       defaultFontFamily: FONT_FAMILY,
     },
