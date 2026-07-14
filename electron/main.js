@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
@@ -86,6 +86,41 @@ function waitForServer(url, attemptsLeft = 100) {
   });
 }
 
+const APP_ORIGIN = `http://127.0.0.1:${PORT}`;
+
+// The ONLY external destinations allowed to open (in the system browser, never
+// in-app): our own GitHub repo/releases. Everything else is denied.
+function isAllowedExternal(url) {
+  try {
+    const u = new URL(url);
+    return (
+      (u.protocol === 'https:' || u.protocol === 'http:') &&
+      u.hostname === 'github.com' &&
+      u.pathname.startsWith('/SnowwyHimself/twitch-clip-editor')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function lockDownNavigation(contents) {
+  // Deny opening any new window/tab; route an allowed GitHub link to the OS
+  // browser via shell.openExternal (http/https only), deny the rest.
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedExternal(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  // Deny navigating the app window away from our own origin. An allowed external
+  // link opens in the OS browser instead; nothing else navigates at all.
+  contents.on('will-navigate', (event, url) => {
+    if (url === `${APP_ORIGIN}/` || url.startsWith(`${APP_ORIGIN}/`)) return;
+    event.preventDefault();
+    if (isAllowedExternal(url)) shell.openExternal(url);
+  });
+  // Belt-and-suspenders: never attach a webview.
+  contents.on('will-attach-webview', (event) => event.preventDefault());
+}
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 960,
@@ -101,11 +136,14 @@ async function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
     },
   });
 
-  await waitForServer(`http://127.0.0.1:${PORT}/`);
-  win.loadURL(`http://127.0.0.1:${PORT}/`);
+  lockDownNavigation(win.webContents);
+  await waitForServer(`${APP_ORIGIN}/`);
+  win.loadURL(`${APP_ORIGIN}/`);
 }
 
 app.whenReady().then(() => {

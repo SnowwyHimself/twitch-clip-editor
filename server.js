@@ -1865,14 +1865,34 @@ function serveIndex(req, res) {
   // it's NOT written into the HTML. In dev (browser) there's no preload, so the
   // server injects the value here (same-origin, never a query string / log).
   const tokenGlobal = IS_ELECTRON ? '' : `window.__CLIP_TOKEN__=${JSON.stringify(APP_TOKEN)};`;
+  // Per-response nonce so the injected bootstrap is the ONLY inline script the
+  // CSP allows — script-src stays 'self' + this nonce (no 'unsafe-inline'), so
+  // an injected <script> can never run (XSS defense).
+  const nonce = crypto.randomBytes(16).toString('base64');
   const boot =
-    `<script>${tokenGlobal}(function(){` +
+    `<script nonce="${nonce}">${tokenGlobal}(function(){` +
     `var t=(window.electronAPI&&window.electronAPI.appToken)||window.__CLIP_TOKEN__;if(!t)return;` +
     `var of=window.fetch;window.fetch=function(input,init){init=init||{};try{` +
     `var url=new URL(typeof input==='string'?input:input.url,location.href);` +
     `if(url.origin===location.origin){var h=new Headers((init&&init.headers)||(typeof input!=='string'&&input.headers)||{});` +
     `h.set('X-App-Token',t);init.headers=h;}}catch(e){}return of.call(this,input,init);};})();</script>`;
   const html = INDEX_HTML.replace('</head>', `${boot}\n</head>`);
+  // Strict CSP: everything is bundled ('self'), no remote origins. script-src is
+  // locked to 'self' + the nonce above. media-src/img-src allow blob:/data: for
+  // file-source videos and canvas thumbnails. style-src keeps 'unsafe-inline' for
+  // the app's static inline style attributes — this does NOT weaken the script
+  // (XSS) protection, which is entirely in script-src.
+  const csp =
+    "default-src 'self'; " +
+    `script-src 'self' 'nonce-${nonce}'; ` +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: blob:; " +
+    "media-src 'self' blob:; " +
+    "font-src 'self'; " +
+    "connect-src 'self'; " +
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+  res.setHeader('Content-Security-Policy', csp);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Set-Cookie', `${TOKEN_COOKIE}=${APP_TOKEN}; Path=/; HttpOnly; SameSite=Strict`);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
