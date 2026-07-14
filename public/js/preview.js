@@ -1879,6 +1879,14 @@ export function initPreview() {
   });
   on('facetrack', updateAll);
   on('layers', syncLayerEls);
+  // Caption/text boxes are sized by MEASURING the rendered text (to match the
+  // server's wrap). The first render can measure with a fallback font before the
+  // web font loads, sizing the box wrong; re-lay out once fonts are ready (and on
+  // any later font load) so long words wrap exactly like the export.
+  if (document.fonts && typeof document.fonts.ready?.then === 'function') {
+    document.fonts.ready.then(() => syncLayerEls());
+    document.fonts.addEventListener('loadingdone', () => syncLayerEls());
+  }
   on('selection', () => {
     syncLayerEls();
     updateClipOutline();

@@ -923,7 +923,12 @@ input[type="text"] {
 .preview-caption-inner {
   font-weight: 600;
   white-space: pre-wrap;
-  word-break: break-word;
+  /* Wrap only at spaces — never mid-word — to match the server's word-wrap
+     (caption.js wrapText). break-word split single words like "What" into
+     "Wha"/"t" when the measured box was briefly too narrow (e.g. before the web
+     font loaded). A whole word that overflows is centred, matching the render. */
+  word-break: normal;
+  overflow-wrap: normal;
   paint-order: stroke; /* keeps the black outline behind the fill, matching the SVG render's paint-order */
   position: relative;
   z-index: 1; /* text above the box style's pill backgrounds */

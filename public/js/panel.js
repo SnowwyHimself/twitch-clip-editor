@@ -717,6 +717,10 @@ function currentVideoSettings() {
     panY: state.panY,
     speed: state.speed,
     mirror: state.mirror,
+    // Layout (Fill vs Facecam split) + the split regions, so a preset restores
+    // the whole look — including a facecam-split template.
+    layout: state.layout,
+    split: state.split ? JSON.parse(JSON.stringify(state.split)) : undefined,
   };
 }
 
@@ -754,6 +758,11 @@ function applyPresetSettings(s) {
   }
   if (Number.isFinite(s.speed)) state.speed = s.speed;
   if (typeof s.mirror === 'boolean') state.mirror = s.mirror;
+  // Layout + split regions (facecam presets). Restored before the panel refresh
+  // so updateLayoutUI shows the right layout, and the 'settings' emit below
+  // re-lays out the split preview.
+  if (s.layout === 'fill' || s.layout === 'split') state.layout = s.layout;
+  if (s.split && typeof s.split === 'object') state.split = JSON.parse(JSON.stringify(s.split));
   buildAspectButtons();
   refreshVideoPanel();
   // Commit the preset's reframe/blur onto the edit-target piece(s) (B6). speed
@@ -763,11 +772,22 @@ function applyPresetSettings(s) {
 
 // Adds a preset's saved text layers to the current clip — each starts at t=0
 // and keeps its saved duration, so a preset can act as a real template (a
-// styled headline already placed).
+// styled headline already placed). Re-applying the same preset (clicking it
+// again) must NOT stack duplicate copies, so a template layer already present
+// (same text + position) is skipped.
 function addPresetTextLayers(textLayers) {
   if (!Array.isArray(textLayers)) return;
+  const samePlace = (a, b) => Math.abs((a || 0) - (b || 0)) < 0.5;
   for (const t of textLayers) {
     const { duration, ...fields } = t;
+    const dup = state.layers.some(
+      (l) =>
+        l.group !== 'caption' &&
+        (l.text || '').trim() === (fields.text || '').trim() &&
+        samePlace(l.xPercent, fields.xPercent) &&
+        samePlace(l.yPercent, fields.yPercent)
+    );
+    if (dup) continue;
     addTextLayer({ ...fields, start: 0, end: Math.max(0.1, duration || 3), group: null }, { select: false });
   }
 }
