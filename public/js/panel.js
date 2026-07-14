@@ -113,9 +113,13 @@ function lookupElements() {
     // no duplicate ids): video presets → Project/Clip; text controls → Text/Caption.
     videoPresetBlock: byId('video-preset-block'),
     bgBlurBlock: byId('bg-blur-block'),
-    textCoreBlock: byId('panel-text-controls'),
-    textCoreHome: byId('insp-text'),
     captionThisBlock: byId('caption-thisblock'),
+    capBlockText: byId('cap-block-text'),
+    capBlockStart: byId('cap-block-start'),
+    capBlockEnd: byId('cap-block-end'),
+    capBlockDelete: byId('cap-block-delete'),
+    capBlockEmojiBtn: byId('cap-block-emoji-btn'),
+    capBlockEmojiPanel: byId('cap-block-emoji-panel'),
     transDurationSlider: byId('trans-duration-slider'),
     transDurationValue: byId('trans-duration-value'),
     transStatus: byId('trans-status'),
@@ -286,14 +290,14 @@ function mountBgBlurSlot(inspectorName) {
   els.blurValue.textContent = `${state.blur}%`;
 }
 
-// Move the relocatable text-controls block into the Text inspector, or the
-// Caption inspector's "This block" slot — same per-block tools either way.
-function mountTextCore(where) {
-  const target =
-    where === 'caption'
-      ? els.inspectors.caption.querySelector('[data-textcore-slot]')
-      : els.textCoreHome;
-  if (target && els.textCoreBlock.parentElement !== target) target.appendChild(els.textCoreBlock);
+// Fill the Caption inspector's "This caption" mini-editor (text + timing) from
+// the selected caption block. Styling is group-level (the "All captions" section
+// below), so this stays intentionally minimal — no per-block style controls.
+function refreshCaptionBlock(layer) {
+  if (!layer) return;
+  if (document.activeElement !== els.capBlockText) els.capBlockText.value = layer.text;
+  if (document.activeElement !== els.capBlockStart) els.capBlockStart.value = layer.start.toFixed(2);
+  if (document.activeElement !== els.capBlockEnd) els.capBlockEnd.value = layer.end.toFixed(2);
 }
 
 function setInspectorHeader(title, sub = '') {
@@ -343,15 +347,13 @@ function routeSelection() {
   } else if (kind === 'layer') {
     const layer = selectedLayer();
     if (layer && layer.group === 'caption') {
-      mountTextCore('caption');
       els.captionThisBlock.classList.remove('hidden');
       setInspectorHeader('Caption', captionPositionLabel(layer));
       showInspector('caption');
-      refreshTextPanel();
+      refreshCaptionBlock(layer);
       syncCaptionControls();
       renderTranscript();
     } else {
-      mountTextCore('text');
       setInspectorHeader('Text');
       showInspector('text');
       refreshTextPanel();
@@ -1683,22 +1685,25 @@ function renderTranscript() {
 
 // --- text tab -------------------------------------------------------------------------
 
-function buildEmojiPanel() {
-  els.emojiPanel.innerHTML = '';
+function buildEmojiPanelInto(panel, input) {
+  panel.innerHTML = '';
   for (const emoji of CURATED_EMOJIS) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'emoji-item';
     btn.textContent = emoji;
-    btn.addEventListener('click', () => insertEmojiAtCursor(emoji));
-    els.emojiPanel.appendChild(btn);
+    btn.addEventListener('click', () => insertEmojiInto(input, emoji));
+    panel.appendChild(btn);
   }
 }
 
-function insertEmojiAtCursor(emoji) {
+function buildEmojiPanel() {
+  buildEmojiPanelInto(els.emojiPanel, els.textInput);
+}
+
+function insertEmojiInto(input, emoji) {
   const layer = selectedLayer();
   if (!layer) return;
-  const input = els.textInput;
   const start = input.selectionStart ?? input.value.length;
   const end = input.selectionEnd ?? input.value.length;
   const value = input.value;
@@ -1707,6 +1712,39 @@ function insertEmojiAtCursor(emoji) {
   input.focus();
   input.setSelectionRange(cursor, cursor);
   updateLayer(layer.id, { text: input.value });
+}
+
+// "This caption" mini-editor: edits the selected caption block's text + timing +
+// delete. Styling is group-level (the "All captions" section), so there are no
+// per-block style controls here — that was the confusion the migration created.
+function wireCaptionBlockControls() {
+  els.capBlockText.addEventListener('input', () => {
+    const l = selectedLayer();
+    if (l && l.group === 'caption') updateLayer(l.id, { text: els.capBlockText.value });
+  });
+  const commitCapTime = () => {
+    const l = selectedLayer();
+    if (!l || l.group !== 'caption') return;
+    const duration = sourceDuration() || Infinity;
+    let start = parseFloat(els.capBlockStart.value);
+    let end = parseFloat(els.capBlockEnd.value);
+    if (!Number.isFinite(start)) start = l.start;
+    if (!Number.isFinite(end)) end = l.end;
+    start = Math.max(0, Math.min(start, duration));
+    end = Math.max(start + 0.2, Math.min(end, duration));
+    updateLayer(l.id, { start, end });
+  };
+  els.capBlockStart.addEventListener('change', commitCapTime);
+  els.capBlockEnd.addEventListener('change', commitCapTime);
+  els.capBlockDelete.addEventListener('click', () => {
+    const l = selectedLayer();
+    if (l) removeLayer(l.id);
+  });
+  buildEmojiPanelInto(els.capBlockEmojiPanel, els.capBlockText);
+  els.capBlockEmojiBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    els.capBlockEmojiPanel.classList.toggle('hidden');
+  });
 }
 
 // Create a new text layer at the playhead (used by the + Add menu). addTextLayer
@@ -1964,6 +2002,7 @@ export function initPanel() {
   wireVideoControls();
   wireTextControls();
   wireCaptionControls();
+  wireCaptionBlockControls();
   wireOverlayControls();
   wireSoundControls();
   wireTransitionControls();
@@ -1982,9 +2021,13 @@ export function initPanel() {
   on('selection', routeSelection);
   on('layers', () => {
     refreshTextPanel();
-    // Keep the Caption "N of M" header current as blocks are added/removed.
+    // Keep the Caption "This caption" fields + "N of M" header current as blocks
+    // change (e.g. edited via the transcript).
     const layer = selectedLayer();
-    if (layer && layer.group === 'caption') setInspectorHeader('Caption', captionPositionLabel(layer));
+    if (layer && layer.group === 'caption') {
+      setInspectorHeader('Caption', captionPositionLabel(layer));
+      refreshCaptionBlock(layer);
+    }
   });
   on('settings', () => {
     refreshVideoPanel(); // keep the sliders in sync with drag-to-pan
@@ -2054,6 +2097,16 @@ function runAddAction(kind) {
     case 'captions':
       forceInspector('caption', 'Captions'); // show status/controls during transcription
       generateCaptions(); // selects the first block when done → full Caption inspector
+      break;
+    case 'edit-captions':
+      // Direct route to group editing without hunting for a block. If captions
+      // exist, land on the first so "This caption" is populated too; otherwise
+      // open group mode (This-caption hidden).
+      {
+        const first = captionLayersByTime()[0];
+        if (first) selectLayer(first.id);
+        else forceInspector('caption', 'Captions');
+      }
       break;
     case 'overlay':
       forceInspector('overlay', 'Overlay'); // reveal source (file + presets) to pick

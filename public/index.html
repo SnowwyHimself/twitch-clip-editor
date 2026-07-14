@@ -71,6 +71,7 @@
             <button type="button" class="add-menu-item" data-add="clip" role="menuitem"><span class="add-menu-ico" data-icon="film"></span><span class="add-menu-text">Add clip<small>Paste a URL above, or pick a file</small></span></button>
             <button type="button" class="add-menu-item" data-add="text" role="menuitem"><span class="add-menu-ico" data-icon="type"></span><span class="add-menu-text">Add text</span></button>
             <button type="button" class="add-menu-item" data-add="captions" role="menuitem"><span class="add-menu-ico" data-icon="captions"></span><span class="add-menu-text">Auto captions<small>Transcribe with Whisper</small></span></button>
+            <button type="button" class="add-menu-item" data-add="edit-captions" role="menuitem"><span class="add-menu-ico" data-icon="type"></span><span class="add-menu-text">Edit captions<small>Style &amp; fix the whole caption track</small></span></button>
             <button type="button" class="add-menu-item" data-add="overlay" role="menuitem"><span class="add-menu-ico" data-icon="image"></span><span class="add-menu-text">Add overlay</span></button>
             <button type="button" class="add-menu-item" data-add="sound" role="menuitem"><span class="add-menu-ico" data-icon="music"></span><span class="add-menu-text">Add sound<small>Sound effect or your own file</small></span></button>
             <button type="button" class="add-menu-item" data-add="music" role="menuitem"><span class="add-menu-ico" data-icon="music"></span><span class="add-menu-text">Add music<small>Use your own audio file</small></span></button>
@@ -504,12 +505,28 @@
            "All captions" section below holds the group-level controls. -->
       <div id="insp-caption" class="inspector hidden">
         <div id="caption-thisblock">
-          <div class="insp-sec">This block</div>
-          <div data-textcore-slot></div>
+          <div class="insp-sec">This caption</div>
+          <div class="field-group">
+            <div class="caption-label-row">
+              <label class="field-label" for="cap-block-text">Text</label>
+              <button type="button" id="cap-block-emoji-btn" class="emoji-picker-btn icon-btn" aria-label="Insert emoji"><span data-icon="smile"></span></button>
+            </div>
+            <textarea id="cap-block-text" rows="2" placeholder="Caption text…"></textarea>
+            <div id="cap-block-emoji-panel" class="emoji-panel hidden"></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Timing (seconds)</label>
+            <div class="timing-fields">
+              <input id="cap-block-start" type="number" min="0" step="0.1" aria-label="Start time" />
+              <span class="timing-sep">→</span>
+              <input id="cap-block-end" type="number" min="0" step="0.1" aria-label="End time" />
+            </div>
+            <button type="button" id="cap-block-delete" class="link-btn">Delete this caption</button>
+          </div>
         </div>
 
         <div class="insp-sec insp-sec-major">All captions</div>
-        <p class="field-hint insp-sec-note">These style the whole caption track at once. Edit a single block above.</p>
+        <p class="field-hint insp-sec-note">Style the whole caption track at once — every control here applies to all blocks live.</p>
 
         <div class="field-group">
           <label class="field-label">Style presets</label>
