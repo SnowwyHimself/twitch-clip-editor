@@ -142,6 +142,46 @@ function isValidHttpUrl(value) {
   }
 }
 
+// Only real Twitch clip/VOD hosts may reach yt-dlp. Before this, any http/https
+// URL was accepted, so yt-dlp — which supports hundreds of sites and will fetch
+// internal/SSRF targets — could be pointed anywhere. Restrict to Twitch.
+const TWITCH_HOSTS = new Set(['twitch.tv', 'www.twitch.tv', 'clips.twitch.tv', 'm.twitch.tv']);
+function isTwitchClipUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  return TWITCH_HOSTS.has(parsed.hostname.toLowerCase());
+}
+const TWITCH_URL_ERROR = 'Please paste a Twitch clip or VOD link (twitch.tv / clips.twitch.tv).';
+
+// Guarantees a resolved path stays inside baseDir — throws otherwise. Applied
+// wherever outside input contributes to a filesystem path (project/media/upload
+// leaves, preview-cache keys, etc.) so no ".." or absolute path can escape.
+function resolveInside(baseDir, ...parts) {
+  const base = path.resolve(baseDir);
+  const resolved = path.resolve(base, ...parts);
+  if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+    throw new Error('path escapes base directory');
+  }
+  return resolved;
+}
+
+// A single path segment safe to use as a filename: no separators, null bytes,
+// control chars, or leading dashes (which a CLI could read as a flag); length
+// capped. Returns '' if nothing safe remains.
+function safeLeaf(name) {
+  const base = path
+    .basename(String(name == null ? "" : name)) // strips any directory part
+    .replace(/[\x00-\x1f\x7f]/g, "") // null byte + control chars
+    .replace(/[^a-zA-Z0-9_.-]/g, "") // keep only a safe set (drops / \\ : space etc.)
+    .replace(/^[-.]+/, ""); // no leading dash (flag injection) or dot ("..", hidden)
+  return base.slice(0, 120);
+}
+
 function clampCaptionStyle(value) {
   return value === 'box' || value === 'plain' ? value : 'outline';
 }
@@ -371,18 +411,51 @@ function resolvePositionCoordinate(percent, contentSize, canvasSize) {
   return Math.round(center - contentSize / 2);
 }
 
-function runCommand(cmd, args) {
+// Caps concurrent heavy child processes (yt-dlp downloads, ffmpeg renders,
+// whisper transcriptions) so a burst of jobs can't spawn unbounded processes and
+// exhaust CPU/RAM/disk. Acquire before spawning, release in a finally.
+const MAX_HEAVY_PROCS = 3;
+let heavyActive = 0;
+const heavyQueue = [];
+function acquireHeavySlot() {
+  if (heavyActive < MAX_HEAVY_PROCS) {
+    heavyActive += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => heavyQueue.push(resolve));
+}
+function releaseHeavySlot() {
+  heavyActive -= 1;
+  const next = heavyQueue.shift();
+  if (next) {
+    heavyActive += 1;
+    next();
+  }
+}
+
+const COMMAND_TIMEOUT_MS = 15 * 60 * 1000; // 15 min: a hung yt-dlp/ffmpeg is killed, not left forever
+
+function runCommand(cmd, args, { timeoutMs = COMMAND_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args);
     let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL'); // don't leave a stalled network download running
+    }, timeoutMs);
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
     child.on('error', (err) => {
+      clearTimeout(timer);
       reject(new Error(`Failed to start ${cmd}: ${err.message}`));
     });
     child.on('close', (code) => {
-      if (code === 0) {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`${cmd} timed out after ${Math.round(timeoutMs / 1000)}s and was killed`));
+      } else if (code === 0) {
         resolve();
       } else {
         const tail = stderr.trim().split('\n').slice(-15).join('\n');
@@ -1260,11 +1333,27 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
 // stream off stdout and reports out_time to the caller. out_time_ms is —
 // despite the name — in MICROseconds (a long-standing ffmpeg quirk), hence
 // the 1e6 divisor.
-function runFfmpegWithProgress(args, onProgress) {
+const FFMPEG_TIMEOUT_MS = 60 * 60 * 1000; // 1h ceiling on a single render; a wedged ffmpeg is killed
+
+async function runFfmpegWithProgress(args, onProgress) {
+  await acquireHeavySlot();
+  try {
+    return await runFfmpegWithProgressInner(args, onProgress);
+  } finally {
+    releaseHeavySlot();
+  }
+}
+
+function runFfmpegWithProgressInner(args, onProgress) {
   return new Promise((resolve, reject) => {
     const child = spawn(FFMPEG_BIN, args);
     let stderr = '';
     let stdoutBuf = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, FFMPEG_TIMEOUT_MS);
     child.stdout.on('data', (chunk) => {
       stdoutBuf += chunk.toString();
       let newlineIdx;
@@ -1281,10 +1370,14 @@ function runFfmpegWithProgress(args, onProgress) {
       stderr += chunk.toString();
     });
     child.on('error', (err) => {
+      clearTimeout(timer);
       reject(new Error(`Failed to start ffmpeg: ${err.message}`));
     });
     child.on('close', (code) => {
-      if (code === 0) {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`ffmpeg render timed out after ${Math.round(FFMPEG_TIMEOUT_MS / 60000)}m and was killed`));
+      } else if (code === 0) {
         resolve();
       } else {
         const tail = stderr.trim().split('\n').slice(-15).join('\n');
@@ -1552,12 +1645,23 @@ function findFileWithPrefix(dir, prefix) {
 }
 
 function ytDlpArgs(url, outputTemplate) {
-  return ['-o', outputTemplate, '--no-playlist', url];
+  // `--` terminates option parsing so a URL that starts with '-' can never be
+  // read as a flag (arg injection). URLs are already restricted to Twitch hosts
+  // (isTwitchClipUrl) at every entry point before reaching here.
+  return ['-o', outputTemplate, '--no-playlist', '--', url];
 }
 
 async function downloadWithYtDlp(url, jobId) {
+  // Defense in depth: the single choke point to yt-dlp re-checks the host, so a
+  // non-Twitch URL can never reach it even if a caller forgot to validate.
+  if (!isTwitchClipUrl(url)) throw new Error(TWITCH_URL_ERROR);
   const outputTemplate = path.join(DOWNLOADS_DIR, `${jobId}.%(ext)s`);
-  await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
+  await acquireHeavySlot();
+  try {
+    await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
+  } finally {
+    releaseHeavySlot();
+  }
   const filePath = findFileWithPrefix(DOWNLOADS_DIR, jobId);
   if (!filePath) {
     throw new Error('yt-dlp reported success but no downloaded file was found');
@@ -1572,11 +1676,17 @@ function previewCacheKey(url) {
 // Downloads a clip purely for the live preview, reusing a prior download of
 // the exact same URL if one's already cached (see PREVIEW_CACHE_DIR above).
 async function fetchPreviewSource(url) {
+  if (!isTwitchClipUrl(url)) throw new Error(TWITCH_URL_ERROR);
   const cacheKey = previewCacheKey(url);
   let filePath = findFileWithPrefix(PREVIEW_CACHE_DIR, cacheKey);
   if (!filePath) {
     const outputTemplate = path.join(PREVIEW_CACHE_DIR, `${cacheKey}.%(ext)s`);
-    await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
+    await acquireHeavySlot();
+    try {
+      await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
+    } finally {
+      releaseHeavySlot();
+    }
     filePath = findFileWithPrefix(PREVIEW_CACHE_DIR, cacheKey);
     if (!filePath) {
       throw new Error('yt-dlp reported success but no downloaded file was found');
@@ -1796,8 +1906,8 @@ app.use('/assets', express.static(path.join(ROOT, 'assets')));
 app.post('/api/preview-source', async (req, res) => {
   const { url } = req.body || {};
   const trimmedUrl = typeof url === 'string' ? url.trim() : '';
-  if (!isValidHttpUrl(trimmedUrl)) {
-    return res.status(400).json({ error: 'Please enter a valid clip URL (starting with http:// or https://)' });
+  if (!isTwitchClipUrl(trimmedUrl)) {
+    return res.status(400).json({ error: TWITCH_URL_ERROR });
   }
   try {
     const filePath = await fetchPreviewSource(trimmedUrl);
@@ -1883,8 +1993,8 @@ function buildTextLayers(body) {
 app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID(); next(); }, uploadFields, (req, res) => {
   const { url, zoom, blur, mirror, speed } = req.body || {};
   const trimmedUrl = typeof url === 'string' ? url.trim() : '';
-  if (!isValidHttpUrl(trimmedUrl)) {
-    return res.status(400).json({ error: 'Please enter a valid clip URL (starting with http:// or https://)' });
+  if (!isTwitchClipUrl(trimmedUrl)) {
+    return res.status(400).json({ error: TWITCH_URL_ERROR });
   }
 
   const jobId = req.jobId;
@@ -1971,8 +2081,8 @@ app.post('/api/transcribe', (req, res, next) => { req.jobId = crypto.randomUUID(
       inputPath = videoFile.path;
     } else {
       const trimmedUrl = typeof (req.body || {}).url === 'string' ? req.body.url.trim() : '';
-      if (!isValidHttpUrl(trimmedUrl)) {
-        return res.status(400).json({ error: 'Provide a video file or a valid clip URL to transcribe' });
+      if (!isTwitchClipUrl(trimmedUrl)) {
+        return res.status(400).json({ error: 'Provide a video file or a Twitch clip/VOD link to transcribe' });
       }
       inputPath = await fetchPreviewSource(trimmedUrl);
     }
@@ -2053,7 +2163,11 @@ const projectUpload = multer({ storage: multer.memoryStorage(), limits: { fileSi
 function projectDir(id) {
   const safe = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
   if (!safe) return null;
-  return path.join(PROJECTS_DIR, safe);
+  try {
+    return resolveInside(PROJECTS_DIR, safe); // belt-and-suspenders over the char filter
+  } catch {
+    return null;
+  }
 }
 
 app.post('/api/project/save', projectUpload.array('media'), (req, res) => {
@@ -2065,9 +2179,17 @@ app.post('/api/project/save', projectUpload.array('media'), (req, res) => {
     const mediaDir = path.join(dir, 'media');
     fs.mkdirSync(mediaDir, { recursive: true });
     for (const f of req.files || []) {
-      // originalname is the media id (overlay/sound id) — sanitize to a leaf.
-      const leaf = path.basename(f.originalname).replace(/[^a-zA-Z0-9_.-]/g, '');
-      if (leaf) fs.writeFileSync(path.join(mediaDir, leaf), f.buffer);
+      // originalname is the media id (overlay/sound id) — sanitize to a leaf and
+      // confirm it resolves inside mediaDir before writing (no "..", no escape).
+      const leaf = safeLeaf(f.originalname);
+      if (!leaf) continue;
+      let dest;
+      try {
+        dest = resolveInside(mediaDir, leaf);
+      } catch {
+        continue;
+      }
+      fs.writeFileSync(dest, f.buffer);
     }
     project.id = id;
     project.savedAt = Date.now();
@@ -2099,7 +2221,18 @@ app.get('/api/project/:id', (req, res) => {
   const dir = projectDir(req.params.id);
   const p = dir && path.join(dir, 'project.json');
   if (!p || !fs.existsSync(p)) return res.status(404).json({ error: 'not found' });
-  res.json(JSON.parse(fs.readFileSync(p, 'utf8')));
+  // Parse defensively: a corrupt/truncated project.json must not crash the
+  // request, and only a well-formed object is returned to the client.
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {
+    return res.status(422).json({ error: 'project file is corrupt' });
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return res.status(422).json({ error: 'project file is malformed' });
+  }
+  res.json(data);
 });
 
 app.delete('/api/project/:id', (req, res) => {
@@ -2112,9 +2245,16 @@ app.delete('/api/project/:id', (req, res) => {
 // a File on open: /api/project/<id>/media/<leaf>
 app.get('/api/project/:id/media/:leaf', (req, res) => {
   const dir = projectDir(req.params.id);
-  const leaf = path.basename(req.params.leaf);
-  const file = dir && path.join(dir, 'media', leaf);
-  if (!file || !fs.existsSync(file)) return res.status(404).end();
+  if (!dir) return res.status(404).end();
+  const leaf = safeLeaf(req.params.leaf);
+  if (!leaf) return res.status(404).end();
+  let file;
+  try {
+    file = resolveInside(path.join(dir, 'media'), leaf); // must stay in media/
+  } catch {
+    return res.status(404).end();
+  }
+  if (!fs.existsSync(file)) return res.status(404).end();
   res.sendFile(file);
 });
 
