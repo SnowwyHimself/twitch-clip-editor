@@ -112,6 +112,7 @@ function lookupElements() {
     // Relocatable blocks the router moves between inspectors (single DOM node,
     // no duplicate ids): video presets → Project/Clip; text controls → Text/Caption.
     videoPresetBlock: byId('video-preset-block'),
+    bgBlurBlock: byId('bg-blur-block'),
     textCoreBlock: byId('panel-text-controls'),
     textCoreHome: byId('insp-text'),
     captionThisBlock: byId('caption-thisblock'),
@@ -274,6 +275,17 @@ function mountPresetSlot(inspectorName) {
   if (slot && els.videoPresetBlock.parentElement !== slot) slot.appendChild(els.videoPresetBlock);
 }
 
+// Background blur is a single global setting shown in BOTH Project and Clip: move
+// the one #blur-slider block into whichever is active, and keep it in sync (the
+// Project branch doesn't run refreshVideoPanel).
+function mountBgBlurSlot(inspectorName) {
+  const insp = els.inspectors[inspectorName];
+  const slot = insp && insp.querySelector('[data-bgblur-slot]');
+  if (slot && els.bgBlurBlock.parentElement !== slot) slot.appendChild(els.bgBlurBlock);
+  els.blurSlider.value = state.blur;
+  els.blurValue.textContent = `${state.blur}%`;
+}
+
 // Move the relocatable text-controls block into the Text inspector, or the
 // Caption inspector's "This block" slot — same per-block tools either way.
 function mountTextCore(where) {
@@ -315,6 +327,7 @@ function routeSelection() {
 
   if (state.selPieces.length > 1) {
     mountPresetSlot('clip');
+    mountBgBlurSlot('clip');
     setInspectorHeader('Clips', `${state.selPieces.length} selected`);
     showInspector('clip');
     refreshVideoPanel();
@@ -323,6 +336,7 @@ function routeSelection() {
 
   if (kind === 'segment' || kind === 'clip') {
     mountPresetSlot('clip');
+    mountBgBlurSlot('clip');
     setInspectorHeader('Clip', pieceLabel(sel));
     showInspector('clip');
     refreshVideoPanel();
@@ -356,6 +370,7 @@ function routeSelection() {
     refreshTransitionInspector();
   } else {
     mountPresetSlot('project');
+    mountBgBlurSlot('project');
     setInspectorHeader('Project');
     showInspector('project');
   }

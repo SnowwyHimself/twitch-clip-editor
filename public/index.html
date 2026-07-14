@@ -92,6 +92,17 @@
         <p class="field-hint">Saves the current video settings (up to 5). The <span class="inline-icon" data-icon="star"></span> one auto-applies when you load a clip.</p>
       </div>
 
+      <!-- Relocatable background block: the router moves it into whichever of the
+           Project or Clip inspector is active (background is a global setting, so
+           both edit the same #blur-slider). fill-only → hides in facecam split. -->
+      <div id="bg-blur-block">
+        <div class="insp-sec">Background</div>
+        <div class="field-group fill-only">
+          <label class="field-label" for="blur-slider">Background blur <span id="blur-value">0%</span></label>
+          <input id="blur-slider" type="range" min="0" max="100" value="0" step="1" />
+        </div>
+      </div>
+
       <!-- ===== Project inspector (nothing selected) ===== -->
       <div id="insp-project" class="inspector hidden">
         <div data-preset-slot></div>
@@ -100,11 +111,7 @@
           <label class="field-label">Aspect ratio</label>
           <div id="aspect-ratio-group" class="toggle-group aspect-ratio-group"></div>
         </div>
-        <div class="insp-sec">Background</div>
-        <div class="field-group">
-          <label class="field-label" for="blur-slider">Background blur <span id="blur-value">0%</span></label>
-          <input id="blur-slider" type="range" min="0" max="100" value="0" step="1" />
-        </div>
+        <div data-bgblur-slot></div>
         <p class="panel-empty insp-hint">Select a clip or layer to edit it.</p>
       </div>
 
@@ -161,6 +168,8 @@
             </label>
           </div>
         </details>
+
+        <div data-bgblur-slot></div>
 
         <div class="insp-sec fill-only">Motion</div>
         <div class="field-group fill-only" id="keyframe-group">
