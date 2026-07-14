@@ -103,6 +103,31 @@ export async function saveCaptionSettings(patch) {
   return parseJsonResponse(res, 'Failed to save caption settings');
 }
 
+// --- caption model downloads ---
+export async function startModelDownload(tier) {
+  const res = await fetch('/api/model/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tier }),
+  });
+  return parseJsonResponse(res, 'Failed to start download');
+}
+export async function modelDownloadStatus(jobId) {
+  const res = await fetch(`/api/model/status/${jobId}`);
+  return parseJsonResponse(res, 'Failed to read download status');
+}
+export async function cancelModelDownload(jobId) {
+  await fetch(`/api/model/cancel/${jobId}`, { method: 'POST' });
+}
+export async function removeModel(tier) {
+  const res = await fetch('/api/model/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tier }),
+  });
+  return parseJsonResponse(res, 'Failed to remove model');
+}
+
 export async function startExport(endpoint, formData) {
   const res = await fetch(endpoint, { method: 'POST', body: formData });
   return parseJsonResponse(res, 'Failed to start export');

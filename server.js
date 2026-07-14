@@ -2396,6 +2396,153 @@ app.post('/api/caption-settings', (req, res) => {
   res.json({ settings: writeCaptionSettings(req.body || {}) });
 });
 
+// --- caption model downloads (user-initiated, from Hugging Face) --------------
+// The ONLY new network activity in the app (see SECURITY.md). Streams a tier's
+// ggml model to userData/models via a .part file, verifies the exact byte size,
+// and only then swaps it into place — a cancelled/failed/corrupt download never
+// leaves a half file that whisper would choke on.
+const modelDownloads = new Map(); // jobId -> job
+
+function followingGet(url, onResponse, onError, redirects = 0) {
+  const req = https.get(url, { headers: { 'User-Agent': 'clip-editor' } }, (res) => {
+    if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirects < 6) {
+      res.resume();
+      return followingGet(res.headers.location, onResponse, onError, redirects + 1);
+    }
+    onResponse(res, req);
+  });
+  req.on('error', onError);
+  return req;
+}
+
+function startModelDownload(tier) {
+  const spec = CAPTION_TIERS[tier];
+  const jobId = crypto.randomUUID();
+  const dest = path.join(MODELS_DIR, spec.file);
+  const partPath = `${dest}.part`;
+  const job = { tier, state: 'downloading', downloadedBytes: 0, totalBytes: spec.sizeBytes || 0, error: null, aborted: false, req: null };
+  modelDownloads.set(jobId, job);
+
+  const fail = (msg) => {
+    if (job.state === 'done') return;
+    job.state = 'error';
+    job.error = msg;
+    try {
+      fs.unlinkSync(partPath);
+    } catch {
+      /* nothing to clean */
+    }
+  };
+
+  try {
+    fs.rmSync(partPath, { force: true });
+  } catch {
+    /* ignore */
+  }
+  const out = fs.createWriteStream(partPath);
+  job.req = followingGet(
+    spec.url,
+    (res, req) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        out.destroy();
+        return fail(`download failed (HTTP ${res.statusCode})`);
+      }
+      const total = parseInt(res.headers['content-length'], 10);
+      if (Number.isFinite(total)) job.totalBytes = total;
+      job.req = req;
+      res.on('data', (chunk) => {
+        job.downloadedBytes += chunk.length;
+      });
+      res.on('error', (e) => {
+        out.destroy();
+        if (!job.aborted) fail(e.message);
+      });
+      res.pipe(out);
+      out.on('finish', () => {
+        if (job.aborted) return;
+        let size = 0;
+        try {
+          size = fs.statSync(partPath).size;
+        } catch {
+          return fail('download vanished');
+        }
+        // Exact-size verification against the known HF byte count — a truncated
+        // or corrupted download won't match.
+        if (spec.sizeBytes && size !== spec.sizeBytes) {
+          return fail(`size check failed (${size} of ${spec.sizeBytes} bytes)`);
+        }
+        try {
+          fs.renameSync(partPath, dest);
+          job.state = 'done';
+        } catch (e) {
+          fail(`could not save model: ${e.message}`);
+        }
+      });
+    },
+    (e) => {
+      out.destroy();
+      if (!job.aborted) fail(e.message);
+    }
+  );
+  return jobId;
+}
+
+app.post('/api/model/download', (req, res) => {
+  const tier = (req.body || {}).tier;
+  const spec = CAPTION_TIERS[tier];
+  if (!spec || !spec.url) return res.status(400).json({ error: 'nothing to download for that tier' });
+  const dirs = { modelsDir: MODELS_DIR, resourcesDir: process.env.CLIP_EDITOR_RESOURCES };
+  if (tierModelPath(tier, dirs)) return res.json({ jobId: null, alreadyHave: true });
+  res.json({ jobId: startModelDownload(tier) });
+});
+
+app.get('/api/model/status/:jobId', (req, res) => {
+  const job = modelDownloads.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'unknown download' });
+  const pct = job.totalBytes ? Math.min(100, Math.round((job.downloadedBytes / job.totalBytes) * 100)) : 0;
+  res.json({
+    tier: job.tier,
+    state: job.state, // 'downloading' | 'done' | 'error' | 'cancelled'
+    percent: pct,
+    downloadedBytes: job.downloadedBytes,
+    totalBytes: job.totalBytes,
+    error: job.error,
+  });
+});
+
+app.post('/api/model/cancel/:jobId', (req, res) => {
+  const job = modelDownloads.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'unknown download' });
+  job.aborted = true;
+  job.state = 'cancelled';
+  try {
+    if (job.req) job.req.destroy();
+  } catch {
+    /* ignore */
+  }
+  try {
+    fs.rmSync(path.join(MODELS_DIR, `${CAPTION_TIERS[job.tier].file}.part`), { force: true });
+  } catch {
+    /* ignore */
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/model/remove', (req, res) => {
+  const tier = (req.body || {}).tier;
+  const spec = CAPTION_TIERS[tier];
+  if (!spec || spec.bundled) return res.status(400).json({ error: 'that model cannot be removed' });
+  // Only remove from the user's models dir (never the bundled resources copy).
+  const p = path.join(MODELS_DIR, spec.file);
+  try {
+    fs.rmSync(p, { force: true });
+  } catch {
+    /* already gone */
+  }
+  res.json({ ok: true });
+});
+
 app.get('/api/projects', (req, res) => {
   const projects = [];
   let autosave = null;
