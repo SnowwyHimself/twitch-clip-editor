@@ -95,6 +95,10 @@ export async function removeLibraryItem(id) {
   return parseJsonResponse(res, 'Failed to remove');
 }
 export const libraryFileUrl = (id) => `/api/library/file/${id}`;
+export async function fetchLibraryUsage() {
+  const res = await fetch('/api/library/usage');
+  return parseJsonResponse(res, 'Failed to read library usage'); // { categories, total, path }
+}
 // A library item as a File, so it rides the same FormData export path as presets
 // and user-picked files (used for sounds/overlays; fonts export server-side).
 export async function libraryItemAsFile(item) {

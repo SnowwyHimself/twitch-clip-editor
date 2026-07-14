@@ -2478,6 +2478,34 @@ app.get('/api/library', (req, res) => {
   res.json({ items: readLibrary().items.map(libraryEntryPublic) });
 });
 
+// Disk usage per category + the on-disk folder path (Settings display).
+app.get('/api/library/usage', (req, res) => {
+  const categories = {};
+  let total = 0;
+  for (const cat of LIBRARY_CATEGORIES) {
+    let bytes = 0;
+    let count = 0;
+    try {
+      for (const name of fs.readdirSync(path.join(LIBRARY_DIR, cat))) {
+        try {
+          const st = fs.statSync(resolveInside(path.join(LIBRARY_DIR, cat), name));
+          if (st.isFile()) {
+            bytes += st.size;
+            count += 1;
+          }
+        } catch {
+          /* skip unreadable entry */
+        }
+      }
+    } catch {
+      /* category folder missing — treated as empty */
+    }
+    categories[cat] = { bytes, count };
+    total += bytes;
+  }
+  res.json({ categories, total, path: LIBRARY_DIR });
+});
+
 app.post('/api/library/import', libraryUpload.single('file'), (req, res) => {
   const category = String((req.body && req.body.category) || '');
   if (!LIBRARY_CATEGORIES.includes(category)) return res.status(400).json({ error: 'bad category' });

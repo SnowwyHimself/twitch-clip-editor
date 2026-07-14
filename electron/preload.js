@@ -24,4 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   relaunchToUpdate: () => ipcRenderer.invoke('update:relaunch'),
   dismissUpdate: () => ipcRenderer.invoke('update:dismiss'),
+
+  // Open the personal asset library folder in the OS file manager (Settings).
+  openLibraryFolder: () => ipcRenderer.invoke('library:open-folder'),
 });

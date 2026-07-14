@@ -2002,6 +2002,28 @@ img.preset-thumb {
   margin-top: var(--space-1);
   display: inline-block;
 }
+.library-usage-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  padding: 3px 0;
+}
+.library-usage-row span:last-child {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.library-usage-total {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+  font-weight: 600;
+}
+.library-path {
+  word-break: break-all;
+  opacity: 0.7;
+  margin: var(--space-1) 0;
+}
 .library-empty {
   margin: 0;
   font-style: italic;

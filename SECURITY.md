@@ -52,6 +52,11 @@ Everything stays under your OS user-data folder for the app
 - **uploads/**, **outputs/** — files you import and the videos you export
 - **models/** — the offline speech models used for auto-captions (the bundled
   Fast model, plus any Better/Best model you download — see below)
+- **library/** — your personal asset library: sounds/, music/, overlays/, and
+  fonts/ you import to reuse across projects, plus a `library.json` index. These
+  are files *you* chose to import; nothing is fetched or uploaded. Manage or
+  delete them from **Caption/Library settings**, or remove this folder to clear
+  the whole library.
 
 Nothing here is uploaded. Delete the folder to wipe all app data.
 

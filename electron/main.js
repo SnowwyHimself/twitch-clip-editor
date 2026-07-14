@@ -43,6 +43,19 @@ const PREVIEW_CACHE_DIR = path.join(app.getPath('userData'), 'preview-cache');
 // JSON; because this is IPC (only our renderer can call it, never a website) and
 // the MAIN process — not the HTTP server — touches the path, the any-file-read
 // web primitive is gone. Validated: must be an existing regular file.
+// Open the personal asset library folder in Finder/Explorer (Settings → Your
+// library). Path is app-derived (userData), never renderer input.
+ipcMain.handle('library:open-folder', async () => {
+  const dir = path.join(app.getPath('userData'), 'library');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    await shell.openPath(dir);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+});
+
 ipcMain.handle('reopen-file', async (_event, absPath) => {
   if (typeof absPath !== 'string' || !absPath) return { ok: false, reason: 'bad-path' };
   let stat;

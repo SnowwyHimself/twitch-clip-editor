@@ -71,7 +71,7 @@ import {
 import { trackSelectedFace } from './facetrack.js';
 import { confirmDialog } from './confirm.js';
 import { icon } from './icons.js';
-import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile, libraryItemAsFile, libraryFileUrl } from './api.js';
+import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile, libraryItemAsFile, libraryFileUrl, fetchLibraryUsage } from './api.js';
 import { loadLibrary, renderLibrarySection, saveToLibrary, onLibraryChange, libraryItems } from './library.js';
 import { showContextMenu } from './menu.js';
 
@@ -172,6 +172,9 @@ function lookupElements() {
     overlayPresets: byId('overlay-presets'),
     overlaySaveLib: byId('overlay-save-lib'),
     overlayLibrary: byId('overlay-library'),
+    libraryUsage: byId('library-usage'),
+    libraryPath: byId('library-path'),
+    libraryOpenFolder: byId('library-open-folder'),
     overlaySizeGroup: byId('overlay-size-group'),
     overlaySizeSlider: byId('overlay-size-slider'),
     overlaySizeValue: byId('overlay-size-value'),
@@ -1321,6 +1324,34 @@ function buildAudioLibrary() {
   });
 }
 
+// Settings display: per-category library disk usage + folder path + Open folder.
+const LIB_CAT_LABEL = { sounds: 'Sound effects', music: 'Music', overlays: 'Overlays', fonts: 'Fonts' };
+function formatBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+async function renderLibraryUsage() {
+  if (!els.libraryUsage) return;
+  try {
+    const usage = await fetchLibraryUsage();
+    els.libraryUsage.innerHTML = Object.entries(LIB_CAT_LABEL)
+      .map(([cat, label]) => {
+        const c = usage.categories[cat] || { count: 0, bytes: 0 };
+        return `<div class="library-usage-row"><span>${label}</span><span>${c.count} · ${formatBytes(c.bytes)}</span></div>`;
+      })
+      .join('') + `<div class="library-usage-row library-usage-total"><span>Total</span><span>${formatBytes(usage.total)}</span></div>`;
+    if (els.libraryPath) els.libraryPath.textContent = usage.path;
+    // Open folder only works in the desktop app (Electron IPC).
+    if (els.libraryOpenFolder && window.electronAPI && window.electronAPI.openLibraryFolder) {
+      els.libraryOpenFolder.classList.remove('hidden');
+    }
+  } catch {
+    /* leave the section empty on failure */
+  }
+}
+
 async function importSound(file) {
   if (!file) return;
   addSoundFromFile(file);
@@ -2188,14 +2219,19 @@ export function initPanel() {
     buildAudioLibrary();
     buildFontOptions(els.fontSelect);
     buildFontOptions(els.capFontSelect);
+    renderLibraryUsage();
   });
   onLibraryChange(() => {
     buildOverlayLibrary();
     buildAudioLibrary();
     buildFontOptions(els.fontSelect);
     buildFontOptions(els.capFontSelect);
+    renderLibraryUsage();
   });
   wireFontImport();
+  if (els.libraryOpenFolder) {
+    els.libraryOpenFolder.addEventListener('click', () => window.electronAPI?.openLibraryFolder?.());
+  }
   refreshVideoPanel();
   refreshTextPanel();
   refreshOverlayPanel();
