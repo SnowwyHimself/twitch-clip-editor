@@ -2306,31 +2306,18 @@ img.preset-thumb {
   position: absolute;
   top: 0;
   height: 100%;
-  /* Pieces are square by default so abutting clips meet flush — rounding every
-     bar would leave a dark notch at each cut. JS rounds ONLY the two outer ends
-     of the whole run (.tl-round-left / .tl-round-right) so the video track reads
-     as one rounded strip without notches between clips. */
-  border-radius: 0;
+  /* Each clip is its own fully-rounded, clearly-outlined block so adjacent clips
+     read as separate pieces (not one merged bar). A small gap between them is
+     added in layoutVideoTrack. */
+  border-radius: var(--radius-md);
   cursor: pointer;
   background: rgba(124, 92, 255, 0.28);
-  border: 1px solid rgba(124, 92, 255, 0.5);
+  border: 2px solid rgba(124, 92, 255, 0.85);
 }
 
 .tl-segment:hover {
   background: rgba(124, 92, 255, 0.4);
-}
-
-/* Rounded outer ends of the video run. Compound selectors so these beat the
-   later `.tl-appended-clip { border-radius: 0 }` rule by specificity. */
-.tl-segment.tl-round-left,
-.tl-appended-clip.tl-round-left {
-  border-top-left-radius: var(--radius-md);
-  border-bottom-left-radius: var(--radius-md);
-}
-.tl-segment.tl-round-right,
-.tl-appended-clip.tl-round-right {
-  border-top-right-radius: var(--radius-md);
-  border-bottom-right-radius: var(--radius-md);
+  border-color: rgba(124, 92, 255, 1);
 }
 
 /* Add-clip chooser: URL input sits between the note and the actions. */
@@ -2517,17 +2504,18 @@ img.preset-thumb {
   position: absolute;
   top: 0;
   height: 100%;
-  /* Contiguous with the primary segments — square edges so clip boundaries abut
-     seamlessly instead of showing a dark rounded-corner notch (the "gap"). */
-  border-radius: 0;
+  /* A fully-rounded, clearly-outlined block, visually separated from neighbours
+     (gap added in layoutVideoTrack) so each clip is distinguishable. */
+  border-radius: var(--radius-md);
   cursor: grab;
   overflow: hidden;
   touch-action: none;
   background: rgba(45, 190, 165, 0.28);
-  border: 1px solid rgba(45, 190, 165, 0.6);
+  border: 2px solid rgba(45, 190, 165, 0.9);
 }
 .tl-appended-clip:hover {
   background: rgba(45, 190, 165, 0.4);
+  border-color: rgba(45, 190, 165, 1);
 }
 .tl-appended-clip.selected {
   border-color: #2dbea5;
