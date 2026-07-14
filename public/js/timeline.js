@@ -183,18 +183,20 @@ function applyTimelineZoom() {
 
 // Zoom to `next`, keeping `anchorOutTime` pinned under the same on-screen
 // position (so the timeline grows/shrinks *around* the playhead or the mouse,
-// not the left edge). ruler.offsetLeft is the constant label-gutter offset;
-// outTimeToX rescales with the new pxPerSecond after applyTimelineZoom relays
-// out the grid.
+// not the left edge). trackOriginX() is the single content-origin; outTimeToX
+// rescales with the new pxPerSecond after applyTimelineZoom relays out the grid.
+// The final scroll is clamped so the anchor math can never leave a left gap.
 function zoomTo(next, anchorOutTime) {
   next = clampZoom(next);
   if (Math.abs(next - tlZoom) < 1e-4) return;
-  const anchorContentBefore = ruler.offsetLeft + outTimeToX(anchorOutTime);
+  recomputeOrigin();
+  const anchorContentBefore = trackOriginX() + outTimeToX(anchorOutTime);
   const viewportX = anchorContentBefore - tlBody.scrollLeft;
   tlZoom = next;
-  applyTimelineZoom();
-  const anchorContentAfter = ruler.offsetLeft + outTimeToX(anchorOutTime);
-  tlBody.scrollLeft = anchorContentAfter - viewportX;
+  applyTimelineZoom(); // relays out + recomputes the origin
+  const anchorContentAfter = trackOriginX() + outTimeToX(anchorOutTime);
+  const maxScroll = Math.max(0, tlBody.scrollWidth - tlBody.clientWidth);
+  tlBody.scrollLeft = Math.min(maxScroll, Math.max(0, anchorContentAfter - viewportX));
 }
 
 // Smooth (~120ms) zoom for discrete triggers — +/- buttons, keys, Fit. Wheel
@@ -244,9 +246,17 @@ function trackWidth() {
   return ruler.clientWidth || 1;
 }
 
-// Pinned scale: source duration normally, stretched only if free-mode
-// gaps push the output past it. Constant while trimming/deleting, so the
-// track never rescales mid-drag.
+// ── Single source of truth for time↔pixel ────────────────────────────────────
+// The whole timeline maps time→x through exactly these. The ruler and every
+// track share the SAME grid content column, so one scale (pxPerSecond) and one
+// origin (trackOriginX) govern ticks, clip bars, keyframes AND the playhead —
+// nothing can drift apart, which is the failure mode behind the "left gap on
+// zoom". Track/ruler-cell children use outTimeToX(t) (their cell left IS x=0);
+// elements that live in .tl-body directly (the playhead) add trackOriginX().
+//
+// Pinned scale: source duration normally, stretched only if free-mode gaps push
+// the output past it. Constant while trimming/deleting, so the track never
+// rescales mid-drag.
 function pxPerSecond() {
   const span = Math.max(sourceDuration(), outputDuration());
   return span > 0 ? trackWidth() / span : 0;
@@ -254,6 +264,21 @@ function pxPerSecond() {
 
 function outTimeToX(t) {
   return t * pxPerSecond();
+}
+
+// x of t=0 in .tl-body scroll-content space. Measured off the REAL track cell
+// (not a hand-computed label+gap constant), so padding / positioning changes
+// can't desync the playhead from the bars. Cached because updatePlayhead runs
+// per animation frame; refreshed by recomputeOrigin() on every relayout/zoom/
+// resize — the only times it can actually change (it's scroll-independent).
+let trackOriginXCache = 0;
+function recomputeOrigin() {
+  const b = tlBody.getBoundingClientRect();
+  const v = videoTrack.getBoundingClientRect();
+  trackOriginXCache = v.left - b.left + tlBody.scrollLeft;
+}
+function trackOriginX() {
+  return trackOriginXCache;
 }
 
 function xToOutTime(clientX) {
@@ -496,6 +521,7 @@ function layoutOverlayBars() {
 }
 
 function layoutAll() {
+  recomputeOrigin(); // refresh the single origin before anything positions to it
   layoutVideoTrack();
   layoutLayerBars();
   layoutSoundBars();
@@ -1050,7 +1076,7 @@ function renderOverlayRow() {
 // --- playhead / scrubbing ---------------------------------------------------------
 
 function updatePlayhead() {
-  playhead.style.left = `${ruler.offsetLeft + outTimeToX(getCurrentOutputTime())}px`;
+  playhead.style.left = `${trackOriginX() + outTimeToX(getCurrentOutputTime())}px`;
   playhead.classList.toggle('hidden', sourceDuration() <= 0);
 }
 
