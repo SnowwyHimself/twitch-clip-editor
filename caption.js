@@ -722,8 +722,17 @@ function renderCaptionPng({
   lineHeight,
   rotation,
 }) {
-  const { path: fontPath } = resolveFontEntry(fontId);
-  const font = loadFontFromPath(fontPath);
+  let { path: fontPath } = resolveFontEntry(fontId);
+  let font;
+  try {
+    font = loadFontFromPath(fontPath);
+  } catch {
+    // Corrupt/unreadable font (e.g. a damaged library import) — fall back to the
+    // default bundled font for BOTH measurement and the resvg render, so an
+    // export never crashes (mirrors the deleted-font fallback).
+    fontPath = FONT_REGISTRY[resolveDefaultFontId()].path;
+    font = loadFontFromPath(fontPath);
+  }
   const resolvedFontSize = fontSize || FONT_SIZE;
   const emojiSize = resolvedFontSize * EMOJI_SIZE_RATIO;
   // D1: uppercase before wrapping so word-wrap widths match the preview.
@@ -792,4 +801,15 @@ function renderCaptionPng({
   return { buffer, width: rendered.width, height: rendered.height };
 }
 
-module.exports = { renderCaptionPng, resolveFontPath, getFontOptions };
+// True if a buffer parses as a usable font — used to reject corrupt uploads at
+// the library-import door (server.js) rather than failing later at render time.
+function isValidFontBuffer(buffer) {
+  try {
+    opentype.parse(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { renderCaptionPng, resolveFontPath, getFontOptions, isValidFontBuffer };

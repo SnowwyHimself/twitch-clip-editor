@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const os = require('os');
 const https = require('https');
 const { spawn } = require('child_process');
-const { renderCaptionPng, resolveFontPath, getFontOptions } = require('./caption');
+const { renderCaptionPng, resolveFontPath, getFontOptions, isValidFontBuffer } = require('./caption');
 const {
   transcribeSource,
   checkWhisperSetup,
@@ -2517,6 +2517,11 @@ app.post('/api/library/import', libraryUpload.single('file'), (req, res) => {
         ? 'Only .ttf and .otf fonts are supported (woff2 renders in preview but not in exports).'
         : `Unsupported file type for ${category}.`;
     return res.status(400).json({ error: msg });
+  }
+  // Fonts must actually parse — reject a corrupt/renamed file at the door so it
+  // can never crash a later export.
+  if (category === 'fonts' && !isValidFontBuffer(req.file.buffer)) {
+    return res.status(400).json({ error: "That font file couldn't be read — it may be corrupted or not a real .ttf/.otf." });
   }
   try {
     const { entry, deduped } = libraryAdd(category, req.file.buffer, name);
