@@ -1701,6 +1701,85 @@ const uploadFields = upload.fields([
 ]);
 
 const app = express();
+app.disable('x-powered-by');
+
+// --- Localhost-only, token-authenticated server (security section 1) --------
+// The server used to bind every interface with zero auth, so any host on the
+// LAN — or any website open in the user's browser — could reach it: read any
+// file via /api/preview-file, start downloads/exports, or delete projects.
+// Defenses layered here: (1) bind to loopback only (see app.listen below);
+// (2) a per-run secret token required on every request — sent as an X-App-Token
+// header by fetch/XHR and as a Strict, HttpOnly cookie for <video>/<img>/font
+// subresources that can't set headers; (3) Host validation (defeats
+// DNS-rebinding) + Origin validation. The index page is the ONLY unauthenticated
+// route — it's what hands the token to the renderer.
+const IS_ELECTRON = !!process.versions.electron;
+// Electron's main process generates the token and injects it via env before
+// requiring this file; plain `node server.js` has none, so mint one and print it.
+const APP_TOKEN = process.env.CLIP_EDITOR_TOKEN || crypto.randomBytes(32).toString('hex');
+if (!process.env.CLIP_EDITOR_TOKEN && !IS_ELECTRON) {
+  console.log(`\n[clip-editor] dev session token: ${APP_TOKEN}\n  (auto-injected into the served page; also accepted via the X-App-Token header)\n`);
+}
+const ALLOWED_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
+const ALLOWED_ORIGINS = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]);
+const TOKEN_COOKIE = 'clip_app_token';
+
+function timingEqual(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+function readCookie(req, name) {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(';')) {
+    const i = part.indexOf('=');
+    if (i !== -1 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+  }
+  return null;
+}
+function tokenOk(req) {
+  const header = req.get('X-App-Token');
+  if (header && timingEqual(header, APP_TOKEN)) return true;
+  const cookie = readCookie(req, TOKEN_COOKIE);
+  return !!cookie && timingEqual(cookie, APP_TOKEN);
+}
+
+// Serve index.html with the token + a main-world fetch shim injected (a
+// contextIsolated preload can't patch window.fetch, so it must ride the page),
+// and set the token cookie so media subresources authenticate too.
+let INDEX_HTML = null;
+function serveIndex(req, res) {
+  if (INDEX_HTML == null) INDEX_HTML = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  // In Electron the token reaches the page via the preload (contextBridge), so
+  // it's NOT written into the HTML. In dev (browser) there's no preload, so the
+  // server injects the value here (same-origin, never a query string / log).
+  const tokenGlobal = IS_ELECTRON ? '' : `window.__CLIP_TOKEN__=${JSON.stringify(APP_TOKEN)};`;
+  const boot =
+    `<script>${tokenGlobal}(function(){` +
+    `var t=(window.electronAPI&&window.electronAPI.appToken)||window.__CLIP_TOKEN__;if(!t)return;` +
+    `var of=window.fetch;window.fetch=function(input,init){init=init||{};try{` +
+    `var url=new URL(typeof input==='string'?input:input.url,location.href);` +
+    `if(url.origin===location.origin){var h=new Headers((init&&init.headers)||(typeof input!=='string'&&input.headers)||{});` +
+    `h.set('X-App-Token',t);init.headers=h;}}catch(e){}return of.call(this,input,init);};})();</script>`;
+  const html = INDEX_HTML.replace('</head>', `${boot}\n</head>`);
+  res.setHeader('Set-Cookie', `${TOKEN_COOKIE}=${APP_TOKEN}; Path=/; HttpOnly; SameSite=Strict`);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+}
+app.get(['/', '/index.html'], serveIndex);
+
+// Guard EVERY other route (static assets included): Host, Origin (if present),
+// then the token. 403 on any failure.
+app.use((req, res, next) => {
+  const host = req.headers.host;
+  if (!host || !ALLOWED_HOSTS.has(host)) return res.status(403).json({ error: 'forbidden host' });
+  const origin = req.headers.origin;
+  if (origin && !ALLOWED_ORIGINS.has(origin)) return res.status(403).json({ error: 'forbidden origin' });
+  if (!tokenOk(req)) return res.status(403).json({ error: 'missing or invalid app token' });
+  next();
+});
+
 app.use(express.json());
 app.use(express.static(path.join(ROOT, 'public')));
 app.use('/outputs', express.static(OUTPUTS_DIR));
@@ -2039,23 +2118,31 @@ app.get('/api/project/:id/media/:leaf', (req, res) => {
   res.sendFile(file);
 });
 
-// Re-resolve a file-source video by its absolute path (available in the
-// packaged Electron app) — copies it into preview-cache and returns a URL, so
-// reopening a file-based project doesn't need the user to re-pick the file.
-app.post('/api/preview-file', (req, res) => {
-  const srcPath = req.body && req.body.path;
-  if (!srcPath || typeof srcPath !== 'string' || !fs.existsSync(srcPath)) {
-    return res.status(404).json({ error: 'file not found' });
-  }
-  const key = crypto.createHash('sha1').update(srcPath).digest('hex');
-  const ext = path.extname(srcPath) || '.mp4';
-  const dest = path.join(PREVIEW_CACHE_DIR, `${key}${ext}`);
-  if (!fs.existsSync(dest)) fs.copyFileSync(srcPath, dest);
-  res.json({ previewUrl: `/preview-cache/${key}${ext}` });
-});
+// REMOVED (any-file-on-disk read primitive): this endpoint used to take an
+// arbitrary absolute path from the request body and copy that file into the
+// web-served preview-cache — so any LAN host or website reaching the server
+// could read any file on disk (~/.ssh/id_rsa, project.json anywhere, etc.).
+// File-source reopening now goes through an Electron IPC call in the main
+// process (electron/main.js `reopen-file`), so the HTTP server never touches a
+// caller-supplied path. In dev (no Electron) reopening falls back to re-picking
+// the file. Kept as an explicit 410 so an old client gets a clear error.
+app.post('/api/preview-file', (req, res) =>
+  res.status(410).json({ error: 'removed: reopen file-based projects from the desktop app' })
+);
 
 resolveFontPath(); // logs which caption font got resolved, right at boot
 
-app.listen(PORT, () => {
-  console.log(`Clip Vertical Editor running at http://localhost:${PORT}`);
+// Bind to loopback ONLY (was app.listen(PORT) = every interface, LAN-reachable).
+const server = app.listen(PORT, '127.0.0.1', () => {
+  console.log(`Clip Editor server on http://127.0.0.1:${PORT} (loopback only)`);
+});
+// Never half-listen: if the port is taken, fail loudly instead of silently
+// continuing (which would leave the app pointed at a stranger's server).
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[clip-editor] port ${PORT} is already in use — refusing to start. Close the other instance or set a different PORT.`);
+  } else {
+    console.error('[clip-editor] server failed to start:', err);
+  }
+  process.exit(1);
 });

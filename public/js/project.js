@@ -215,17 +215,18 @@ async function attachProjectSource(data) {
     return { ok: true };
   }
   if (src.kind === 'file' && src.path) {
-    const res = await fetch('/api/preview-file', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: src.path }),
-    });
-    if (res.ok) {
-      const { previewUrl } = await res.json();
-      const ready = waitForSource();
-      attachSource(previewUrl, { kind: 'file', name: src.name, path: src.path }, { isObjectUrl: false });
-      await ready;
-      return { ok: true };
+    // Reopen a file-based project. In the desktop app this goes through main-
+    // process IPC (window.electronAPI.reopenFile) — the old /api/preview-file
+    // HTTP endpoint that took an arbitrary path was removed (any-file-read). In
+    // a plain browser there's no IPC, so fall through to re-picking the file.
+    if (window.electronAPI && typeof window.electronAPI.reopenFile === 'function') {
+      const result = await window.electronAPI.reopenFile(src.path).catch(() => null);
+      if (result && result.ok && result.previewUrl) {
+        const ready = waitForSource();
+        attachSource(result.previewUrl, { kind: 'file', name: src.name, path: src.path }, { isObjectUrl: false });
+        await ready;
+        return { ok: true };
+      }
     }
   }
   return { ok: false, reason: 'need-file' };
