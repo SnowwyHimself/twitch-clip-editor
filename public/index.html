@@ -60,33 +60,60 @@
     </section>
 
     <aside class="panel">
-      <div class="panel-tabs">
-        <button type="button" id="ptab-video" class="panel-tab active">Video</button>
-        <button type="button" id="ptab-text" class="panel-tab">Text</button>
-        <button type="button" id="ptab-captions" class="panel-tab">Captions</button>
-        <button type="button" id="ptab-overlay" class="panel-tab">Overlay</button>
-        <button type="button" id="ptab-sound" class="panel-tab">Sound</button>
-        <button type="button" id="ptab-transitions" class="panel-tab">Transitions</button>
+      <div class="inspector-topbar">
+        <div class="inspector-heading">
+          <span class="inspector-title" id="inspector-title">Project</span>
+          <span class="inspector-sub" id="inspector-sub"></span>
+        </div>
+        <div class="add-menu-wrap">
+          <button type="button" id="add-menu-btn" class="secondary-btn add-btn icon-text-btn" aria-haspopup="true" aria-expanded="false" title="Add something to the timeline"><span data-icon="plus"></span> Add</button>
+          <div id="add-menu" class="add-menu hidden" role="menu" aria-label="Add to timeline">
+            <button type="button" class="add-menu-item" data-add="clip" role="menuitem"><span class="add-menu-ico" data-icon="film"></span><span class="add-menu-text">Add clip<small>Paste a URL above, or pick a file</small></span></button>
+            <button type="button" class="add-menu-item" data-add="text" role="menuitem"><span class="add-menu-ico" data-icon="type"></span><span class="add-menu-text">Add text</span></button>
+            <button type="button" class="add-menu-item" data-add="captions" role="menuitem"><span class="add-menu-ico" data-icon="captions"></span><span class="add-menu-text">Auto captions<small>Transcribe with Whisper</small></span></button>
+            <button type="button" class="add-menu-item" data-add="overlay" role="menuitem"><span class="add-menu-ico" data-icon="image"></span><span class="add-menu-text">Add overlay</span></button>
+            <button type="button" class="add-menu-item" data-add="sound" role="menuitem"><span class="add-menu-ico" data-icon="music"></span><span class="add-menu-text">Add sound<small>Sound effect or your own file</small></span></button>
+            <button type="button" class="add-menu-item" data-add="music" role="menuitem"><span class="add-menu-ico" data-icon="music"></span><span class="add-menu-text">Add music<small>Use your own audio file</small></span></button>
+          </div>
+        </div>
       </div>
 
-      <div id="panel-video" class="panel-body">
-        <div class="field-group">
-          <label class="field-label">Presets</label>
-          <div id="preset-list" class="preset-list"></div>
-          <div class="preset-save-row">
-            <input id="preset-name" type="text" maxlength="24" placeholder="Name a preset…" />
-            <button type="button" id="preset-save-btn" class="secondary-btn">Save</button>
-          </div>
-          <p class="field-hint">Saves the current video settings (up to 5). The <span class="inline-icon" data-icon="star"></span> one auto-applies when you load a clip.</p>
-        </div>
+      <div class="panel-body">
 
+      <!-- Relocatable video-preset block: the router moves it into the active
+           Project or Clip inspector's [data-preset-slot] (presets are global). -->
+      <div id="video-preset-block" class="field-group">
+        <label class="field-label">Presets</label>
+        <div id="preset-list" class="preset-list"></div>
+        <div class="preset-save-row">
+          <input id="preset-name" type="text" maxlength="24" placeholder="Name a preset…" />
+          <button type="button" id="preset-save-btn" class="secondary-btn">Save</button>
+        </div>
+        <p class="field-hint">Saves the current video settings (up to 5). The <span class="inline-icon" data-icon="star"></span> one auto-applies when you load a clip.</p>
+      </div>
+
+      <!-- ===== Project inspector (nothing selected) ===== -->
+      <div id="insp-project" class="inspector hidden">
+        <div data-preset-slot></div>
+        <div class="insp-sec">Canvas</div>
         <div class="field-group">
           <label class="field-label">Aspect ratio</label>
           <div id="aspect-ratio-group" class="toggle-group aspect-ratio-group"></div>
         </div>
-
+        <div class="insp-sec">Background</div>
         <div class="field-group">
-          <label class="field-label">Layout</label>
+          <label class="field-label" for="blur-slider">Background blur <span id="blur-value">0%</span></label>
+          <input id="blur-slider" type="range" min="0" max="100" value="0" step="1" />
+        </div>
+        <p class="panel-empty insp-hint">Select a clip or layer to edit it.</p>
+      </div>
+
+      <!-- ===== Clip inspector (video piece selected) ===== -->
+      <div id="insp-clip" class="inspector hidden">
+        <div data-preset-slot></div>
+
+        <div class="insp-sec">Layout</div>
+        <div class="field-group">
           <div class="toggle-group" id="layout-group">
             <button type="button" class="toggle-btn active" data-layout="fill">Fill</button>
             <button type="button" class="toggle-btn" data-layout="split">Facecam split</button>
@@ -101,37 +128,41 @@
           <p class="field-hint">Drag inside each region to reposition it, and drag the divider to change the split.</p>
         </div>
 
+        <div class="insp-sec fill-only">Transform</div>
         <div class="field-group fill-only">
           <label class="field-label" for="zoom-slider">Zoom <span id="zoom-value">100%</span></label>
           <input id="zoom-slider" type="range" min="100" max="200" value="100" step="1" />
         </div>
+        <details class="insp-adv" data-adv="clip-transform">
+          <summary>Advanced</summary>
+          <div class="field-group fill-only">
+            <label class="field-label" for="pan-x-slider">Position X <span id="pan-x-value">0</span></label>
+            <input id="pan-x-slider" type="range" min="-100" max="100" value="0" step="1" />
+            <label class="field-label" for="pan-y-slider" style="margin-top:8px">Position Y <span id="pan-y-value">0</span></label>
+            <input id="pan-y-slider" type="range" min="-100" max="100" value="0" step="1" />
+          </div>
+          <div class="field-group fill-only">
+            <label class="switch-row" for="pan-lock-toggle">
+              <span class="field-label switch-label">Lock position</span>
+              <span class="switch">
+                <input type="checkbox" id="pan-lock-toggle" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+            <p class="field-hint">Off (default): a preset also sets the clip's position. Turn on if you'd rather frame each clip yourself and have presets leave position alone.</p>
+          </div>
+          <div class="field-group">
+            <label class="switch-row" for="mirror-toggle">
+              <span class="field-label switch-label">Mirror</span>
+              <span class="switch">
+                <input type="checkbox" id="mirror-toggle" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+          </div>
+        </details>
 
-        <div class="field-group fill-only">
-          <label class="field-label" for="blur-slider">Background blur <span id="blur-value">0%</span></label>
-          <input id="blur-slider" type="range" min="0" max="100" value="0" step="1" />
-        </div>
-
-        <div class="field-group fill-only">
-          <label class="field-label" for="pan-x-slider">Position X <span id="pan-x-value">0</span></label>
-          <input id="pan-x-slider" type="range" min="-100" max="100" value="0" step="1" />
-        </div>
-
-        <div class="field-group fill-only">
-          <label class="field-label" for="pan-y-slider">Position Y <span id="pan-y-value">0</span></label>
-          <input id="pan-y-slider" type="range" min="-100" max="100" value="0" step="1" />
-        </div>
-
-        <div class="field-group fill-only">
-          <label class="switch-row" for="pan-lock-toggle">
-            <span class="field-label switch-label">Lock position</span>
-            <span class="switch">
-              <input type="checkbox" id="pan-lock-toggle" />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-          <p class="field-hint">Off (default): a preset also sets the clip's position. Turn on if you'd rather frame each clip yourself and have presets leave position alone.</p>
-        </div>
-
+        <div class="insp-sec fill-only">Motion</div>
         <div class="field-group fill-only" id="keyframe-group">
           <div class="kf-row">
             <span class="field-label">Zoom &amp; position keyframes</span>
@@ -158,21 +189,13 @@
           <p class="field-hint" id="facetrack-status">Auto-reframe: follows a chosen face left/right, keeping the frame filled. Works best on face-forward clips.</p>
         </div>
 
+        <div class="insp-sec">Playback</div>
         <div class="field-group">
           <label class="field-label" for="speed-slider">Speed <span id="speed-value">1.00x</span></label>
           <input id="speed-slider" type="range" min="0.5" max="2" value="1" step="0.05" />
         </div>
 
-        <div class="field-group">
-          <label class="switch-row" for="mirror-toggle">
-            <span class="field-label switch-label">Mirror</span>
-            <span class="switch">
-              <input type="checkbox" id="mirror-toggle" />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-        </div>
-
+        <div class="insp-sec">Audio</div>
         <div class="field-group">
           <label class="field-label" for="clip-volume-slider">Clip volume <span id="clip-volume-value">100%</span></label>
           <input id="clip-volume-slider" type="range" min="0" max="200" value="100" step="1" />
@@ -183,184 +206,79 @@
               <span class="switch-track"></span>
             </span>
           </label>
-          <label class="field-label" for="clip-fadein-slider">Fade in <span id="clip-fadein-value">0.0s</span></label>
-          <input id="clip-fadein-slider" type="range" min="0" max="5" value="0" step="0.1" />
-          <label class="field-label" for="clip-fadeout-slider">Fade out <span id="clip-fadeout-value">0.0s</span></label>
-          <input id="clip-fadeout-slider" type="range" min="0" max="5" value="0" step="0.1" />
           <p class="field-hint">Above 100% boosts the clip's audio in the export (preview monitors up to 100%).</p>
         </div>
+        <details class="insp-adv" data-adv="clip-audio">
+          <summary>Advanced</summary>
+          <div class="field-group">
+            <label class="field-label" for="clip-fadein-slider">Fade in <span id="clip-fadein-value">0.0s</span></label>
+            <input id="clip-fadein-slider" type="range" min="0" max="5" value="0" step="0.1" />
+            <label class="field-label" for="clip-fadeout-slider" style="margin-top:8px">Fade out <span id="clip-fadeout-value">0.0s</span></label>
+            <input id="clip-fadeout-slider" type="range" min="0" max="5" value="0" step="0.1" />
+          </div>
+        </details>
 
-        <div class="field-group">
-          <label class="field-label">Color adjust</label>
-          <label class="field-label" for="color-brightness">Brightness <span id="color-brightness-value">0</span></label>
-          <input id="color-brightness" type="range" min="-100" max="100" value="0" step="1" />
-          <label class="field-label" for="color-contrast">Contrast <span id="color-contrast-value">0</span></label>
-          <input id="color-contrast" type="range" min="-100" max="100" value="0" step="1" />
-          <label class="field-label" for="color-saturation">Saturation <span id="color-saturation-value">0</span></label>
-          <input id="color-saturation" type="range" min="-100" max="100" value="0" step="1" />
-          <button type="button" id="color-reset-btn" class="link-btn">Reset color</button>
-        </div>
+        <div class="insp-sec">Color</div>
+        <details class="insp-adv" data-adv="clip-color">
+          <summary>Adjust color</summary>
+          <div class="field-group">
+            <label class="field-label" for="color-brightness">Brightness <span id="color-brightness-value">0</span></label>
+            <input id="color-brightness" type="range" min="-100" max="100" value="0" step="1" />
+            <label class="field-label" for="color-contrast">Contrast <span id="color-contrast-value">0</span></label>
+            <input id="color-contrast" type="range" min="-100" max="100" value="0" step="1" />
+            <label class="field-label" for="color-saturation">Saturation <span id="color-saturation-value">0</span></label>
+            <input id="color-saturation" type="range" min="-100" max="100" value="0" step="1" />
+            <button type="button" id="color-reset-btn" class="link-btn">Reset color</button>
+          </div>
+        </details>
       </div>
 
-      <div id="panel-captions" class="panel-body hidden">
-        <div class="field-group">
-          <label class="switch-row" for="captions-visible-toggle">
-            <span class="field-label switch-label">Show captions</span>
-            <span class="switch">
-              <input type="checkbox" id="captions-visible-toggle" checked />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-          <p class="field-hint">Hide every caption at once without deleting them — flip it back on to restore them exactly.</p>
-          <button type="button" id="captions-remove-all-btn" class="danger-btn captions-remove-all hidden">Remove all captions</button>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="cap-maxwords-slider">Words per block <span id="cap-maxwords-value">1</span></label>
-          <input id="cap-maxwords-slider" type="range" min="1" max="5" step="1" value="1" />
-          <label class="switch-row" for="cap-punct-toggle">
-            <span class="field-label switch-label">Clean up punctuation</span>
-            <span class="switch">
-              <input type="checkbox" id="cap-punct-toggle" checked />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-          <p class="field-hint">1 word = one-at-a-time TikTok style. Cleanup strips trailing commas/periods (keeps ? and !).</p>
-        </div>
-
-        <div class="field-group">
-          <button type="button" id="captions-generate-btn" class="primary-btn captions-generate">Generate captions</button>
-          <p class="field-hint" id="captions-status">Transcribes the clip's audio locally with Whisper.</p>
-        </div>
-
-        <div class="field-group">
-          <div class="cap-timing-row">
-            <label class="field-label" for="cap-timing-slider">Timing nudge</label>
-            <div class="cap-timing-input-wrap">
-              <input id="cap-timing-input" class="cap-timing-input" type="number" min="-3" max="3" step="0.05" value="0.15" aria-label="Timing nudge seconds" />
-              <span class="cap-timing-unit">s</span>
-            </div>
-          </div>
-          <input id="cap-timing-slider" type="range" min="-3" max="3" value="0.15" step="0.05" />
-          <p class="field-hint">Shifts all captions later (+) or earlier (−), up to ±3s. Type an exact value in the box. Whisper often runs a touch early, especially on noisy clips.</p>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label">Style</label>
-          <div class="toggle-group">
-            <button type="button" class="toggle-btn" data-cap-style="plain">None</button>
-            <button type="button" class="toggle-btn active" data-cap-style="outline">Outline</button>
-            <button type="button" class="toggle-btn" data-cap-style="box">Box</button>
-          </div>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label">Animation</label>
-          <div class="toggle-group toggle-group-wrap">
-            <button type="button" class="toggle-btn active" data-cap-anim="none">None</button>
-            <button type="button" class="toggle-btn" data-cap-anim="fade">Fade</button>
-            <button type="button" class="toggle-btn" data-cap-anim="slide">Slide up</button>
-            <button type="button" class="toggle-btn" data-cap-anim="bounce">Bounce</button>
-            <button type="button" class="toggle-btn" data-cap-anim="shake">Shake</button>
-          </div>
-          <p class="field-hint">How each caption appears — matched exactly in the export.</p>
-        </div>
-
-        <div class="field-group">
-          <label class="switch-row" for="cap-karaoke-toggle">
-            <span class="field-label switch-label">Karaoke emphasis</span>
-            <span class="switch">
-              <input type="checkbox" id="cap-karaoke-toggle" />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-          <label class="field-label" for="cap-karaoke-color" style="margin-top:8px">Karaoke color</label>
-          <div id="cap-karaoke-color" class="color-picker"></div>
-          <p class="field-hint">The word being spoken pops in this color. Best with 2+ words per block.</p>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="cap-font-select">Font</label>
-          <select id="cap-font-select" class="font-select"></select>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label">Color</label>
-          <div id="cap-color-picker" class="color-picker"></div>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="cap-size-slider">Size <span id="cap-size-value">58px</span></label>
-          <input id="cap-size-slider" type="range" min="32" max="120" value="58" step="1" />
-        </div>
-
-        <div class="field-group">
-          <label class="switch-row" for="cap-shadow-toggle">
-            <span class="field-label switch-label">Drop shadow</span>
-            <span class="switch">
-              <input type="checkbox" id="cap-shadow-toggle" />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="cap-y-slider">Vertical position <span id="cap-y-value">75%</span></label>
-          <input id="cap-y-slider" type="range" min="0" max="100" value="75" step="1" />
-          <p class="field-hint">Styling applies to all caption blocks at once. Select a single block on the timeline to fine-tune it in the Text tab.</p>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label">Style presets</label>
-          <div id="cap-preset-list" class="preset-list"></div>
-          <div class="preset-save-row">
-            <input id="cap-preset-name" type="text" maxlength="24" placeholder="Name this look…" />
-            <button type="button" id="cap-preset-save-btn" class="secondary-btn">Save</button>
-          </div>
-          <p class="field-hint">Saves the caption look (style, font, color, size, shadow, position, animation) to reuse on any clip.</p>
-        </div>
-
-        <div class="field-group hidden" id="transcript-group">
-          <label class="field-label">Transcript</label>
-          <div id="transcript-list" class="transcript-list"></div>
-          <p class="field-hint">Fix any words Whisper misheard — edits update the caption on the timeline. Clear a block's text to delete it.</p>
-        </div>
-      </div>
-
-      <div id="panel-overlay" class="panel-body hidden">
+      <!-- ===== Overlay inspector ===== -->
+      <div id="insp-overlay" class="inspector hidden">
+        <div class="insp-sec">Source</div>
         <div class="field-group">
           <button type="button" id="overlay-choose-btn" class="secondary-btn full-width">Use your own image or video…</button>
         </div>
         <div class="field-group">
-          <label class="field-label">Presets</label>
+          <label class="field-label">Bundled overlays</label>
           <div id="overlay-presets" class="preset-grid"></div>
         </div>
-        <div class="field-group hidden" id="overlay-size-group">
-          <label class="field-label" for="overlay-size-slider">Overlay size <span id="overlay-size-value">35%</span></label>
-          <input id="overlay-size-slider" type="range" min="5" max="100" value="35" step="1" />
-          <p class="field-hint">Drag the overlay in the preview to reposition it. Drag its bar on the timeline's Overlay row to set when it appears.</p>
 
-          <label class="field-label crop-label">Crop</label>
-          <div class="crop-grid">
-            <label class="crop-field">Top <span id="crop-top-value">0%</span>
-              <input id="crop-top" type="range" min="0" max="100" value="0" step="1" />
-            </label>
-            <label class="crop-field">Bottom <span id="crop-bottom-value">0%</span>
-              <input id="crop-bottom" type="range" min="0" max="100" value="0" step="1" />
-            </label>
-            <label class="crop-field">Left <span id="crop-left-value">0%</span>
-              <input id="crop-left" type="range" min="0" max="100" value="0" step="1" />
-            </label>
-            <label class="crop-field">Right <span id="crop-right-value">0%</span>
-              <input id="crop-right" type="range" min="0" max="100" value="0" step="1" />
-            </label>
+        <div id="overlay-size-group" class="hidden">
+          <div class="insp-sec">Size</div>
+          <div class="field-group">
+            <label class="field-label" for="overlay-size-slider">Overlay size <span id="overlay-size-value">35%</span></label>
+            <input id="overlay-size-slider" type="range" min="5" max="100" value="35" step="1" />
+            <p class="field-hint">Drag the overlay in the preview to reposition it. Drag its bar on the timeline's Overlay row to set when it appears.</p>
           </div>
-
-          <button type="button" id="overlay-remove-btn" class="danger-btn">Remove overlay</button>
+          <details class="insp-adv" data-adv="overlay-crop">
+            <summary>Crop</summary>
+            <div class="field-group">
+              <div class="crop-grid">
+                <label class="crop-field">Top <span id="crop-top-value">0%</span>
+                  <input id="crop-top" type="range" min="0" max="100" value="0" step="1" />
+                </label>
+                <label class="crop-field">Bottom <span id="crop-bottom-value">0%</span>
+                  <input id="crop-bottom" type="range" min="0" max="100" value="0" step="1" />
+                </label>
+                <label class="crop-field">Left <span id="crop-left-value">0%</span>
+                  <input id="crop-left" type="range" min="0" max="100" value="0" step="1" />
+                </label>
+                <label class="crop-field">Right <span id="crop-right-value">0%</span>
+                  <input id="crop-right" type="range" min="0" max="100" value="0" step="1" />
+                </label>
+              </div>
+            </div>
+          </details>
+          <div class="field-group">
+            <button type="button" id="overlay-remove-btn" class="danger-btn">Remove overlay</button>
+          </div>
         </div>
       </div>
 
-      <div id="panel-sound" class="panel-body hidden">
+      <!-- ===== Sound inspector ===== -->
+      <div id="insp-sound" class="inspector hidden">
+        <div class="insp-sec">Source</div>
         <div class="field-group">
           <button type="button" id="sound-choose-btn" class="secondary-btn full-width">Use your own audio file…</button>
         </div>
@@ -368,35 +286,47 @@
           <label class="field-label">Sound effects</label>
           <div id="sfx-presets" class="preset-grid"></div>
         </div>
-        <div class="field-group hidden" id="audio-volume-group">
-          <label class="field-label" for="audio-volume-slider">Volume <span id="audio-volume-value">80%</span></label>
-          <input id="audio-volume-slider" type="range" min="0" max="200" value="80" step="1" />
-          <label class="switch-row" for="audio-mute-toggle">
-            <span class="field-label switch-label">Mute</span>
-            <span class="switch">
-              <input type="checkbox" id="audio-mute-toggle" />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-          <label class="switch-row" for="audio-duck-toggle">
-            <span class="field-label switch-label">Duck under speech</span>
-            <span class="switch">
-              <input type="checkbox" id="audio-duck-toggle" />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-          <label class="field-label" for="audio-fadein-slider">Fade in <span id="audio-fadein-value">0.0s</span></label>
-          <input id="audio-fadein-slider" type="range" min="0" max="5" value="0" step="0.1" />
-          <label class="field-label" for="audio-fadeout-slider">Fade out <span id="audio-fadeout-value">0.0s</span></label>
-          <input id="audio-fadeout-slider" type="range" min="0" max="5" value="0" step="0.1" />
-          <p class="field-hint" id="audio-current">Sound added.</p>
-          <button type="button" id="audio-remove-btn" class="danger-btn">Remove sound</button>
+
+        <div id="audio-volume-group" class="hidden">
+          <div class="insp-sec">Level</div>
+          <div class="field-group">
+            <label class="field-label" for="audio-volume-slider">Volume <span id="audio-volume-value">80%</span></label>
+            <input id="audio-volume-slider" type="range" min="0" max="200" value="80" step="1" />
+            <label class="switch-row" for="audio-mute-toggle">
+              <span class="field-label switch-label">Mute</span>
+              <span class="switch">
+                <input type="checkbox" id="audio-mute-toggle" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+          </div>
+          <details class="insp-adv" data-adv="sound-adv">
+            <summary>Advanced</summary>
+            <div class="field-group">
+              <label class="switch-row" for="audio-duck-toggle">
+                <span class="field-label switch-label">Duck under speech</span>
+                <span class="switch">
+                  <input type="checkbox" id="audio-duck-toggle" />
+                  <span class="switch-track"></span>
+                </span>
+              </label>
+              <label class="field-label" for="audio-fadein-slider" style="margin-top:8px">Fade in <span id="audio-fadein-value">0.0s</span></label>
+              <input id="audio-fadein-slider" type="range" min="0" max="5" value="0" step="0.1" />
+              <label class="field-label" for="audio-fadeout-slider" style="margin-top:8px">Fade out <span id="audio-fadeout-value">0.0s</span></label>
+              <input id="audio-fadeout-slider" type="range" min="0" max="5" value="0" step="0.1" />
+            </div>
+          </details>
+          <div class="field-group">
+            <p class="field-hint" id="audio-current">Sound added.</p>
+            <button type="button" id="audio-remove-btn" class="danger-btn">Remove sound</button>
+          </div>
         </div>
       </div>
 
-      <div id="panel-transitions" class="panel-body hidden">
+      <!-- ===== Transition inspector (a cut's transition selected) ===== -->
+      <div id="insp-transition" class="inspector hidden">
+        <div class="insp-sec">Type</div>
         <div class="field-group">
-          <label class="field-label">Transition</label>
           <div class="preset-grid">
             <button type="button" id="trans-white-flash" class="preset-item active" data-trans-type="white-flash">
               <span class="preset-thumb" data-icon="zap"></span><span>White flash</span>
@@ -405,34 +335,42 @@
               <span class="preset-thumb" data-icon="moon"></span><span>Dip to black</span>
             </button>
           </div>
-          <p class="field-hint">Dip to white or black between two pieces of the clip.</p>
         </div>
 
+        <div class="insp-sec">Duration</div>
         <div class="field-group">
           <label class="field-label" for="trans-duration-slider">Duration <span id="trans-duration-value">0.5s</span></label>
           <input id="trans-duration-slider" type="range" min="0.2" max="1.5" value="0.5" step="0.1" />
         </div>
 
         <div class="field-group">
-          <button type="button" id="trans-add-btn" class="primary-btn full-width">Add at playhead cut</button>
-          <p class="field-hint" id="trans-status">Put the playhead near a cut between two pieces, then add. Split the clip first if there's no cut yet.</p>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label">Applied</label>
-          <div id="trans-list" class="trans-list"></div>
+          <button type="button" id="trans-remove-btn" class="danger-btn full-width">Remove transition</button>
+          <p class="field-hint" id="trans-status">Dip to white or black on this cut. Add one on any cut from its ✦ slot on the timeline.</p>
         </div>
       </div>
 
-      <div id="panel-text" class="panel-body hidden">
-        <div class="field-group">
-          <button type="button" id="text-add-btn" class="primary-btn full-width">+ Add text at playhead</button>
-        </div>
+      <!-- ===== Multi-select inspector (mixed-type selection) ===== -->
+      <div id="insp-multi" class="inspector hidden">
+        <div class="insp-sec">Selection</div>
+        <p class="panel-empty" id="insp-multi-msg">Multiple items selected. Select one type to edit.</p>
+      </div>
+
+      <!-- ===== Text inspector (plain text layer selected) ===== -->
+      <div id="insp-text" class="inspector hidden">
         <p id="panel-text-empty" class="panel-empty">
-          No text layer selected — add one above, or click a bar on the timeline's Text row.
+          No text layer selected — click a bar on the timeline's Text row, or use <strong>+ Add ▸ Add text</strong>.
         </p>
 
+        <!-- Relocatable: the router moves this block into the Caption inspector's
+             "This block" slot when a caption layer is selected (same per-block
+             tools), and back here for a plain text layer. -->
         <div id="panel-text-controls">
+          <div class="insp-sec">Style preset</div>
+          <div class="field-group">
+            <div id="text-style-presets" class="text-style-presets"></div>
+          </div>
+
+          <div class="insp-sec">Content</div>
           <div class="field-group">
             <div class="caption-label-row">
               <label class="field-label" for="caption-text">Text</label>
@@ -443,8 +381,8 @@
             <p class="field-hint">Drag the text in the preview to reposition it.</p>
           </div>
 
+          <div class="insp-sec">Style</div>
           <div class="field-group">
-            <label class="field-label">Style</label>
             <div class="toggle-group">
               <button type="button" class="toggle-btn" data-caption-style="plain">None</button>
               <button type="button" class="toggle-btn" data-caption-style="outline">Outline</button>
@@ -477,59 +415,58 @@
             </label>
           </div>
 
-          <div class="field-group">
-            <label class="field-label">Style presets</label>
-            <div id="text-style-presets" class="text-style-presets"></div>
-          </div>
+          <details class="insp-adv" data-adv="text-style">
+            <summary>Advanced</summary>
+            <div class="field-group">
+              <label class="field-label" for="stroke-width-slider">Outline width <span id="stroke-width-value">0%</span></label>
+              <input id="stroke-width-slider" type="range" min="0" max="30" value="0" step="1" />
+              <label class="field-label" for="stroke-color-picker" style="margin-top:8px">Outline color</label>
+              <div id="stroke-color-picker" class="color-picker"></div>
+            </div>
 
-          <div class="field-group">
-            <label class="field-label" for="stroke-width-slider">Outline width <span id="stroke-width-value">0%</span></label>
-            <input id="stroke-width-slider" type="range" min="0" max="30" value="0" step="1" />
-            <label class="field-label" for="stroke-color-picker" style="margin-top:8px">Outline color</label>
-            <div id="stroke-color-picker" class="color-picker"></div>
-          </div>
+            <div class="field-group">
+              <label class="switch-row" for="uppercase-toggle">
+                <span class="field-label switch-label">Uppercase</span>
+                <span class="switch">
+                  <input type="checkbox" id="uppercase-toggle" />
+                  <span class="switch-track"></span>
+                </span>
+              </label>
+              <label class="field-label" for="text-opacity-slider" style="margin-top:8px">Opacity <span id="text-opacity-value">100%</span></label>
+              <input id="text-opacity-slider" type="range" min="0" max="100" value="100" step="1" />
+            </div>
 
-          <div class="field-group">
-            <label class="switch-row" for="uppercase-toggle">
-              <span class="field-label switch-label">Uppercase</span>
-              <span class="switch">
-                <input type="checkbox" id="uppercase-toggle" />
-                <span class="switch-track"></span>
-              </span>
-            </label>
-            <label class="field-label" for="text-opacity-slider" style="margin-top:8px">Opacity <span id="text-opacity-value">100%</span></label>
-            <input id="text-opacity-slider" type="range" min="0" max="100" value="100" step="1" />
-          </div>
+            <div class="field-group">
+              <label class="field-label" for="text-rotation-slider">Rotation <span id="text-rotation-value">0°</span></label>
+              <input id="text-rotation-slider" type="range" min="-45" max="45" value="0" step="1" />
+              <label class="field-label" for="text-letterspacing-slider" style="margin-top:8px">Letter spacing <span id="text-letterspacing-value">0</span></label>
+              <input id="text-letterspacing-slider" type="range" min="-10" max="40" value="0" step="1" />
+              <label class="field-label" for="text-lineheight-slider" style="margin-top:8px">Line height <span id="text-lineheight-value">1.0</span></label>
+              <input id="text-lineheight-slider" type="range" min="70" max="200" value="100" step="1" />
+            </div>
 
-          <div class="field-group">
-            <label class="field-label" for="text-rotation-slider">Rotation <span id="text-rotation-value">0°</span></label>
-            <input id="text-rotation-slider" type="range" min="-45" max="45" value="0" step="1" />
-            <label class="field-label" for="text-letterspacing-slider" style="margin-top:8px">Letter spacing <span id="text-letterspacing-value">0</span></label>
-            <input id="text-letterspacing-slider" type="range" min="-10" max="40" value="0" step="1" />
-            <label class="field-label" for="text-lineheight-slider" style="margin-top:8px">Line height <span id="text-lineheight-value">1.0</span></label>
-            <input id="text-lineheight-slider" type="range" min="70" max="200" value="100" step="1" />
-          </div>
+            <div class="field-group">
+              <label class="field-label">Shadow (offset / blur / opacity)</label>
+              <label class="field-label" for="text-shadow-dist-slider" style="font-weight:400">Offset <span id="text-shadow-dist-value">7%</span></label>
+              <input id="text-shadow-dist-slider" type="range" min="0" max="25" value="7" step="1" />
+              <label class="field-label" for="text-shadow-blur-slider" style="font-weight:400">Blur <span id="text-shadow-blur-value">5%</span></label>
+              <input id="text-shadow-blur-slider" type="range" min="0" max="25" value="5" step="1" />
+              <label class="field-label" for="text-shadow-op-slider" style="font-weight:400">Opacity <span id="text-shadow-op-value">40%</span></label>
+              <input id="text-shadow-op-slider" type="range" min="0" max="100" value="40" step="1" />
+            </div>
 
-          <div class="field-group">
-            <label class="field-label">Shadow (offset / blur / opacity)</label>
-            <label class="field-label" for="text-shadow-dist-slider" style="font-weight:400">Offset <span id="text-shadow-dist-value">7%</span></label>
-            <input id="text-shadow-dist-slider" type="range" min="0" max="25" value="7" step="1" />
-            <label class="field-label" for="text-shadow-blur-slider" style="font-weight:400">Blur <span id="text-shadow-blur-value">5%</span></label>
-            <input id="text-shadow-blur-slider" type="range" min="0" max="25" value="5" step="1" />
-            <label class="field-label" for="text-shadow-op-slider" style="font-weight:400">Opacity <span id="text-shadow-op-value">40%</span></label>
-            <input id="text-shadow-op-slider" type="range" min="0" max="100" value="40" step="1" />
-          </div>
+            <div class="field-group" id="text-bg-group">
+              <label class="field-label">Background pill (box style)</label>
+              <label class="field-label" for="text-bg-op-slider" style="font-weight:400">Opacity <span id="text-bg-op-value">100%</span></label>
+              <input id="text-bg-op-slider" type="range" min="0" max="100" value="100" step="1" />
+              <label class="field-label" for="text-bg-pad-slider" style="font-weight:400">Padding <span id="text-bg-pad-value">1.0x</span></label>
+              <input id="text-bg-pad-slider" type="range" min="50" max="250" value="100" step="1" />
+              <label class="field-label" for="text-bg-radius-slider" style="font-weight:400">Roundness <span id="text-bg-radius-value">1.0x</span></label>
+              <input id="text-bg-radius-slider" type="range" min="0" max="250" value="100" step="1" />
+            </div>
+          </details>
 
-          <div class="field-group" id="text-bg-group">
-            <label class="field-label">Background pill (box style)</label>
-            <label class="field-label" for="text-bg-op-slider" style="font-weight:400">Opacity <span id="text-bg-op-value">100%</span></label>
-            <input id="text-bg-op-slider" type="range" min="0" max="100" value="100" step="1" />
-            <label class="field-label" for="text-bg-pad-slider" style="font-weight:400">Padding <span id="text-bg-pad-value">1.0x</span></label>
-            <input id="text-bg-pad-slider" type="range" min="50" max="250" value="100" step="1" />
-            <label class="field-label" for="text-bg-radius-slider" style="font-weight:400">Roundness <span id="text-bg-radius-value">1.0x</span></label>
-            <input id="text-bg-radius-slider" type="range" min="0" max="250" value="100" step="1" />
-          </div>
-
+          <div class="insp-sec">Timing</div>
           <div class="field-group">
             <label class="field-label">Timing (seconds)</label>
             <div class="timing-fields">
@@ -552,6 +489,137 @@
           </div>
         </div>
       </div>
+
+      <!-- ===== Caption inspector (group:'caption' layer selected) =====
+           "This block" receives the relocated #panel-text-controls; the
+           "All captions" section below holds the group-level controls. -->
+      <div id="insp-caption" class="inspector hidden">
+        <div id="caption-thisblock">
+          <div class="insp-sec">This block</div>
+          <div data-textcore-slot></div>
+        </div>
+
+        <div class="insp-sec insp-sec-major">All captions</div>
+        <p class="field-hint insp-sec-note">These style the whole caption track at once. Edit a single block above.</p>
+
+        <div class="field-group">
+          <label class="field-label">Style presets</label>
+          <div id="cap-preset-list" class="preset-list"></div>
+          <div class="preset-save-row">
+            <input id="cap-preset-name" type="text" maxlength="24" placeholder="Name this look…" />
+            <button type="button" id="cap-preset-save-btn" class="secondary-btn">Save</button>
+          </div>
+          <p class="field-hint">Saves the caption look (style, font, color, size, shadow, position, animation) to reuse on any clip.</p>
+        </div>
+
+        <div class="insp-sec">Style</div>
+        <div class="field-group">
+          <div class="toggle-group">
+            <button type="button" class="toggle-btn" data-cap-style="plain">None</button>
+            <button type="button" class="toggle-btn active" data-cap-style="outline">Outline</button>
+            <button type="button" class="toggle-btn" data-cap-style="box">Box</button>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="cap-font-select">Font</label>
+          <select id="cap-font-select" class="font-select"></select>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Color</label>
+          <div id="cap-color-picker" class="color-picker"></div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="cap-size-slider">Size <span id="cap-size-value">58px</span></label>
+          <input id="cap-size-slider" type="range" min="32" max="120" value="58" step="1" />
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="cap-y-slider">Vertical position <span id="cap-y-value">75%</span></label>
+          <input id="cap-y-slider" type="range" min="0" max="100" value="75" step="1" />
+        </div>
+        <details class="insp-adv" data-adv="cap-style">
+          <summary>Advanced</summary>
+          <div class="field-group">
+            <label class="switch-row" for="cap-shadow-toggle">
+              <span class="field-label switch-label">Drop shadow</span>
+              <span class="switch">
+                <input type="checkbox" id="cap-shadow-toggle" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+          </div>
+          <div class="field-group">
+            <label class="switch-row" for="cap-karaoke-toggle">
+              <span class="field-label switch-label">Karaoke emphasis</span>
+              <span class="switch">
+                <input type="checkbox" id="cap-karaoke-toggle" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+            <label class="field-label" for="cap-karaoke-color" style="margin-top:8px">Karaoke color</label>
+            <div id="cap-karaoke-color" class="color-picker"></div>
+            <p class="field-hint">The word being spoken pops in this color. Best with 2+ words per block.</p>
+          </div>
+        </details>
+
+        <div class="insp-sec">Animation</div>
+        <div class="field-group">
+          <div class="toggle-group toggle-group-wrap">
+            <button type="button" class="toggle-btn active" data-cap-anim="none">None</button>
+            <button type="button" class="toggle-btn" data-cap-anim="fade">Fade</button>
+            <button type="button" class="toggle-btn" data-cap-anim="slide">Slide up</button>
+            <button type="button" class="toggle-btn" data-cap-anim="bounce">Bounce</button>
+            <button type="button" class="toggle-btn" data-cap-anim="shake">Shake</button>
+          </div>
+          <p class="field-hint">How each caption appears — matched exactly in the export.</p>
+        </div>
+
+        <div class="insp-sec">Grouping &amp; timing</div>
+        <div class="field-group">
+          <label class="field-label" for="cap-maxwords-slider">Words per block <span id="cap-maxwords-value">1</span></label>
+          <input id="cap-maxwords-slider" type="range" min="1" max="5" step="1" value="1" />
+          <label class="switch-row" for="cap-punct-toggle">
+            <span class="field-label switch-label">Clean up punctuation</span>
+            <span class="switch">
+              <input type="checkbox" id="cap-punct-toggle" checked />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <p class="field-hint">1 word = one-at-a-time TikTok style. Cleanup strips trailing commas/periods (keeps ? and !).</p>
+        </div>
+        <div class="field-group">
+          <div class="cap-timing-row">
+            <label class="field-label" for="cap-timing-slider">Timing nudge</label>
+            <div class="cap-timing-input-wrap">
+              <input id="cap-timing-input" class="cap-timing-input" type="number" min="-3" max="3" step="0.05" value="0.15" aria-label="Timing nudge seconds" />
+              <span class="cap-timing-unit">s</span>
+            </div>
+          </div>
+          <input id="cap-timing-slider" type="range" min="-3" max="3" value="0.15" step="0.05" />
+          <p class="field-hint">Shifts all captions later (+) or earlier (−), up to ±3s. Whisper often runs a touch early on noisy clips.</p>
+        </div>
+
+        <div class="insp-sec">Manage</div>
+        <div class="field-group">
+          <button type="button" id="captions-generate-btn" class="secondary-btn full-width captions-generate">Regenerate captions</button>
+          <p class="field-hint" id="captions-status">Transcribes the clip's audio locally with Whisper.</p>
+          <label class="switch-row" for="captions-visible-toggle" style="margin-top:10px">
+            <span class="field-label switch-label">Show captions</span>
+            <span class="switch">
+              <input type="checkbox" id="captions-visible-toggle" checked />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <p class="field-hint">Hide every caption at once without deleting them — flip it back to restore them exactly.</p>
+          <button type="button" id="captions-remove-all-btn" class="danger-btn captions-remove-all hidden">Remove all captions</button>
+        </div>
+
+        <div class="field-group hidden" id="transcript-group">
+          <label class="field-label">Transcript</label>
+          <div id="transcript-list" class="transcript-list"></div>
+          <p class="field-hint">Fix any words Whisper misheard — edits update the caption on the timeline. Clear a block's text to delete it.</p>
+        </div>
+      </div>
+      </div>
     </aside>
   </main>
 
@@ -561,14 +629,7 @@
         <button type="button" id="tl-undo" class="secondary-btn icon-btn" disabled title="Undo (⌘Z)" aria-label="Undo"><span data-icon="undo"></span></button>
         <button type="button" id="tl-redo" class="secondary-btn icon-btn" disabled title="Redo (⇧⌘Z)" aria-label="Redo"><span data-icon="redo"></span></button>
       </div>
-      <span class="toolbar-sep"></span>
-      <button type="button" id="tl-add-clip" class="secondary-btn" title="Stitch another clip after this one — paste a URL above first, or pick a file">+ Clip</button>
       <input id="append-clip-file" type="file" accept="video/*" hidden />
-      <button type="button" id="tl-add-text" class="secondary-btn">+ Text</button>
-      <button type="button" id="tl-auto-captions" class="secondary-btn">Auto captions</button>
-      <button type="button" id="tl-add-overlay" class="secondary-btn">+ Overlay</button>
-      <button type="button" id="tl-add-sound" class="secondary-btn">+ Sound</button>
-      <button type="button" id="tl-transitions" class="secondary-btn">Transitions</button>
       <span class="toolbar-sep"></span>
       <div class="btn-group">
         <button type="button" id="tl-split" class="secondary-btn icon-text-btn"><span data-icon="scissors"></span> Split</button>

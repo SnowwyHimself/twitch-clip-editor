@@ -47,7 +47,8 @@ import {
   splitSoundAt,
   splitOverlayAt,
   normalizeOutStarts,
-  removeTransition,
+  addTransitionAfter,
+  selectTransition,
   sourceDuration,
   outputDuration,
   primaryOutputDuration,
@@ -666,21 +667,35 @@ function renderVideoTrack() {
     videoTrack.appendChild(el);
   }
 
-  // Transition badges at boundaries that have one — anchored to any piece
-  // (segment OR appended clip), positioned by its output-end in layout (C2).
-  for (const tr of state.transitions) {
-    const piece = orderedPieces().find((p) => p.id === tr.afterSegmentId);
-    if (!piece) continue;
+  // Transition slots at every output-touching boundary: a filled ✦ badge where a
+  // transition exists (click to select + edit in the inspector), or a subtle "+"
+  // slot where none does (click to add one and select it). Adding lives on the
+  // cut itself — never a menu — since a transition attaches to a boundary.
+  const pieces = orderedPieces();
+  for (let i = 0; i < pieces.length - 1; i++) {
+    if (pieces[i + 1].outStart - pieces[i].outEnd > 0.05) continue; // touching cuts only
+    const piece = pieces[i];
+    const tr = state.transitions.find((t) => t.afterSegmentId === piece.id) || null;
     const badge = document.createElement('button');
     badge.type = 'button';
-    badge.className = 'tl-transition-badge';
+    badge.className =
+      'tl-transition-badge' +
+      (tr ? '' : ' tl-transition-slot') +
+      (tr && isSelected('transition', tr.id) ? ' selected' : '');
     badge.dataset.after = piece.id;
-    badge.innerHTML = icon('zap', 12);
-    badge.title = `White flash (${tr.duration.toFixed(1)}s) — click to remove`;
+    badge.innerHTML = icon(tr ? 'zap' : 'plus', 12);
+    badge.title = tr
+      ? `${tr.type === 'black-flash' ? 'Dip to black' : 'White flash'} (${tr.duration.toFixed(1)}s) — click to edit`
+      : 'Add a transition on this cut';
     badge.addEventListener('pointerdown', (e) => e.stopPropagation());
     badge.addEventListener('click', (e) => {
       e.stopPropagation();
-      removeTransition(tr.id);
+      if (tr) {
+        selectTransition(tr.id);
+      } else {
+        const created = addTransitionAfter(piece.id, 0.5, 'white-flash');
+        if (created) selectTransition(created.id);
+      }
     });
     videoTrack.appendChild(badge);
   }

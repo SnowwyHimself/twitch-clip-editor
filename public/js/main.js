@@ -39,7 +39,7 @@ import {
   togglePlay,
 } from './preview.js';
 import { initTimeline } from './timeline.js';
-import { initPanel, showTab } from './panel.js';
+import { initPanel, setAddClipHandler } from './panel.js';
 import { initExport } from './export.js';
 import { icon, hydrateIcons } from './icons.js';
 import {
@@ -59,11 +59,6 @@ const urlInput = document.getElementById('clip-url');
 const loadUrlBtn = document.getElementById('load-url-btn');
 const openFileBtn = document.getElementById('open-file-btn');
 const fileInput = document.getElementById('clip-file');
-const addTextBtn = document.getElementById('tl-add-text');
-const autoCaptionsBtn = document.getElementById('tl-auto-captions');
-const addOverlayBtn = document.getElementById('tl-add-overlay');
-const addSoundBtn = document.getElementById('tl-add-sound');
-const transitionsBtn = document.getElementById('tl-transitions');
 const undoBtn = document.getElementById('tl-undo');
 const redoBtn = document.getElementById('tl-redo');
 const snapToggle = document.getElementById('snap-toggle');
@@ -108,7 +103,6 @@ function loadFromFile(file) {
 // --- append clips (sequential multi-source) ------------------------------------------
 
 const appendClipFileInput = document.getElementById('append-clip-file');
-const addClipBtn = document.getElementById('tl-add-clip');
 
 // Reads a media file's dimensions + duration off a throwaway <video>.
 function probeMedia(url) {
@@ -124,18 +118,12 @@ function probeMedia(url) {
 }
 
 async function appendClipFromUrl(url) {
-  addClipBtn.disabled = true;
-  const label = addClipBtn.textContent;
-  addClipBtn.textContent = 'Adding…';
   try {
     const { previewUrl } = await fetchPreviewSource(url);
     const dims = await probeMedia(previewUrl);
     addAppendedClip({ kind: 'url', url, previewUrl, ...dims });
   } catch (err) {
     setPlaceholder(`Couldn't add clip: ${err.message}`);
-  } finally {
-    addClipBtn.disabled = false;
-    addClipBtn.textContent = label;
   }
 }
 
@@ -169,7 +157,6 @@ async function addClip() {
 
 function wireIngestion() {
   loadUrlBtn.addEventListener('click', loadFromUrl);
-  addClipBtn.addEventListener('click', addClip);
   appendClipFileInput.addEventListener('change', () => {
     const file = appendClipFileInput.files[0];
     if (file) appendClipFromFile(file);
@@ -232,22 +219,10 @@ function wireIngestion() {
 // --- timeline toolbar ------------------------------------------------------------
 
 function wireToolbar() {
-  addTextBtn.addEventListener('click', () => {
-    const duration = sourceDuration();
-    const t = getCurrentTime();
-    addTextLayer({
-      start: duration > 0 ? Math.min(t, Math.max(0, duration - 0.5)) : 0,
-      end: duration > 0 ? Math.min(t + 3, duration) : 3,
-    });
-  });
-
-  // These toolbar buttons open the matching panel tab (CapCut-style) —
-  // the tabs themselves own the actual add/generate flows, including the
-  // "your own file vs. bundled preset" choice.
-  autoCaptionsBtn.addEventListener('click', () => showTab('captions'));
-  addOverlayBtn.addEventListener('click', () => showTab('overlay'));
-  addSoundBtn.addEventListener('click', () => showTab('sound'));
-  transitionsBtn.addEventListener('click', () => showTab('transitions'));
+  // Insertion now lives entirely in the panel's + Add menu (add → auto-select →
+  // its inspector opens). "Add clip" needs this module's URL/file ingestion, so
+  // register it as the menu's clip handler.
+  setAddClipHandler(addClip);
 
   undoBtn.addEventListener('click', undo);
   redoBtn.addEventListener('click', redo);

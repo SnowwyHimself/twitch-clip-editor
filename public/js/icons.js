@@ -31,6 +31,10 @@ const STROKE = {
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   music:
     '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  type: '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/>',
+  captions:
+    '<rect width="18" height="14" x="3" y="5" rx="2" ry="2"/><path d="M7 15h4"/><path d="M15 15h2"/><path d="M7 11h2"/><path d="M13 11h4"/>',
 };
 
 // Solid glyphs (fill instead of stroke) — read better small.

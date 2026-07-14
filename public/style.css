@@ -561,7 +561,7 @@ input[type="text"] {
 }
 /* In facecam-split mode, the fill-only controls (zoom/blur/pan/keyframes/
    face-track) don't apply, so hide them and show the split controls. */
-#panel-video.split-mode .fill-only {
+#insp-clip.split-mode .fill-only {
   display: none;
 }
 .split-region.dragging {
@@ -1054,6 +1054,161 @@ input[type="text"] {
   color: var(--text-dim);
   font-size: var(--fs-md);
   line-height: 1.5;
+}
+
+/* ===== Selection-driven inspector (replaces the old tab bar) ===== */
+.inspector-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.inspector-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.inspector-title {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.inspector-sub {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.inspector-sub:empty {
+  display: none;
+}
+
+/* + Add menu */
+.add-menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.add-btn {
+  font-weight: 600;
+}
+.add-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  padding: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.add-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+.add-menu-item:hover {
+  background: var(--panel-3);
+}
+.add-menu-ico {
+  display: inline-flex;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.add-menu-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.add-menu-text small {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* Section headers + progressive disclosure inside inspectors */
+.insp-sec {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.insp-sec:first-child {
+  margin-top: 2px;
+}
+.insp-sec-major {
+  color: var(--text);
+  letter-spacing: 0.04em;
+  margin-top: 24px;
+}
+.insp-sec-note {
+  margin: -4px 0 12px;
+}
+.insp-hint {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.insp-adv {
+  margin-bottom: var(--space-4);
+}
+.insp-adv > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  padding: 4px 0;
+  user-select: none;
+}
+.insp-adv > summary::-webkit-details-marker {
+  display: none;
+}
+.insp-adv > summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform var(--dur-fast, 0.15s) ease;
+}
+.insp-adv[open] > summary::before {
+  transform: rotate(90deg);
+}
+.insp-adv > summary:hover {
+  color: var(--text);
+}
+.insp-adv[open] > summary {
+  margin-bottom: 10px;
 }
 
 .field-group {
@@ -1964,8 +2119,30 @@ img.preset-thumb {
 }
 
 .tl-transition-badge:hover {
-  border-color: var(--error);
-  color: var(--error);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Selected transition badge — accent ring so you can see which cut you're editing. */
+.tl-transition-badge.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.4);
+}
+
+/* Empty "+" slot at a cut with no transition yet — quiet until hovered. */
+.tl-transition-slot {
+  background: var(--panel-2);
+  border: 1px dashed var(--border-light);
+  color: var(--text-dim);
+  opacity: 0.55;
+}
+.tl-transition-slot:hover {
+  opacity: 1;
+  background: var(--panel-3);
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .tl-segment {

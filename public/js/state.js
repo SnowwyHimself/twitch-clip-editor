@@ -560,11 +560,34 @@ export function addTransitionAfter(pieceId, duration, type = 'white-flash') {
 export function removeTransition(id) {
   const before = state.transitions.length;
   state.transitions = state.transitions.filter((tr) => tr.id !== id);
-  if (state.transitions.length !== before) emit('segments');
+  if (state.transitions.length !== before) {
+    // Deleting the selected transition returns to the Project inspector.
+    if (state.sel && state.sel.kind === 'transition' && state.sel.id === id) clearSelection();
+    emit('segments');
+  }
+}
+
+// Edit a transition's type/duration in place (from the Transition inspector).
+export function updateTransition(id, patch) {
+  const tr = state.transitions.find((t) => t.id === id);
+  if (!tr) return;
+  if (patch.type != null) tr.type = patch.type === 'black-flash' ? 'black-flash' : 'white-flash';
+  if (Number.isFinite(patch.duration)) tr.duration = patch.duration;
+  emit('segments');
 }
 
 export function transitionAfter(segmentId) {
   return state.transitions.find((tr) => tr.afterSegmentId === segmentId) || null;
+}
+
+export function selectTransition(id) {
+  select('transition', id);
+}
+
+export function selectedTransition() {
+  return state.sel && state.sel.kind === 'transition'
+    ? state.transitions.find((tr) => tr.id === state.sel.id) || null
+    : null;
 }
 
 // --- selection -------------------------------------------------------------------

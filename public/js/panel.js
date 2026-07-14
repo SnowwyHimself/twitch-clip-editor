@@ -26,9 +26,10 @@ import {
   sourceDuration,
   outputDuration,
   MIN_LAYER_SECONDS,
-  addTransitionAfter,
   removeTransition,
-  orderedPieces,
+  updateTransition,
+  selectedTransition,
+  clearSelection,
   addOverlay,
   updateOverlay,
   removeOverlay,
@@ -94,22 +95,32 @@ let els = {};
 function lookupElements() {
   const byId = (id) => document.getElementById(id);
   els = {
-    tabs: {
-      video: { btn: byId('ptab-video'), body: byId('panel-video') },
-      text: { btn: byId('ptab-text'), body: byId('panel-text') },
-      captions: { btn: byId('ptab-captions'), body: byId('panel-captions') },
-      overlay: { btn: byId('ptab-overlay'), body: byId('panel-overlay') },
-      sound: { btn: byId('ptab-sound'), body: byId('panel-sound') },
-      transitions: { btn: byId('ptab-transitions'), body: byId('panel-transitions') },
+    inspectors: {
+      project: byId('insp-project'),
+      clip: byId('insp-clip'),
+      text: byId('insp-text'),
+      caption: byId('insp-caption'),
+      overlay: byId('insp-overlay'),
+      sound: byId('insp-sound'),
+      transition: byId('insp-transition'),
+      multi: byId('insp-multi'),
     },
-    textAddBtn: byId('text-add-btn'),
+    inspectorTitle: byId('inspector-title'),
+    inspectorSub: byId('inspector-sub'),
+    addMenuBtn: byId('add-menu-btn'),
+    addMenu: byId('add-menu'),
+    // Relocatable blocks the router moves between inspectors (single DOM node,
+    // no duplicate ids): video presets → Project/Clip; text controls → Text/Caption.
+    videoPresetBlock: byId('video-preset-block'),
+    textCoreBlock: byId('panel-text-controls'),
+    textCoreHome: byId('insp-text'),
+    captionThisBlock: byId('caption-thisblock'),
     transDurationSlider: byId('trans-duration-slider'),
     transDurationValue: byId('trans-duration-value'),
-    transAddBtn: byId('trans-add-btn'),
     transStatus: byId('trans-status'),
-    transList: byId('trans-list'),
+    transRemoveBtn: byId('trans-remove-btn'),
     aspectGroup: byId('aspect-ratio-group'),
-    panelVideo: byId('panel-video'),
+    panelVideo: byId('insp-clip'),
     layoutButtons: () => document.querySelectorAll('#layout-group [data-layout]'),
     splitControls: byId('split-controls'),
     facecamZoom: byId('facecam-zoom'),
@@ -247,15 +258,117 @@ function lookupElements() {
 
 // --- tab switching -------------------------------------------------------------
 
-export function showTab(which) {
-  for (const [name, tab] of Object.entries(els.tabs)) {
-    tab.btn.classList.toggle('active', name === which);
-    tab.body.classList.toggle('hidden', name !== which);
+// The panel shows exactly one inspector, chosen by what's selected on the
+// timeline/preview. Insertion lives in the + Add menu; there are no tabs.
+function showInspector(which) {
+  for (const [name, el] of Object.entries(els.inspectors)) {
+    el.classList.toggle('hidden', name !== which);
   }
 }
 
-function activeTab() {
-  return Object.keys(els.tabs).find((name) => els.tabs[name].btn.classList.contains('active'));
+// Move the relocatable presets block into the active inspector's [data-preset-slot]
+// (Project or Clip) — one DOM node, no duplicate ids.
+function mountPresetSlot(inspectorName) {
+  const insp = els.inspectors[inspectorName];
+  const slot = insp && insp.querySelector('[data-preset-slot]');
+  if (slot && els.videoPresetBlock.parentElement !== slot) slot.appendChild(els.videoPresetBlock);
+}
+
+// Move the relocatable text-controls block into the Text inspector, or the
+// Caption inspector's "This block" slot — same per-block tools either way.
+function mountTextCore(where) {
+  const target =
+    where === 'caption'
+      ? els.inspectors.caption.querySelector('[data-textcore-slot]')
+      : els.textCoreHome;
+  if (target && els.textCoreBlock.parentElement !== target) target.appendChild(els.textCoreBlock);
+}
+
+function setInspectorHeader(title, sub = '') {
+  els.inspectorTitle.textContent = title;
+  els.inspectorSub.textContent = sub;
+}
+
+// A short name for the selected piece, shown in the Clip header.
+function pieceLabel(sel) {
+  if (!sel) return '';
+  if (sel.kind === 'clip') {
+    const c = state.appendedClips.find((x) => x.id === sel.id);
+    return c ? c.name || c.label || 'added clip' : '';
+  }
+  const src = state.source || {};
+  return (src.file && src.file.name) || src.name || 'main clip';
+}
+
+// "N of M" position of a caption block among all caption blocks, by time.
+function captionPositionLabel(layer) {
+  const caps = state.layers.filter((l) => l.group === 'caption').sort((a, b) => a.start - b.start);
+  const idx = caps.findIndex((l) => l.id === layer.id);
+  return idx >= 0 ? `${idx + 1} of ${caps.length}` : '';
+}
+
+// The single source of truth for what the panel shows: derive the inspector +
+// header from the current selection, mount relocatable blocks, refresh controls.
+function routeSelection() {
+  const sel = state.sel;
+  const kind = sel && sel.kind;
+
+  if (state.selPieces.length > 1) {
+    mountPresetSlot('clip');
+    setInspectorHeader('Clips', `${state.selPieces.length} selected`);
+    showInspector('clip');
+    refreshVideoPanel();
+    return;
+  }
+
+  if (kind === 'segment' || kind === 'clip') {
+    mountPresetSlot('clip');
+    setInspectorHeader('Clip', pieceLabel(sel));
+    showInspector('clip');
+    refreshVideoPanel();
+  } else if (kind === 'layer') {
+    const layer = selectedLayer();
+    if (layer && layer.group === 'caption') {
+      mountTextCore('caption');
+      els.captionThisBlock.classList.remove('hidden');
+      setInspectorHeader('Caption', captionPositionLabel(layer));
+      showInspector('caption');
+      refreshTextPanel();
+      syncCaptionControls();
+      renderTranscript();
+    } else {
+      mountTextCore('text');
+      setInspectorHeader('Text');
+      showInspector('text');
+      refreshTextPanel();
+    }
+  } else if (kind === 'overlay') {
+    setInspectorHeader('Overlay');
+    showInspector('overlay');
+    refreshOverlayPanel();
+  } else if (kind === 'sound') {
+    setInspectorHeader('Sound');
+    showInspector('sound');
+    refreshSoundPanel();
+  } else if (kind === 'transition') {
+    setInspectorHeader('Transition');
+    showInspector('transition');
+    refreshTransitionInspector();
+  } else {
+    mountPresetSlot('project');
+    setInspectorHeader('Project');
+    showInspector('project');
+  }
+}
+
+// Force an inspector open with nothing selected — the + Add menu uses this to
+// reveal source controls (overlay/sound) before an item exists. The next
+// selection change re-routes normally.
+function forceInspector(which, title) {
+  setInspectorHeader(title || which);
+  // Forced Caption view (auto-captions from the + menu) has no block selected yet.
+  if (which === 'caption') els.captionThisBlock.classList.add('hidden');
+  showInspector(which);
 }
 
 // --- shared builders --------------------------------------------------------------
@@ -901,7 +1014,7 @@ function wirePresets() {
 function addOverlayFromFile(file) {
   if (!file) return;
   addOverlay({ file, isVideo: file.type.startsWith('video/'), label: file.name });
-  showTab('overlay');
+  // addOverlay selects it → routeSelection opens the Overlay inspector.
 }
 
 // Fills the overlay controls from the selected overlay (or hides them).
@@ -1003,7 +1116,7 @@ function addSoundFromFile(file, label, url) {
     },
     { once: true }
   );
-  showTab('sound');
+  // addSound selects it → routeSelection opens the Sound inspector.
 }
 
 // Fills the sound controls from the selected sound (or hides them).
@@ -1084,72 +1197,41 @@ function wireSoundControls() {
 
 // --- transitions tab -----------------------------------------------------------------
 
-// The boundary (between two output-touching pieces) closest to the
-// playhead — transitions never span a free-mode black gap.
-function boundaryNearestPlayhead() {
-  const outT = getCurrentOutputTime();
-  const pieces = orderedPieces();
-  let best = null;
-  let bestDist = Infinity;
-  for (let i = 0; i < pieces.length - 1; i++) {
-    if (pieces[i + 1].outStart - pieces[i].outEnd > 0.05) continue; // no gap-spanning
-    const dist = Math.abs(outT - pieces[i].outEnd);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = pieces[i];
-    }
-  }
-  return best; // { kind, id, outStart, outEnd } | null
-}
-
+// Transitions render as ✦ badges on the timeline (click a badge to select and
+// edit it here; click a cut's empty slot to add one). This keeps the panel
+// honest if the selected transition disappears (its cut was removed).
 function renderTransitionList() {
-  els.transList.innerHTML = '';
-  if (state.transitions.length === 0) {
-    els.transList.innerHTML = '<p class="field-hint">None yet.</p>';
-    return;
-  }
-  for (const tr of state.transitions) {
-    const idx = orderedPieces().findIndex((p) => p.id === tr.afterSegmentId);
-    const row = document.createElement('div');
-    row.className = 'trans-row';
-    const label = document.createElement('span');
-    label.textContent = `⚡ White Flash · after piece ${idx + 1} · ${tr.duration.toFixed(1)}s`;
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'danger-btn trans-remove';
-    del.innerHTML = icon('x', 12);
-    del.setAttribute('aria-label', 'Remove transition');
-    del.addEventListener('click', () => removeTransition(tr.id));
-    row.appendChild(label);
-    row.appendChild(del);
-    els.transList.appendChild(row);
-  }
+  if (state.sel && state.sel.kind === 'transition' && !selectedTransition()) clearSelection();
 }
 
-let transitionType = 'white-flash';
+// Fill the Transition inspector from the selected transition.
+function refreshTransitionInspector() {
+  const tr = selectedTransition();
+  if (!tr) return;
+  els.transDurationSlider.value = tr.duration;
+  els.transDurationValue.textContent = `${tr.duration.toFixed(1)}s`;
+  document
+    .querySelectorAll('[data-trans-type]')
+    .forEach((b) => b.classList.toggle('active', b.dataset.transType === (tr.type || 'white-flash')));
+}
 
 function wireTransitionControls() {
   document.querySelectorAll('[data-trans-type]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      transitionType = btn.dataset.transType;
+      const tr = selectedTransition();
+      if (!tr) return;
+      updateTransition(tr.id, { type: btn.dataset.transType });
       document.querySelectorAll('[data-trans-type]').forEach((b) => b.classList.toggle('active', b === btn));
     });
   });
   els.transDurationSlider.addEventListener('input', () => {
     els.transDurationValue.textContent = `${parseFloat(els.transDurationSlider.value).toFixed(1)}s`;
+    const tr = selectedTransition();
+    if (tr) updateTransition(tr.id, { duration: parseFloat(els.transDurationSlider.value) });
   });
-  els.transAddBtn.addEventListener('click', () => {
-    if (orderedPieces().length < 2) {
-      els.transStatus.textContent = 'There’s only one piece — split, or add another clip, to make a boundary first.';
-      return;
-    }
-    const piece = boundaryNearestPlayhead();
-    if (!piece) {
-      els.transStatus.textContent = 'No touching boundary near the playhead (transitions can’t span a black gap).';
-      return;
-    }
-    addTransitionAfter(piece.id, parseFloat(els.transDurationSlider.value), transitionType);
-    els.transStatus.textContent = 'Added — the ✦ badge on the cut marks it; click the badge (or ✕ below) to remove.';
+  els.transRemoveBtn.addEventListener('click', () => {
+    const tr = selectedTransition();
+    if (tr) removeTransition(tr.id);
   });
 }
 
@@ -1268,12 +1350,21 @@ async function generateCaptions() {
       );
     }
     els.capStatus.textContent = `${segments.length} caption ${segments.length === 1 ? 'block' : 'blocks'} added — restyle them below, or regenerate after changing the settings.`;
+    // Land on the first block so you're immediately editing it (and the Caption
+    // inspector, with its "This block" section, is what shows).
+    const firstCap = captionLayersByTime()[0];
+    if (firstCap) selectLayer(firstCap.id);
   } catch (err) {
     els.capStatus.textContent = `Transcription failed: ${err.message}`;
   } finally {
     els.capGenerateBtn.disabled = false;
-    els.capGenerateBtn.textContent = 'Generate captions';
+    els.capGenerateBtn.textContent = 'Regenerate captions';
   }
+}
+
+// Caption blocks ordered by time — shared by the header label + post-generate select.
+function captionLayersByTime() {
+  return state.layers.filter((l) => l.group === 'caption').sort((a, b) => a.start - b.start);
 }
 
 function wireCaptionControls() {
@@ -1603,19 +1694,18 @@ function insertEmojiAtCursor(emoji) {
   updateLayer(layer.id, { text: input.value });
 }
 
-function wireTextControls() {
-  // Same "new text at the playhead" the timeline's + Text button does —
-  // reachable from the tab itself so text can be created without leaving
-  // the panel.
-  els.textAddBtn.addEventListener('click', () => {
-    const duration = sourceDuration();
-    const t = getCurrentTime();
-    addTextLayer({
-      start: duration > 0 ? Math.min(t, Math.max(0, duration - 0.5)) : 0,
-      end: duration > 0 ? Math.min(t + 3, duration) : 3,
-    });
+// Create a new text layer at the playhead (used by the + Add menu). addTextLayer
+// selects it → routeSelection opens the Text inspector: add → immediately editing.
+export function addTextAtPlayhead() {
+  const duration = sourceDuration();
+  const t = getCurrentTime();
+  addTextLayer({
+    start: duration > 0 ? Math.min(t, Math.max(0, duration - 0.5)) : 0,
+    end: duration > 0 ? Math.min(t + 3, duration) : 3,
   });
+}
 
+function wireTextControls() {
   els.textInput.addEventListener('input', () => {
     const layer = selectedLayer();
     if (layer) updateLayer(layer.id, { text: els.textInput.value });
@@ -1870,40 +1960,121 @@ export function initPanel() {
   refreshSoundPanel();
   renderTransitionList();
 
-  const tabForKind = { layer: 'text', overlay: 'overlay', sound: 'sound', segment: 'video' };
+  wireAddMenu();
+  wireDisclosure();
 
-  for (const [name, tab] of Object.entries(els.tabs)) {
-    tab.btn.addEventListener('click', () => {
-      // Switching to a tab that isn't the selected clip's own tab deselects
-      // (Video/Captions/Transitions always do). Text/Overlay/Sound keep a
-      // matching clip selected so its controls stay shown.
-      if (tabForKind[state.sel && state.sel.kind] !== name) selectLayer(null);
-      showTab(name);
-    });
-  }
-
-  // Selecting any clip routes to its tab and fills its controls; deselecting
-  // while on a clip tab backs out to Video.
-  on('selection', () => {
-    const kind = state.sel && state.sel.kind;
-    if (tabForKind[kind]) showTab(tabForKind[kind]);
-    else if (['text', 'overlay', 'sound'].includes(activeTab())) showTab('video');
+  // The panel is a pure function of the selection: re-route whenever it changes.
+  on('selection', routeSelection);
+  on('layers', () => {
     refreshTextPanel();
-    refreshOverlayPanel();
-    refreshSoundPanel();
+    // Keep the Caption "N of M" header current as blocks are added/removed.
+    const layer = selectedLayer();
+    if (layer && layer.group === 'caption') setInspectorHeader('Caption', captionPositionLabel(layer));
   });
-  on('layers', refreshTextPanel);
   on('settings', () => {
-    refreshVideoPanel(); // keep the Video-tab sliders in sync with drag-to-pan
+    refreshVideoPanel(); // keep the sliders in sync with drag-to-pan
     refreshOverlayPanel();
     refreshSoundPanel();
   });
-  on('segments', renderTransitionList);
+  on('segments', () => {
+    renderTransitionList();
+    if (state.sel && state.sel.kind === 'transition') refreshTransitionInspector();
+  });
 
   // Auto-apply the default (★) preset whenever a clip loads, so an imported
   // clip lands in the user's template.
   on('source', () => {
     const p = activePreset();
     if (p) applyPreset(p);
+  });
+
+  routeSelection(); // start on the Project inspector
+}
+
+// --- + Add menu -------------------------------------------------------------------
+
+let addClipHandler = () => {};
+// main.js owns clip ingestion (the URL/file dialog); it registers the handler.
+export function setAddClipHandler(fn) {
+  addClipHandler = fn;
+}
+
+function wireAddMenu() {
+  const closeMenu = () => {
+    els.addMenu.classList.add('hidden');
+    els.addMenuBtn.setAttribute('aria-expanded', 'false');
+  };
+  const openMenu = () => {
+    els.addMenu.classList.remove('hidden');
+    els.addMenuBtn.setAttribute('aria-expanded', 'true');
+  };
+  els.addMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    els.addMenu.classList.contains('hidden') ? openMenu() : closeMenu();
+  });
+  document.addEventListener('click', (e) => {
+    if (!els.addMenu.contains(e.target) && e.target !== els.addMenuBtn) closeMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeMenu();
+  });
+  els.addMenu.querySelectorAll('[data-add]').forEach((item) => {
+    item.addEventListener('click', () => {
+      closeMenu();
+      runAddAction(item.dataset.add);
+    });
+  });
+}
+
+// Each add action creates (or reveals the source for) a thing at the playhead
+// and lands you editing it — the "add → immediately editing" flow.
+function runAddAction(kind) {
+  switch (kind) {
+    case 'clip':
+      addClipHandler();
+      break;
+    case 'text':
+      addTextAtPlayhead();
+      break;
+    case 'captions':
+      forceInspector('caption', 'Captions'); // show status/controls during transcription
+      generateCaptions(); // selects the first block when done → full Caption inspector
+      break;
+    case 'overlay':
+      forceInspector('overlay', 'Overlay'); // reveal source (file + presets) to pick
+      break;
+    case 'sound':
+      forceInspector('sound', 'Sound'); // reveal SFX presets + your-own-file
+      break;
+    case 'music':
+      forceInspector('sound', 'Music');
+      els.audioFile.click(); // music = bring your own audio
+      break;
+  }
+}
+
+// --- progressive disclosure -------------------------------------------------------
+// <details data-adv> blocks remember open/closed per session so re-selecting an
+// item restores how you left its Advanced sections.
+const DISCLOSURE_KEY = 'clipEditor.disclosure.v1';
+
+function loadDisclosure() {
+  try {
+    return JSON.parse(sessionStorage.getItem(DISCLOSURE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function wireDisclosure() {
+  const openState = loadDisclosure();
+  document.querySelectorAll('details.insp-adv[data-adv]').forEach((d) => {
+    const key = d.dataset.adv;
+    if (openState[key]) d.open = true;
+    d.addEventListener('toggle', () => {
+      const s = loadDisclosure();
+      s[key] = d.open;
+      sessionStorage.setItem(DISCLOSURE_KEY, JSON.stringify(s));
+    });
   });
 }
