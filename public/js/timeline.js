@@ -941,9 +941,14 @@ function attachClipBarDrag(bar, leftEdge, rightEdge, clip, opts) {
   function startDrag(e, mode) {
     e.stopPropagation();
     e.preventDefault();
+    // onSelect() emits 'selection' synchronously, which re-renders this row
+    // (innerHTML = '') and DETACHES `bar`/the edges mid-gesture. So the drag must
+    // not depend on those elements surviving or on pointer capture on them (the
+    // old code captured + listened on the now-dead node, which is why text/sound/
+    // overlay bars became undraggable). Instead we listen on `window` and mutate
+    // the stable `clip` object; opts.relayout() repositions the freshly-rendered
+    // bar under the cursor.
     opts.onSelect();
-    const target = e.currentTarget;
-    target.setPointerCapture(e.pointerId);
     const outDur = outputDuration();
     const grabOut = xToOutTime(e.clientX);
     const dispStartAtGrab = sourceToOutput(clip.start);
@@ -985,14 +990,15 @@ function attachClipBarDrag(bar, leftEdge, rightEdge, clip, opts) {
       }
       opts.relayout();
     };
-    const onUp = (upEvent) => {
-      target.releasePointerCapture(upEvent.pointerId);
-      target.removeEventListener('pointermove', onMove);
-      target.removeEventListener('pointerup', onUp);
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       emit(opts.emitEvent);
     };
-    target.addEventListener('pointermove', onMove);
-    target.addEventListener('pointerup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }
 
   bar.addEventListener('pointerdown', (e) => startDrag(e, 'move'));
