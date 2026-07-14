@@ -840,6 +840,11 @@ video {
   gap: 20px;
   flex-wrap: wrap;
 }
+.footer-credit {
+  margin-top: 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
 
 /* ===== Motion ===== */
 /* Signature clap on the header mark */
