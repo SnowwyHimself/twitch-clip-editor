@@ -675,7 +675,7 @@ function renderFaceTrackUI() {
   }
 }
 
-// --- presets (up to 3, saved in localStorage) ---------------------------------------
+// --- presets (up to 5, saved in localStorage) ---------------------------------------
 // A preset captures the video settings (aspect/zoom/blur/pan/speed/mirror).
 // The one flagged default (★) is auto-applied whenever a clip loads, so an
 // imported clip lands in the user's template. Nothing here is per-clip.
@@ -876,8 +876,8 @@ function wirePresets() {
       existing.settings = currentVideoSettings();
       existing.textLayers = textLayers;
     } else {
-      if (presets.length >= 3) {
-        els.presetName.placeholder = 'Max 3 — delete one first';
+      if (presets.length >= 5) {
+        els.presetName.placeholder = 'Max 5 — delete one first';
         return;
       }
       presets.push({ id: `p-${Date.now()}`, name, settings: currentVideoSettings(), textLayers });
