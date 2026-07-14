@@ -200,9 +200,36 @@ function dtwTypeFromModelPath(modelPath) {
   return match ? `${match[1]}${match[2] || ''}` : null;
 }
 
+// Turn the user's "names & words to recognize" list into a whisper initial
+// prompt — a natural comma phrase that biases spelling toward these terms.
+// Split on commas/newlines (so multi-word terms like "World Cup" survive), dedupe
+// case-insensitively, and cap the length well under whisper's prompt token window
+// (~n_text_ctx/2) by dropping trailing terms rather than erroring.
+const VOCAB_PROMPT_MAX_CHARS = 600;
+function formatVocabPrompt(vocab) {
+  if (!vocab || typeof vocab !== 'string') return '';
+  const seen = new Set();
+  const terms = [];
+  for (const raw of vocab.split(/[,\n]+/)) {
+    const t = raw.trim().replace(/\s+/g, ' ');
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    terms.push(t);
+  }
+  let out = '';
+  for (const t of terms) {
+    const next = out ? `${out}, ${t}` : t;
+    if (next.length > VOCAB_PROMPT_MAX_CHARS) break;
+    out = next;
+  }
+  return out;
+}
+
 async function transcribeSource(
   inputPath,
-  { ffmpegBin, resourcesDir, modelsDir, workDir, mode = 'blocks', tier = DEFAULT_TIER }
+  { ffmpegBin, resourcesDir, modelsDir, workDir, mode = 'blocks', tier = DEFAULT_TIER, prompt = '' }
 ) {
   const binary = resolveWhisperBinary(resourcesDir);
   if (!binary) {
@@ -258,6 +285,11 @@ async function transcribeSource(
     ];
     if (dtwPreset) args.push('--dtw', dtwPreset);
 
+    // Custom vocabulary — initial prompt biasing (names, game terms). Empty =
+    // exactly the previous behavior. Applies on every tier.
+    const vocabPrompt = formatVocabPrompt(prompt);
+    if (vocabPrompt) args.push('--prompt', vocabPrompt);
+
     // Voice Activity Detection when the silero model is available — isolates
     // speech and skips wind/background noise, which is the main cause of bad
     // timing/accuracy on noisy clips. A little speech padding avoids clipping
@@ -298,4 +330,5 @@ module.exports = {
   tierAvailability,
   tierModelPath,
   effectiveTier,
+  formatVocabPrompt,
 };

@@ -2196,6 +2196,8 @@ app.post('/api/transcribe', (req, res, next) => { req.jobId = crypto.randomUUID(
       // Caption quality tier (fast/better/best); server resolves the model +
       // transparently downgrades if it's not downloaded yet.
       tier: readCaptionSettings().tier,
+      // Custom vocabulary → whisper initial prompt (formatted/capped inside).
+      prompt: readCaptionSettings().customVocab,
     });
     // tier/downgraded let the client note "Using Fast — Best is still downloading".
     res.json({ segments: result.segments, tier: result.tier, requestedTier: result.requestedTier, downgraded: result.downgraded });
