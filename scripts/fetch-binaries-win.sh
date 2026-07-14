@@ -43,7 +43,13 @@ echo "Fetching yt-dlp (Windows, $YTDLP_VERSION)..."
 curl -fsSL -o "$BIN_DIR/yt-dlp.exe" "$YTDLP_BASE/yt-dlp.exe"
 curl -fsSL -o "$TMP_DIR/yt-dlp.SHA2-256SUMS" "$YTDLP_BASE/SHA2-256SUMS"
 YTDLP_EXPECTED="$(grep ' yt-dlp.exe$' "$TMP_DIR/yt-dlp.SHA2-256SUMS" | awk '{print $1}')"
-YTDLP_ACTUAL="$(shasum -a 256 "$BIN_DIR/yt-dlp.exe" | awk '{print $1}')"
+# Portable SHA-256: git-bash on Windows CI ships `sha256sum` (no `shasum`),
+# macOS/dev ships `shasum` (no `sha256sum`) — use whichever exists.
+if command -v sha256sum >/dev/null 2>&1; then
+  YTDLP_ACTUAL="$(sha256sum "$BIN_DIR/yt-dlp.exe" | awk '{print $1}')"
+else
+  YTDLP_ACTUAL="$(shasum -a 256 "$BIN_DIR/yt-dlp.exe" | awk '{print $1}')"
+fi
 if [ -z "$YTDLP_EXPECTED" ] || [ "$YTDLP_EXPECTED" != "$YTDLP_ACTUAL" ]; then
   echo "ERROR: yt-dlp.exe checksum mismatch (expected='$YTDLP_EXPECTED' actual='$YTDLP_ACTUAL') — refusing to bundle." >&2
   exit 1
