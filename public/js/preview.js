@@ -995,7 +995,16 @@ function setLogicalPlaying(playing) {
   logicalPlaying = playing;
   if (playing) {
     if (!gap) {
-      fgVideo.play().catch(() => {});
+      fgVideo.play().catch(() => {
+        // Unmuted autoplay blocked (no user activation yet) — mute and retry so
+        // the clip still plays; the button reflects the fallback.
+        if (!monitorMuted) {
+          monitorMuted = true;
+          syncClipAudio();
+          updateMuteButton();
+          fgVideo.play().catch(() => {});
+        }
+      });
       bgVideo.play().catch(() => {});
       if (splitActive()) {
         splitTopVideo.play().catch(() => {});
@@ -1253,7 +1262,13 @@ function fadeGain(t, duration, fadeIn, fadeOut) {
 // mute (state.audio.muted): the element is silenced if EITHER is on, and its
 // volume tracks the clip volume (capped at 1 for preview; export boosts) with
 // the head/tail fade envelope layered on at the current time.
-let monitorMuted = true; // fgVideo starts muted so autoplay works
+// Preview audio is ON by default (clips only load after a user gesture — Load /
+// Open / Restore — so sound playback is allowed). setLogicalPlaying falls back to
+// muted if a browser still blocks unmuted autoplay, so playback never breaks.
+let monitorMuted = false;
+function updateMuteButton() {
+  muteBtn.innerHTML = icon(monitorMuted ? 'volume-x' : 'volume-2');
+}
 function clipBaseVolume() {
   return Math.min(1, Math.max(0, state.audio.volumePercent / 100));
 }
@@ -1859,8 +1874,9 @@ export function initPreview() {
   muteBtn.addEventListener('click', () => {
     monitorMuted = !monitorMuted;
     syncClipAudio();
-    muteBtn.innerHTML = icon(monitorMuted ? 'volume-x' : 'volume-2');
+    updateMuteButton();
   });
+  updateMuteButton(); // reflect the default (unmuted) on load
 
   // Clicking the video itself selects the main clip (for framing) and lets
   // you drag it to reposition — same select-then-drag interaction overlays
