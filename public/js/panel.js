@@ -192,6 +192,10 @@ function lookupElements() {
     audioFile: byId('audio-file'),
     soundChooseBtn: byId('sound-choose-btn'),
     sfxPresets: byId('sfx-presets'),
+    soundSaveLib: byId('sound-save-lib'),
+    soundLibType: byId('sound-lib-type'),
+    soundLibrary: byId('sound-library'),
+    musicLibrary: byId('music-library'),
     audioVolumeGroup: byId('audio-volume-group'),
     audioVolumeSlider: byId('audio-volume-slider'),
     audioVolumeValue: byId('audio-volume-value'),
@@ -1229,12 +1233,63 @@ async function buildSfxPresets() {
   }
 }
 
+// Which library bucket a new audio import saves to (Sound effect vs Music) —
+// set by the toggle in the Sound inspector. Playback is identical either way.
+let soundLibCategory = 'sounds';
+
+// A thumbnail for a library audio item — a small play glyph, matching the SFX
+// preset look. Clicking the item (not the thumb) auditions + adds it.
+function audioLibraryThumb() {
+  const span = document.createElement('span');
+  span.className = 'preset-thumb';
+  span.innerHTML = icon('music');
+  return span;
+}
+
+function buildAudioLibrary() {
+  const onPick = (item) => {
+    new Audio(item.url || libraryFileUrl(item.id)).play().catch(() => {}); // audible feedback
+    libraryItemAsFile(item).then((file) => addSoundFromFile(file, item.name, item.url || libraryFileUrl(item.id)));
+  };
+  renderLibrarySection(els.soundLibrary, 'sounds', {
+    emptyText: 'Sound effects you import can be saved here for reuse.',
+    renderThumb: audioLibraryThumb,
+    onPick,
+  });
+  renderLibrarySection(els.musicLibrary, 'music', {
+    emptyText: 'Music you import can be saved here for reuse.',
+    renderThumb: audioLibraryThumb,
+    onPick,
+  });
+}
+
+async function importSound(file) {
+  if (!file) return;
+  addSoundFromFile(file);
+  if (els.soundSaveLib && els.soundSaveLib.checked) {
+    try {
+      await saveToLibrary(soundLibCategory, file); // refreshes the sound/music sections
+    } catch (err) {
+      console.error('Save audio to library failed:', err);
+    }
+  }
+}
+
 function wireSoundControls() {
   els.soundChooseBtn.addEventListener('click', () => els.audioFile.click());
   els.audioFile.addEventListener('change', () => {
-    addSoundFromFile(els.audioFile.files[0] || null);
+    importSound(els.audioFile.files[0] || null);
     els.audioFile.value = '';
   });
+  // Sound effect / Music choice for what a new import saves as.
+  if (els.soundLibType) {
+    els.soundLibType.querySelectorAll('[data-lib-cat]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        soundLibCategory = btn.dataset.libCat;
+        els.soundLibType.querySelectorAll('[data-lib-cat]').forEach((b) => b.classList.toggle('active', b === btn));
+      });
+    });
+  }
   els.audioVolumeSlider.addEventListener('input', () => {
     const s = selectedSound();
     if (s) updateSound(s.id, { volumePercent: parseFloat(els.audioVolumeSlider.value) });
@@ -2070,8 +2125,14 @@ export function initPanel() {
   buildSfxPresets();
   // Personal asset library: load once, render the "My library" sections, and
   // re-render them whenever an item is saved/renamed/deleted.
-  loadLibrary().then(() => buildOverlayLibrary());
-  onLibraryChange(() => buildOverlayLibrary());
+  loadLibrary().then(() => {
+    buildOverlayLibrary();
+    buildAudioLibrary();
+  });
+  onLibraryChange(() => {
+    buildOverlayLibrary();
+    buildAudioLibrary();
+  });
   refreshVideoPanel();
   refreshTextPanel();
   refreshOverlayPanel();

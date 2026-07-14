@@ -1995,6 +1995,9 @@ img.preset-thumb {
 .lib-save-row {
   margin-top: var(--space-2);
 }
+.lib-type-group {
+  margin-top: var(--space-2);
+}
 .library-empty {
   margin: 0;
   font-style: italic;

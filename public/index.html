@@ -335,6 +335,22 @@
         <div class="insp-sec">Source</div>
         <div class="field-group">
           <button type="button" id="sound-choose-btn" class="secondary-btn full-width">Use your own audio file…</button>
+          <label class="switch-row lib-save-row" for="sound-save-lib" title="Keep this file in your personal library to reuse in any project">
+            <span class="field-label switch-label">Save to my library as</span>
+            <span class="switch"><input type="checkbox" id="sound-save-lib" checked /><span class="switch-track"></span></span>
+          </label>
+          <div class="toggle-group lib-type-group" id="sound-lib-type">
+            <button type="button" class="toggle-btn active" data-lib-cat="sounds">Sound effect</button>
+            <button type="button" class="toggle-btn" data-lib-cat="music">Music</button>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">My sound effects</label>
+          <div id="sound-library" class="library-section"></div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">My music</label>
+          <div id="music-library" class="library-section"></div>
         </div>
         <div class="field-group">
           <label class="field-label">Sound effects</label>
