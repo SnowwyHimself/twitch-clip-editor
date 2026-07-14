@@ -20,6 +20,7 @@
   "license": "MIT",
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
+    "electron-updater": "^6.8.9",
     "express": "^4.19.2",
     "multer": "^1.4.5-lts.1",
     "opentype.js": "^2.0.0"
@@ -51,6 +52,12 @@
       "target": [
         {
           "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "arm64"
           ]
@@ -93,7 +100,14 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "SnowwyHimself",
+        "repo": "twitch-clip-editor"
+      }
+    ]
   },
   "allowScripts": {
     "electron-winstaller@5.4.0": true

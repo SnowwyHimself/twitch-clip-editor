@@ -2600,3 +2600,72 @@ img.preset-thumb {
 .download-btn {
   display: block;
 }
+
+/* --- Quiet update pill (desktop) --------------------------------------------
+   Shown only once an update is downloaded + verified. Bottom-right, subtle;
+   ✕ appears on hover to dismiss for the session. */
+.update-pill {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 11px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: transform 0.12s var(--ease), border-color 0.12s var(--ease);
+  animation: update-pill-in 0.2s var(--ease);
+}
+.update-pill:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.update-pill-glyph {
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+  flex: none;
+}
+.update-pill-label {
+  font-weight: 600;
+}
+.update-pill-version {
+  color: var(--text-dim, #8a8a94);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.update-pill-x {
+  border: none;
+  background: none;
+  color: var(--text-dim, #8a8a94);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  margin-left: 2px;
+  opacity: 0;
+  transition: opacity 0.12s var(--ease);
+}
+.update-pill:hover .update-pill-x {
+  opacity: 1;
+}
+.update-pill-x:hover {
+  color: var(--text);
+}
+@keyframes update-pill-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

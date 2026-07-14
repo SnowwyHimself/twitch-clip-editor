@@ -666,6 +666,16 @@
     <button type="button" id="restore-no-btn" class="secondary-btn">Dismiss</button>
   </div>
 
+  <!-- Quiet update pill: shown only once an update is downloaded, verified, and
+       ready (desktop app only). Click to relaunch into it; ✕ (on hover) dismisses
+       for the session — it applies on next quit either way. -->
+  <div id="update-pill" class="update-pill hidden" role="button" tabindex="0" aria-label="Relaunch to update">
+    <svg class="update-pill-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+    <span class="update-pill-label">Relaunch to update</span>
+    <span class="update-pill-version" id="update-pill-version"></span>
+    <button type="button" class="update-pill-x" id="update-pill-dismiss" aria-label="Dismiss">✕</button>
+  </div>
+
 </div>
 
 <script type="module" src="js/main.js"></script>

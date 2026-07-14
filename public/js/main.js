@@ -576,10 +576,38 @@ async function boot() {
 
   refreshStartRecent();
   offerRestore();
+  wireUpdatePill();
 
   // Debug/scripting handle (used by automated tests; harmless in prod —
   // everything still flows through the same emit() paths).
   window.__editor = { state, emit };
+}
+
+// Quiet update pill: the main process signals when an update is downloaded +
+// verified; the pill is the ONLY UI. Desktop-only — in a plain browser there's
+// no electronAPI, so nothing shows. (Exposed on window for a dev smoke-test.)
+function wireUpdatePill() {
+  const pill = document.getElementById('update-pill');
+  const versionEl = document.getElementById('update-pill-version');
+  const dismissBtn = document.getElementById('update-pill-dismiss');
+  if (!pill) return;
+  const show = (version) => {
+    if (version) versionEl.textContent = `v${version}`;
+    pill.classList.remove('hidden');
+  };
+  window.__showUpdatePill = show; // dev smoke-test hook
+  pill.addEventListener('click', () => window.electronAPI && window.electronAPI.relaunchToUpdate());
+  pill.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && window.electronAPI) window.electronAPI.relaunchToUpdate();
+  });
+  dismissBtn.addEventListener('click', (e) => {
+    e.stopPropagation(); // don't trigger the relaunch click on the pill
+    pill.classList.add('hidden');
+    if (window.electronAPI) window.electronAPI.dismissUpdate();
+  });
+  if (window.electronAPI && typeof window.electronAPI.onUpdateReady === 'function') {
+    window.electronAPI.onUpdateReady((version) => show(version));
+  }
 }
 
 boot();

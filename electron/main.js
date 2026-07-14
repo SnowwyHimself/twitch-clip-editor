@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, dialog } = require('electron');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
 const crypto = require('crypto');
+const updater = require('./updater');
 
 // A dedicated port, distinct from the plain `npm start` dev server's 3000,
 // so the packaged app never collides with a dev instance running locally.
@@ -142,12 +143,70 @@ async function createWindow() {
   });
 
   lockDownNavigation(win.webContents);
+  updater.init(win); // quiet auto-update: checks on launch + every 4h, shows the pill
   await waitForServer(`${APP_ORIGIN}/`);
   win.loadURL(`${APP_ORIGIN}/`);
+  return win;
+}
+
+// App menu: version (About), a manual "Check for Updates" with up-to-date
+// feedback, and an "Automatic updates" toggle (default on). No other UI.
+function buildMenu() {
+  const autoItem = {
+    label: 'Automatic Updates',
+    type: 'checkbox',
+    checked: readAutoUpdate(),
+    click: (item) => writeAutoUpdate(item.checked),
+  };
+  const checkItem = {
+    label: 'Check for Updates…',
+    click: async () => {
+      const r = await updater.checkNow();
+      const win = BrowserWindow.getAllWindows()[0];
+      const msg = r.ok ? "You're up to date (or an update is downloading quietly)." : `Update check failed: ${r.error}`;
+      if (win) {
+        dialog.showMessageBox(win, { type: 'info', title: 'Clip Editor', message: `Clip Editor ${app.getVersion()}`, detail: msg, buttons: ['OK'] });
+      }
+    },
+  };
+  const appMenu = {
+    label: app.name,
+    submenu: [
+      { role: 'about', label: `About Clip Editor (${app.getVersion()})` },
+      { type: 'separator' },
+      checkItem,
+      autoItem,
+      { type: 'separator' },
+      { role: 'quit' },
+    ],
+  };
+  const template = process.platform === 'darwin' ? [appMenu, { role: 'editMenu' }, { role: 'windowMenu' }] : [{ label: 'File', submenu: [checkItem, autoItem, { type: 'separator' }, { role: 'quit' }] }, { role: 'editMenu' }];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+// The auto-update toggle is persisted by the updater module; read/write it via a
+// tiny local mirror so the menu checkbox reflects it without a round-trip.
+const UPDATE_SETTINGS_FILE = path.join(app.getPath('userData'), 'update-settings.json');
+function readAutoUpdate() {
+  try {
+    return JSON.parse(fs.readFileSync(UPDATE_SETTINGS_FILE, 'utf8')).autoUpdate !== false;
+  } catch {
+    return true;
+  }
+}
+function writeAutoUpdate(on) {
+  let cur = {};
+  try {
+    cur = JSON.parse(fs.readFileSync(UPDATE_SETTINGS_FILE, 'utf8'));
+  } catch {}
+  try {
+    fs.writeFileSync(UPDATE_SETTINGS_FILE, JSON.stringify({ ...cur, autoUpdate: !!on }));
+  } catch {}
 }
 
 app.whenReady().then(() => {
   createWindow();
+  buildMenu();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

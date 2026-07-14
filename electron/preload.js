@@ -14,4 +14,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // JSON). Replaces the removed /api/preview-file HTTP endpoint — the main
   // process handles the path, validated there. Returns { ok, previewUrl } | { ok:false }.
   reopenFile: (absPath) => ipcRenderer.invoke('reopen-file', absPath),
+
+  // Quiet updates: the renderer only learns that an update is READY (to show the
+  // pill), and can relaunch or dismiss. All update logic lives in the main process.
+  onUpdateReady: (cb) => {
+    const handler = (_e, version) => cb(version);
+    ipcRenderer.on('update:ready', handler);
+    return () => ipcRenderer.removeListener('update:ready', handler);
+  },
+  relaunchToUpdate: () => ipcRenderer.invoke('update:relaunch'),
+  dismissUpdate: () => ipcRenderer.invoke('update:dismiss'),
 });
