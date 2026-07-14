@@ -1643,8 +1643,24 @@ function colorFilterCss() {
   )}) saturate(${(1 + saturation / 100).toFixed(3)})`;
 }
 
+// Main-clip crop → CSS object-view-box: it crops the source box, then object-fit
+// fills the element with the kept region — the exact "crop the source before the
+// fill composite" the ffmpeg export does (buildPieceComposite / cropChain), so
+// preview and render match. Fill mode only; face-track and split own their own
+// framing (and the export skips crop there too).
+function applyCropView() {
+  const crop = pieceSettingsAtOutput(getCurrentOutputTime()).crop || { top: 0, bottom: 0, left: 0, right: 0 };
+  const { top = 0, bottom = 0, left = 0, right = 0 } = crop;
+  const active = !faceTrackActive() && !splitActive() && top + bottom + left + right > 0.001;
+  // object-view-box inset order is top right bottom left.
+  const val = active ? `inset(${top}% ${right}% ${bottom}% ${left}%)` : 'none';
+  fgVideo.style.setProperty('object-view-box', val);
+  bgVideo.style.setProperty('object-view-box', val);
+}
+
 function updateAll() {
   applyClipTransform();
+  applyCropView();
   bgVideo.style.transform = state.mirror ? 'scaleX(-1)' : 'none';
 
   // Color grade on the footage (fg + blurred bg + split regions), matching the

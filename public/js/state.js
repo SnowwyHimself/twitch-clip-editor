@@ -32,6 +32,13 @@ export const state = {
   panX: 0,
   panY: 0,
 
+  // Main-clip crop: how much of each source edge to trim, as a % of that axis
+  // (0 = no crop). The kept sub-rectangle then fills the frame exactly like an
+  // uncropped source would — preview via CSS object-view-box, export via an
+  // ffmpeg `crop` before the fill composite (1:1 parity). Global/whole-video,
+  // like zoom/pan (mirrored into every piece's settings).
+  crop: { top: 0, bottom: 0, left: 0, right: 0 },
+
   // Main-clip audio. volumePercent 0-200 (100 = untouched, >100 boosts),
   // muted drops it entirely from the render. fadeIn/fadeOut are seconds of
   // afade at the clip's head/tail. Applied in the render's audio graph and,
@@ -449,7 +456,14 @@ let segmentCounter = 0;
 // the Video-panel code is unchanged); the preview reads each piece's settings
 // live at the playhead, and the export builds each piece with its own.
 export function defaultPieceSettings() {
-  return { zoom: 1, panX: 0, panY: 0, blur: 0, color: { brightness: 0, contrast: 0, saturation: 0 } };
+  return {
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    blur: 0,
+    color: { brightness: 0, contrast: 0, saturation: 0 },
+    crop: { top: 0, bottom: 0, left: 0, right: 0 },
+  };
 }
 
 // Snapshot the global edit-mirror into a settings object (used to seed a new
@@ -461,6 +475,7 @@ function currentVideoSettings() {
     panY: state.panY,
     blur: state.blur,
     color: { ...(state.color || { brightness: 0, contrast: 0, saturation: 0 }) },
+    crop: { ...(state.crop || { top: 0, bottom: 0, left: 0, right: 0 }) },
   };
 }
 
@@ -473,6 +488,7 @@ function cloneSettings(s) {
     panY: Number.isFinite(s.panY) ? s.panY : d.panY,
     blur: Number.isFinite(s.blur) ? s.blur : d.blur,
     color: { ...d.color, ...(s.color || {}) },
+    crop: { ...d.crop, ...(s.crop || {}) },
   };
 }
 
@@ -751,6 +767,7 @@ export function loadEditTargetIntoGlobals(playheadOutTime) {
   state.panY = s.panY;
   state.blur = s.blur;
   state.color = { ...s.color };
+  state.crop = { ...(s.crop || { top: 0, bottom: 0, left: 0, right: 0 }) };
 }
 
 // Write the current global edit-mirror values onto EVERY piece (all segments +
@@ -1091,6 +1108,22 @@ export const CROP_MIN_REMAINING = 2; // % of the axis that must survive
 export function clampCropValue(overlay, key, value) {
   const max = Math.min(100, 100 - CROP_MIN_REMAINING - (overlay[CROP_OPPOSITE[key]] || 0));
   return Math.max(0, Math.min(max, Math.round(value)));
+}
+
+// Same clamp for the MAIN clip's crop object { top,bottom,left,right }, whose
+// keys differ from the overlay crop's. Shared by the Clip crop handles so a
+// dragged edge can never collapse the kept region.
+const MAIN_CROP_OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
+export function clampMainCropValue(crop, key, value) {
+  const max = Math.min(100, 100 - CROP_MIN_REMAINING - (crop[MAIN_CROP_OPPOSITE[key]] || 0));
+  return Math.max(0, Math.min(max, Math.round(value)));
+}
+
+// Update the global main-clip crop and push it onto every piece (whole-video,
+// like commitVideoSettings). Called by the crop handles on release/drag.
+export function setMainCrop(patch) {
+  state.crop = { ...(state.crop || { top: 0, bottom: 0, left: 0, right: 0 }), ...patch };
+  commitVideoSettings();
 }
 
 export function removeOverlay(id) {

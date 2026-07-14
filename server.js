@@ -751,15 +751,51 @@ function parsePieceSettings(raw) {
       contrast: parseFloat(c.contrast) || 0,
       saturation: parseFloat(c.saturation) || 0,
     },
+    crop: parseCrop(r.crop),
   };
+}
+
+// Main-clip crop { top,bottom,left,right } as % per edge. Clamped so each axis
+// keeps a >=2% sliver (matching the client's clampMainCropValue).
+function parseCrop(raw) {
+  const c = raw && typeof raw === 'object' ? raw : {};
+  const v = (x) => Math.max(0, Math.min(98, parseFloat(x) || 0));
+  let top = v(c.top);
+  let bottom = v(c.bottom);
+  let left = v(c.left);
+  let right = v(c.right);
+  if (top + bottom > 98) { const s = 98 / (top + bottom); top *= s; bottom *= s; }
+  if (left + right > 98) { const s = 98 / (left + right); left *= s; right *= s; }
+  return { top, bottom, left, right };
+}
+
+// ffmpeg `crop` of the kept sub-rectangle, applied to the source BEFORE the fill
+// composite (and before hflip) so the kept region fills the canvas exactly like
+// the preview's CSS object-view-box. Returns '' when nothing is cropped.
+function cropChain(crop) {
+  const c = crop && typeof crop === 'object' ? crop : null;
+  if (!c) return '';
+  const { top = 0, bottom = 0, left = 0, right = 0 } = c;
+  if (top + bottom + left + right <= 0.001) return '';
+  const w = (1 - (left + right) / 100).toFixed(6);
+  const h = (1 - (top + bottom) / 100).toFixed(6);
+  const x = (left / 100).toFixed(6);
+  const y = (top / 100).toFixed(6);
+  return `crop=w=iw*${w}:h=ih*${h}:x=iw*${x}:y=ih*${y}`;
 }
 
 // True if any piece's settings differ from the first — i.e. per-piece rendering
 // is actually needed (otherwise the cheaper global transform suffices).
 function pieceSettingsDiffer(list) {
   if (!Array.isArray(list) || list.length < 2) return false;
-  const key = (s) =>
-    JSON.stringify([s.zoom, s.panX, s.panY, s.blur, s.color.brightness, s.color.contrast, s.color.saturation]);
+  const key = (s) => {
+    const cr = s.crop || {};
+    return JSON.stringify([
+      s.zoom, s.panX, s.panY, s.blur,
+      s.color.brightness, s.color.contrast, s.color.saturation,
+      cr.top || 0, cr.bottom || 0, cr.left || 0, cr.right || 0,
+    ]);
+  };
   const first = key(list[0].settings || parsePieceSettings());
   return list.some((p) => key(p.settings || parsePieceSettings()) !== first);
 }
@@ -783,7 +819,11 @@ function buildPieceComposite(canvasW, canvasH, s, inLabel, idx) {
   const fg = `pcfg${idx}`;
   const ov = `pcov${idx}`;
   const out = `pc${idx}`;
-  let chain = `${inLabel}split=2[${bg}][${fg}];`;
+  // Crop the source region first (this piece's video is still unmirrored here —
+  // mirror is applied globally downstream — so the crop matches the preview,
+  // which crops before its own mirror transform).
+  const cc = cropChain(set.crop);
+  let chain = `${inLabel}${cc ? cc + ',' : ''}split=2[${bg}][${fg}];`;
   chain += `[${bg}]scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase,crop=${canvasW}:${canvasH},${bgFill}[${bg}o];`;
   chain += `[${fg}]scale=${fgWidth}:-2,crop=${canvasW}:ih:(iw-${canvasW})/2:0[${fg}o];`;
   const overlay = `[${bg}o][${fg}o]overlay=(W-w)/2${panXExpr}:(H-h)/2${panYExpr}`;
@@ -792,7 +832,7 @@ function buildPieceComposite(canvasW, canvasH, s, inLabel, idx) {
   return { chain, outLabel: `[${out}]` };
 }
 
-function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack, split, srcW, srcH, color, preComposited) {
+function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceLabel, keyframes, fps, faceTrack, split, srcW, srcH, color, crop, preComposited) {
   // Per-piece path: the base is already a canvas-sized, per-piece-transformed,
   // graded video (see buildSegmentFilter). Only apply global speed/mirror, then
   // stack captions/overlays.
@@ -834,13 +874,23 @@ function buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlaySta
   const panXExpr = panXpx !== 0 ? `+(${panXpx})` : '';
   const panYExpr = panYpx !== 0 ? `+(${panYpx})` : '';
 
-  const { stage, labels } = buildSourcePrefix(sourceLabel, speed, mirror, 2);
+  // Crop the source region FIRST — before speed/mirror/split — so an asymmetric
+  // crop lands on the unmirrored image, matching the preview's object-view-box
+  // (which crops the source before the mirror transform). '' when uncropped.
+  const cc = cropChain(crop);
+  let cropPrefix = '';
+  let croppedSource = sourceLabel;
+  if (cc) {
+    cropPrefix = `${sourceLabel}${cc}[crsrc];`;
+    croppedSource = '[crsrc]';
+  }
+  const { stage, labels } = buildSourcePrefix(croppedSource, speed, mirror, 2);
   const [bgSource, fgSource] = labels;
   const bgFill = blur > 0 ? `gblur=sigma=${blur}` : `drawbox=color=black:t=fill`;
   const bg = `${bgSource}scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase,crop=${canvasW}:${canvasH},${bgFill}[bg]`;
   const fg = `${fgSource}${fgChain}[fg]`;
   const overlay = `[bg][fg]overlay=(W-w)/2${panXExpr}:(H-h)/2${panYExpr}[c0]`;
-  let graph = `${stage}${bg};${fg};${overlay}`;
+  let graph = `${cropPrefix}${stage}${bg};${fg};${overlay}`;
 
   let current = '[c0]';
   // Animate zoom/pan over the composite (captions/overlays are added AFTER,
@@ -1070,7 +1120,7 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, exportOpts, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress) {
   const hasAppended = Array.isArray(appended) && appended.length > 0;
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
@@ -1251,7 +1301,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
 
   let filterComplex =
     segmentPrefix +
-    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height, color, perPiece);
+    buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height, color, crop, perPiece);
 
   // atempo only accepts 0.5-2.0 per instance, which matches the slider's
   // own range exactly, so a single atempo call always suffices — no need
@@ -1730,6 +1780,18 @@ function buildColor(body) {
   return { brightness: clamp(raw.brightness), contrast: clamp(raw.contrast), saturation: clamp(raw.saturation) };
 }
 
+// Main-clip crop { top,bottom,left,right } from the request body (JSON string),
+// clamped by parseCrop. Global whole-video, applied before the fill composite.
+function buildCrop(body) {
+  let raw = {};
+  try {
+    raw = typeof body.crop === 'string' ? JSON.parse(body.crop) : body.crop || {};
+  } catch {
+    raw = {};
+  }
+  return parseCrop(raw);
+}
+
 // ffmpeg eq chain for a color grade, or null when neutral. Contrast/saturation
 // are multipliers (match CSS); brightness is additive (approximate vs CSS).
 function colorGradeChain(color) {
@@ -1840,7 +1902,7 @@ async function resolveAppendedClips(appendedClips) {
   return out;
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -1887,7 +1949,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, exportOpts, onProgress);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress);
     setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
@@ -1902,14 +1964,14 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts) {
+async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL, reuse that
     // download instead of running yt-dlp a second time.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, exportOpts);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts);
   } catch (err) {
     setJob(jobId, { status: 'error', error: err.message });
   }
@@ -2169,6 +2231,7 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildMainAudio(req.body || {}),
     buildAppendedClips(req.body || {}, req.files.appendedVideo),
     buildColor(req.body || {}),
+    buildCrop(req.body || {}),
     buildExportOpts(req.body || {})
   );
 });
@@ -2209,6 +2272,7 @@ app.post(
       buildMainAudio(req.body),
       buildAppendedClips(req.body, req.files.appendedVideo),
       buildColor(req.body),
+      buildCrop(req.body),
       buildExportOpts(req.body)
     );
   }

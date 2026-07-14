@@ -105,6 +105,9 @@ function buildFormData() {
   formData.append('audioFadeOut', state.audio.fadeOut || 0);
   // Color grade (brightness/contrast/saturation, each -100..100).
   formData.append('color', JSON.stringify(state.color || {}));
+  // Main-clip crop (edge trims as %). Global/whole-video; the server crops the
+  // source before the fill composite, mirroring the preview's object-view-box.
+  formData.append('crop', JSON.stringify(state.crop || {}));
   // Export options — output height (px) + x264 CRF (lower = higher quality).
   formData.append('outHeight', resolutionSelect.value);
   formData.append('crf', qualitySelect.value);
