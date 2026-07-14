@@ -7,7 +7,7 @@ system stack; favicons and the OG image are self-hosted in `assets/`).
 ## Preview locally
 
 ```bash
-cd site
+cd docs
 python3 -m http.server 8091
 # open http://127.0.0.1:8091
 ```
@@ -17,11 +17,12 @@ fetch is happier over `http://`.)
 
 ## Deploy
 
-A GitHub Actions workflow (`.github/workflows/deploy-pages.yml`) publishes this
-folder to GitHub Pages on every push to `main` that touches `site/`.
+Published straight from this `docs/` folder — no build, no workflow. A
+`.nojekyll` file tells Pages to serve the files as-is.
 
 **One-time setup:** repo **Settings → Pages → Build and deployment → Source:
-GitHub Actions**. After the first workflow run the site is live at:
+"Deploy from a branch" → Branch: `main`, Folder: `/docs` → Save**. Every push to
+`main` that changes `docs/` republishes automatically. Live at:
 
 ```
 https://snowwyhimself.github.io/twitch-clip-editor/
@@ -33,7 +34,7 @@ All asset paths are relative, so a custom domain is a drop-in:
 
 1. Buy the domain and add a `CNAME` DNS record pointing at
    `snowwyhimself.github.io`.
-2. Add a file `site/CNAME` containing just the domain (e.g. `clipeditor.app`).
+2. Add a file `docs/CNAME` containing just the domain (e.g. `clipeditor.app`).
 3. Update the `<link rel="canonical">` and the `og:image` URL in `index.html`
    to the new domain, and push.
 
