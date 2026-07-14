@@ -66,6 +66,43 @@ export async function presetAsFile(preset) {
   return new File([blob], preset.id, { type: blob.type });
 }
 
+// --- personal asset library (global, userData) ---
+export async function fetchLibrary() {
+  const res = await fetch('/api/library');
+  return (await parseJsonResponse(res, 'Failed to load your library')).items;
+}
+export async function importToLibrary(category, file) {
+  const fd = new FormData();
+  fd.append('category', category);
+  fd.append('file', file, file.name);
+  const res = await fetch('/api/library/import', { method: 'POST', body: fd });
+  return parseJsonResponse(res, 'Failed to save to your library'); // { item, deduped }
+}
+export async function renameLibraryItem(id, name) {
+  const res = await fetch('/api/library/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, name }),
+  });
+  return (await parseJsonResponse(res, 'Failed to rename')).item;
+}
+export async function removeLibraryItem(id) {
+  const res = await fetch('/api/library/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  return parseJsonResponse(res, 'Failed to remove');
+}
+export const libraryFileUrl = (id) => `/api/library/file/${id}`;
+// A library item as a File, so it rides the same FormData export path as presets
+// and user-picked files (used for sounds/overlays; fonts export server-side).
+export async function libraryItemAsFile(item) {
+  const res = await fetch(item.url || libraryFileUrl(item.id));
+  const blob = await res.blob();
+  return new File([blob], item.filename || item.name || item.id, { type: blob.type });
+}
+
 // --- brand kit (global, userData) ---
 export async function fetchBrandKit() {
   const res = await fetch('/api/brand-kit');
