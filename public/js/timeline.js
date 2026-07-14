@@ -369,60 +369,66 @@ function layoutVideoTrack() {
 // among the other appended clips (drop position by its centre). Trim handles
 // come with the edge grips added in buildClipBar-style later.
 function attachAppendedClipDrag(el, clip) {
-  let startX = 0;
-  let dragging = false;
-  let moved = false;
   el.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
     if (e.shiftKey) {
       togglePieceSelection('clip', clip.id);
       return;
     }
+    // selectClip re-renders the video track (innerHTML=''), DETACHING `el`
+    // mid-gesture — the same bug that broke text bars. So the drag can't depend
+    // on `el` (or pointer capture on it) surviving: listen on window, keep drag
+    // state in closures, and look the freshly-rendered bar up by id each frame.
     selectClip(clip.id);
     const item = appendedLayout().find((it) => it.clip.id === clip.id);
     if (item) {
       const outT = getCurrentOutputTime();
       if (outT < item.outStart || outT >= item.outEnd) seekOutput(item.outStart + 0.001);
     }
-    startX = e.clientX;
-    dragging = true;
-    moved = false;
-    try {
-      el.setPointerCapture(e.pointerId);
-    } catch {
-      /* synthetic pointers */
-    }
+    const startX = e.clientX;
+    const startLeft = item ? item.outStart * pxPerSecond() : 0; // from state — survives re-render
+    let moved = false;
+    const liveEl = () => appendedClipEls.get(clip.id);
+
+    const onMove = (moveEvent) => {
+      const dx = moveEvent.clientX - startX;
+      if (!moved && Math.abs(dx) <= MOVE_THRESHOLD_PX) return;
+      moved = true;
+      const cur = liveEl();
+      if (cur) {
+        cur.classList.add('dragging');
+        cur.style.transform = `translateX(${dx}px)`;
+      }
+    };
+    const onUp = (upEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      const cur = liveEl();
+      if (cur) {
+        cur.classList.remove('dragging');
+        cur.style.transform = '';
+      }
+      if (!moved) return;
+      // Reorder by where the bar's centre landed among the appended clips.
+      const pps = pxPerSecond();
+      const centerOut = (startLeft + (upEvent.clientX - startX) + (cur ? cur.offsetWidth : 0) / 2) / (pps || 1);
+      const order = state.appendedClips.map((c) => c.id).filter((id) => id !== clip.id);
+      let idx = 0;
+      let cursor = primaryOutputDuration();
+      for (const id of order) {
+        const c = state.appendedClips.find((x) => x.id === id);
+        const len = Math.max(0, (c.end ?? c.duration) - (c.start || 0));
+        if (centerOut < cursor + len / 2) break;
+        cursor += len;
+        idx += 1;
+      }
+      moveAppendedClip(clip.id, idx);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   });
-  el.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    if (!moved && Math.abs(e.clientX - startX) <= MOVE_THRESHOLD_PX) return;
-    moved = true;
-    el.classList.add('dragging');
-    el.style.transform = `translateX(${e.clientX - startX}px)`;
-  });
-  const end = (e) => {
-    if (!dragging) return;
-    dragging = false;
-    el.classList.remove('dragging');
-    el.style.transform = '';
-    if (!moved) return;
-    // Reorder by where the bar's centre landed among the appended clips.
-    const pps = pxPerSecond();
-    const centerOut = (parseFloat(el.style.left) + (e.clientX - startX) + el.offsetWidth / 2) / (pps || 1);
-    const order = state.appendedClips.map((c) => c.id).filter((id) => id !== clip.id);
-    let idx = 0;
-    let cursor = primaryOutputDuration();
-    for (const id of order) {
-      const c = state.appendedClips.find((x) => x.id === id);
-      const len = Math.max(0, (c.end ?? c.duration) - (c.start || 0));
-      if (centerOut < cursor + len / 2) break;
-      cursor += len;
-      idx += 1;
-    }
-    moveAppendedClip(clip.id, idx);
-  };
-  el.addEventListener('pointerup', end);
-  el.addEventListener('pointercancel', end);
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     selectClip(clip.id);
@@ -756,13 +762,14 @@ function attachSegmentMoveDrag(el, seg, prev, next) {
       togglePieceSelection('segment', seg.id);
       return;
     }
+    // selectSegment re-renders the track (innerHTML=''), detaching `el`. Drive the
+    // drag off window + a live-element lookup so it survives the re-render.
     selectSegment(seg.id);
     // Seek into the piece so the preview shows its per-piece look while editing,
     // unless the playhead is already inside it.
     const segLen = seg.end - seg.start;
     const outT = getCurrentOutputTime();
     if (outT < seg.outStart || outT >= seg.outStart + segLen) seekOutput(seg.outStart + 0.001);
-    el.setPointerCapture(e.pointerId);
 
     const pps = pxPerSecond();
     const grabX = e.clientX;
@@ -771,6 +778,7 @@ function attachSegmentMoveDrag(el, seg, prev, next) {
     const minOut = prev ? prev.outStart + (prev.end - prev.start) : 0;
     const maxOut = next ? next.outStart - len : Math.max(outStartAtGrab, sourceDuration() - len + 10);
     let moving = false;
+    const liveEl = () => segmentEls.get(seg.id);
 
     const onMove = (moveEvent) => {
       const dx = moveEvent.clientX - grabX;
@@ -782,22 +790,27 @@ function attachSegmentMoveDrag(el, seg, prev, next) {
         layoutAll();
       } else {
         // Snap mode: float visually while held, home position unchanged.
-        el.style.left = `${(outStartAtGrab + deltaT) * pps}px`;
-        el.classList.add('floating');
+        const cur = liveEl();
+        if (cur) {
+          cur.style.left = `${(outStartAtGrab + deltaT) * pps}px`;
+          cur.classList.add('floating');
+        }
       }
     };
-    const onUp = (upEvent) => {
-      el.releasePointerCapture(upEvent.pointerId);
-      el.removeEventListener('pointermove', onMove);
-      el.removeEventListener('pointerup', onUp);
-      el.classList.remove('floating');
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      const cur = liveEl();
+      if (cur) cur.classList.remove('floating');
       if (moving) {
         if (state.timelineMode === 'snap') normalizeOutStarts();
         emit('segments');
       }
     };
-    el.addEventListener('pointermove', onMove);
-    el.addEventListener('pointerup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   });
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
