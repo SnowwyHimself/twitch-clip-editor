@@ -47,7 +47,12 @@ jobs:
 
       - name: Build Windows installer (fetches binaries + electron-builder NSIS)
         shell: bash
-        run: npm run dist:win
+        run: |
+          # --publish never: build only. package.json has a github publish config,
+          # so electron-builder would otherwise try to auto-publish in CI (needs
+          # GH_TOKEN). We upload explicitly in the next step instead.
+          npm run fetch-binaries:win
+          npx electron-builder --win --x64 --publish never
 
       - name: Upload installer to the matching GitHub Release
         shell: bash
