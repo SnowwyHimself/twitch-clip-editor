@@ -9,9 +9,7 @@ const CONFIG = {
   REPO: 'SnowwyHimself/twitch-clip-editor', // owner/repo
   // Exact electron-builder asset filenames (no version in them, so static links work).
   MAC_ASSET: 'Clip-Editor-Mac.dmg',
-  // Windows currently ships as a portable zip (unzip + run) until the NSIS
-  // installer build is wired up — keep this matching the release's asset name.
-  WIN_ASSET: 'Clip-Editor-Windows-Portable.zip',
+  WIN_ASSET: 'Clip-Editor-Windows-Setup.exe',
   TAGLINE: 'Turn Twitch clips into vertical videos',
 };
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -47,7 +45,7 @@ function detectOS() {
 
 const OS_NOTE = {
   mac: 'macOS: right-click → Open the first time (unsigned build).',
-  win: 'Windows: unzip, then run "Clip Editor.exe" (More info → Run anyway if SmartScreen warns — unsigned build).',
+  win: 'Windows: More info → Run anyway if SmartScreen warns (unsigned build).',
 };
 
 function orderDownloads(os) {
