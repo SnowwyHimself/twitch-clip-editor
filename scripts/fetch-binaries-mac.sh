@@ -30,8 +30,26 @@ cp "$TMP_DIR/node_modules/ffmpeg-static/ffmpeg" "$BIN_DIR/ffmpeg"
 chmod +x "$BIN_DIR/ffmpeg"
 xattr -d com.apple.quarantine "$BIN_DIR/ffmpeg" 2>/dev/null || true
 
-echo "Fetching yt-dlp (macOS)..."
-curl -sL -o "$BIN_DIR/yt-dlp" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
+# yt-dlp: pin a release for reproducible builds (YTDLP_VERSION=2025.xx.xx), or
+# leave 'latest'. Either way the binary is verified against yt-dlp's OWN
+# published SHA2-256SUMS from the SAME release before it's bundled — a corrupted
+# or substituted download fails the build loudly instead of shipping.
+YTDLP_VERSION="${YTDLP_VERSION:-latest}"
+if [ "$YTDLP_VERSION" = "latest" ]; then
+  YTDLP_BASE="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
+else
+  YTDLP_BASE="https://github.com/yt-dlp/yt-dlp/releases/download/$YTDLP_VERSION"
+fi
+echo "Fetching yt-dlp (macOS, $YTDLP_VERSION)..."
+curl -fsSL -o "$BIN_DIR/yt-dlp" "$YTDLP_BASE/yt-dlp_macos"
+curl -fsSL -o "$TMP_DIR/yt-dlp.SHA2-256SUMS" "$YTDLP_BASE/SHA2-256SUMS"
+YTDLP_EXPECTED="$(grep ' yt-dlp_macos$' "$TMP_DIR/yt-dlp.SHA2-256SUMS" | awk '{print $1}')"
+YTDLP_ACTUAL="$(shasum -a 256 "$BIN_DIR/yt-dlp" | awk '{print $1}')"
+if [ -z "$YTDLP_EXPECTED" ] || [ "$YTDLP_EXPECTED" != "$YTDLP_ACTUAL" ]; then
+  echo "ERROR: yt-dlp checksum mismatch (expected='$YTDLP_EXPECTED' actual='$YTDLP_ACTUAL') — refusing to bundle." >&2
+  exit 1
+fi
+echo "yt-dlp checksum verified."
 chmod +x "$BIN_DIR/yt-dlp"
 xattr -d com.apple.quarantine "$BIN_DIR/yt-dlp" 2>/dev/null || true
 

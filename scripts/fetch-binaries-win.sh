@@ -31,8 +31,24 @@ curl -sL -o "$TMP_DIR/ffmpeg-win64.zip" "$FFMPEG_ZIP_URL"
 unzip -q "$TMP_DIR/ffmpeg-win64.zip" "$FFMPEG_ZIP_ENTRY" -d "$TMP_DIR"
 cp "$TMP_DIR/$FFMPEG_ZIP_ENTRY" "$BIN_DIR/ffmpeg.exe"
 
-echo "Fetching yt-dlp (Windows)..."
-curl -sL -o "$BIN_DIR/yt-dlp.exe" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+# yt-dlp: pin via YTDLP_VERSION for reproducible builds, else 'latest'. Verified
+# against yt-dlp's OWN published SHA2-256SUMS from the same release before bundling.
+YTDLP_VERSION="${YTDLP_VERSION:-latest}"
+if [ "$YTDLP_VERSION" = "latest" ]; then
+  YTDLP_BASE="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
+else
+  YTDLP_BASE="https://github.com/yt-dlp/yt-dlp/releases/download/$YTDLP_VERSION"
+fi
+echo "Fetching yt-dlp (Windows, $YTDLP_VERSION)..."
+curl -fsSL -o "$BIN_DIR/yt-dlp.exe" "$YTDLP_BASE/yt-dlp.exe"
+curl -fsSL -o "$TMP_DIR/yt-dlp.SHA2-256SUMS" "$YTDLP_BASE/SHA2-256SUMS"
+YTDLP_EXPECTED="$(grep ' yt-dlp.exe$' "$TMP_DIR/yt-dlp.SHA2-256SUMS" | awk '{print $1}')"
+YTDLP_ACTUAL="$(shasum -a 256 "$BIN_DIR/yt-dlp.exe" | awk '{print $1}')"
+if [ -z "$YTDLP_EXPECTED" ] || [ "$YTDLP_EXPECTED" != "$YTDLP_ACTUAL" ]; then
+  echo "ERROR: yt-dlp.exe checksum mismatch (expected='$YTDLP_EXPECTED' actual='$YTDLP_ACTUAL') — refusing to bundle." >&2
+  exit 1
+fi
+echo "yt-dlp.exe checksum verified."
 
 # whisper.cpp powers Auto-captions. The official prebuilt Windows x64 build
 # ships whisper-cli.exe plus its whisper/ggml DLLs (including CPU-variant
