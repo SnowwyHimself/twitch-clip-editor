@@ -1,0 +1,65 @@
+name: Build Windows release
+
+# Builds the Windows NSIS installer on a native Windows runner (where makensis
+# runs without wine — which can't be produced on the maintainer's macOS box) and
+# uploads it to the GitHub Release for the current version. This gives Windows
+# the same installer + auto-update experience as the macOS dmg.
+#
+# Triggers:
+#   - push of a v* tag  -> builds that release automatically
+#   - manual dispatch   -> builds whatever ref you pick (default: main), and
+#                          uploads to the release matching package.json's version
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or tag to build from'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write # needed to upload assets to the Release
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Ensure unzip is available (used by fetch-binaries)
+        shell: bash
+        run: command -v unzip >/dev/null 2>&1 || choco install unzip -y --no-progress
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows installer (fetches binaries + electron-builder NSIS)
+        shell: bash
+        run: npm run dist:win
+
+      - name: Upload installer to the matching GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v$(node -p "require('./package.json').version")"
+          echo "Uploading Windows installer to release $TAG"
+          gh release upload "$TAG" \
+            "dist/Clip-Editor-Windows-Setup.exe" \
+            "dist/Clip-Editor-Windows-Setup.exe.blockmap" \
+            "dist/latest.yml" \
+            --clobber
+          echo "Done."
