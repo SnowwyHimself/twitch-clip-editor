@@ -82,23 +82,73 @@ function modelDirs({ modelsDir, resourcesDir }) {
   return dirs;
 }
 
-function resolveModelPath({ modelsDir, resourcesDir }) {
-  const fromEnv = process.env[MODEL_ENV];
-  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+// Caption quality tiers (user-facing names live in the UI — here we only map to
+// the concrete ggml model + its DTW token-alignment preset). Fast is the bundled
+// base.en (works offline, no download); Better/Best are downloaded on demand into
+// userData/models (see the download manager). Sizes are the exact HF byte counts
+// used to verify a finished download.
+const CAPTION_TIERS = {
+  fast: { file: 'ggml-base.en.bin', dtw: 'base.en', bundled: true, sizeBytes: null, url: null },
+  better: {
+    file: 'ggml-small.en.bin',
+    dtw: 'small.en',
+    bundled: false,
+    sizeBytes: 487614201,
+    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin',
+  },
+  best: {
+    // q5_0 quant of large-v3-turbo — a fraction of the full 1.6 GB f16 with
+    // negligible caption-quality loss, so it fits far more machines.
+    file: 'ggml-large-v3-turbo-q5_0.bin',
+    dtw: 'large.v3.turbo',
+    bundled: false,
+    sizeBytes: 574041195,
+    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin',
+  },
+};
+const TIER_ORDER = ['fast', 'better', 'best'];
+const DEFAULT_TIER = 'fast';
+
+// A specific tier's model file on disk (userData models first, then bundled
+// resources/models), or null if it isn't present.
+function tierModelPath(tier, { modelsDir, resourcesDir }) {
+  const spec = CAPTION_TIERS[tier];
+  if (!spec) return null;
   for (const dir of modelDirs({ modelsDir, resourcesDir })) {
-    let entries;
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    // Any ggml-*.bin EXCEPT the silero VAD model (which lives in the same
-    // dir and matches the same pattern) — so base.en/small.en/etc. resolve,
-    // never the VAD file.
-    const model = entries.find((name) => /^ggml-.*\.bin$/.test(name) && !/silero|vad/i.test(name));
-    if (model) return path.join(dir, model);
+    const candidate = path.join(dir, spec.file);
+    if (fs.existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+// Per-tier availability, for the settings UI + status endpoint.
+function tierAvailability(dirs) {
+  const out = {};
+  for (const tier of TIER_ORDER) {
+    const p = tierModelPath(tier, dirs);
+    out[tier] = {
+      available: !!p,
+      bundled: !!CAPTION_TIERS[tier].bundled,
+      sizeBytes: CAPTION_TIERS[tier].sizeBytes,
+      file: CAPTION_TIERS[tier].file,
+    };
+  }
+  return out;
+}
+
+// The tier we'll actually run: the requested one if its model is present, else
+// the best AVAILABLE tier (highest on disk — Fast is always bundled). Lets
+// generation proceed transparently while a bigger model is still downloading.
+function effectiveTier(requested, dirs) {
+  const req = CAPTION_TIERS[requested] ? requested : DEFAULT_TIER;
+  const reqPath = tierModelPath(req, dirs);
+  if (reqPath) return { tier: req, modelPath: reqPath, requested: req, downgraded: false };
+  for (let i = TIER_ORDER.length - 1; i >= 0; i--) {
+    const t = TIER_ORDER[i];
+    const p = tierModelPath(t, dirs);
+    if (p) return { tier: t, modelPath: p, requested: req, downgraded: t !== req };
+  }
+  return { tier: null, modelPath: null, requested: req, downgraded: false };
 }
 
 // The silero VAD model (optional). When present, transcription runs with
@@ -122,7 +172,11 @@ function resolveVadModelPath({ modelsDir, resourcesDir }) {
 // instructions instead of a raw spawn error.
 function checkWhisperSetup({ resourcesDir, modelsDir }) {
   const binary = resolveWhisperBinary(resourcesDir);
-  const model = resolveModelPath({ modelsDir, resourcesDir });
+  // Ready = a binary + ANY tier model on disk. An explicit WHISPER_MODEL override
+  // still counts (power users pointing at their own file).
+  const envModel = process.env[MODEL_ENV];
+  const model =
+    (envModel && fs.existsSync(envModel) && envModel) || effectiveTier(DEFAULT_TIER, { modelsDir, resourcesDir }).modelPath;
   return { binary, model, ready: !!(binary && model) };
 }
 
@@ -146,17 +200,42 @@ function dtwTypeFromModelPath(modelPath) {
   return match ? `${match[1]}${match[2] || ''}` : null;
 }
 
-async function transcribeSource(inputPath, { ffmpegBin, resourcesDir, modelsDir, workDir, mode = 'blocks' }) {
-  const setup = checkWhisperSetup({ resourcesDir, modelsDir });
-  if (!setup.binary) {
+async function transcribeSource(
+  inputPath,
+  { ffmpegBin, resourcesDir, modelsDir, workDir, mode = 'blocks', tier = DEFAULT_TIER }
+) {
+  const binary = resolveWhisperBinary(resourcesDir);
+  if (!binary) {
     throw new Error(
       'whisper.cpp is not installed. Install it with "brew install whisper-cpp" (macOS), then retry.'
     );
   }
-  if (!setup.model) {
-    throw new Error(
-      `No whisper model found in ${modelsDir}. Run "npm run fetch-whisper-model" once to download it (~148MB), then retry.`
-    );
+  const dirs = { modelsDir, resourcesDir };
+
+  // Model selection: an explicit WHISPER_MODEL override wins (power users), else
+  // the requested quality tier, transparently downgraded to the best AVAILABLE
+  // tier if that model isn't downloaded yet.
+  const envModel = process.env[MODEL_ENV];
+  let modelPath = envModel && fs.existsSync(envModel) ? envModel : null;
+  let usedTier = tier;
+  let requestedTier = tier;
+  let downgraded = false;
+  let dtwPreset;
+  if (modelPath) {
+    dtwPreset = dtwTypeFromModelPath(modelPath);
+    usedTier = null;
+  } else {
+    const eff = effectiveTier(tier, dirs);
+    if (!eff.modelPath) {
+      throw new Error(
+        `No whisper model found in ${modelsDir}. Run "npm run fetch-whisper-model" once to download it, then retry.`
+      );
+    }
+    modelPath = eff.modelPath;
+    usedTier = eff.tier;
+    requestedTier = eff.requested;
+    downgraded = eff.downgraded;
+    dtwPreset = CAPTION_TIERS[usedTier] && CAPTION_TIERS[usedTier].dtw;
   }
 
   const stamp = crypto.randomUUID();
@@ -170,15 +249,14 @@ async function transcribeSource(inputPath, { ffmpegBin, resourcesDir, modelsDir,
     await runCommand(ffmpegBin, ['-y', '-i', inputPath, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath]);
 
     const args = [
-      '-m', setup.model,
+      '-m', modelPath,
       '-f', wavPath,
       '-oj',            // JSON output (written to <-of base>.json)
       '-of', outBase,
       '-ml', mode === 'words' ? '1' : String(MAX_SEGMENT_CHARS),
       '-sow',           // split on word boundaries, never mid-word
     ];
-    const dtwType = dtwTypeFromModelPath(setup.model);
-    if (dtwType) args.push('--dtw', dtwType);
+    if (dtwPreset) args.push('--dtw', dtwPreset);
 
     // Voice Activity Detection when the silero model is available — isolates
     // speech and skips wind/background noise, which is the main cause of bad
@@ -188,7 +266,7 @@ async function transcribeSource(inputPath, { ffmpegBin, resourcesDir, modelsDir,
     if (vadModel) {
       args.push('--vad', '--vad-model', vadModel, '--vad-speech-pad-ms', '48');
     }
-    await runCommand(setup.binary, args);
+    await runCommand(binary, args);
 
     const parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
     const rawSegments = parsed.transcription || [];
@@ -202,12 +280,22 @@ async function transcribeSource(inputPath, { ffmpegBin, resourcesDir, modelsDir,
 
     // Raw word segments — display timing (continuous, capped so nothing lingers
     // through a long pause) is decided when words are grouped into caption
-    // blocks on the client (see groupCaptionWords in panel.js).
-    return segments;
+    // blocks on the client (see groupCaptionWords in panel.js). `tier` reports
+    // which model actually ran so the UI can note a transparent downgrade.
+    return { segments, tier: usedTier, requestedTier, downgraded };
   } finally {
     fs.unlink(wavPath, () => {});
     fs.unlink(jsonPath, () => {});
   }
 }
 
-module.exports = { transcribeSource, checkWhisperSetup };
+module.exports = {
+  transcribeSource,
+  checkWhisperSetup,
+  CAPTION_TIERS,
+  TIER_ORDER,
+  DEFAULT_TIER,
+  tierAvailability,
+  tierModelPath,
+  effectiveTier,
+};

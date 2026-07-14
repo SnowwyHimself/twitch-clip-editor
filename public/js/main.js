@@ -43,6 +43,7 @@ import { initTimeline } from './timeline.js';
 import { initPanel, setAddClipHandler } from './panel.js';
 import { initExport } from './export.js';
 import { initBrandKit } from './brandkit.js';
+import { initCaptionSettings } from './captionsettings.js';
 import { icon, hydrateIcons } from './icons.js';
 import {
   saveProject,
@@ -552,6 +553,7 @@ async function boot() {
   initPanel();
   initExport();
   initBrandKit(); // loads the global brand kit + seeds this session's watermark
+  initCaptionSettings(); // caption quality tier + custom vocabulary
   wireIngestion();
   wireToolbar();
   wireShortcuts();

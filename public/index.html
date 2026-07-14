@@ -642,6 +642,17 @@
 
         <div class="insp-sec">Manage</div>
         <div class="field-group">
+          <div class="cap-quality-row">
+            <label class="field-label" for="cap-tier-select">Caption quality</label>
+            <div class="cap-quality-controls">
+              <select id="cap-tier-select" class="font-select cap-tier-select">
+                <option value="fast">Fast</option>
+                <option value="better">Better</option>
+                <option value="best">Best</option>
+              </select>
+              <button type="button" id="cap-quality-settings-btn" class="secondary-btn icon-btn" title="Caption quality &amp; vocabulary settings" aria-label="Caption settings">⚙</button>
+            </div>
+          </div>
           <button type="button" id="captions-generate-btn" class="secondary-btn full-width captions-generate">Regenerate captions</button>
           <p class="field-hint" id="captions-status">Transcribes the clip's audio locally with Whisper.</p>
           <label class="switch-row" for="captions-visible-toggle" style="margin-top:10px">
@@ -822,6 +833,27 @@
 
         <button type="button" id="brand-save-btn" class="primary-btn full-width">Save brand kit</button>
         <p class="field-hint" id="brand-status"></p>
+      </div>
+    </div>
+  </div>
+
+  <div id="caption-modal" class="export-modal hidden">
+    <div class="export-card">
+      <div class="export-header">
+        <h2>Caption quality</h2>
+        <button type="button" id="caption-close-btn" class="secondary-btn">Close</button>
+      </div>
+      <div class="export-options">
+        <p class="field-hint">Higher tiers are more accurate but download a one-time model. Everything still runs on your computer — the only network use is the model download itself.</p>
+        <div id="caption-tier-list" class="caption-tier-list"></div>
+        <p class="field-hint caption-ram-warn hidden" id="caption-ram-warn"></p>
+
+        <div class="insp-sec">Names &amp; words to recognize</div>
+        <div class="field-group">
+          <textarea id="caption-vocab" rows="3" placeholder="e.g. streamer names, game terms — comma or space separated"></textarea>
+          <p class="field-hint">Helps Whisper spell names &amp; jargon correctly. Applies to every caption generation, on all tiers.</p>
+        </div>
+        <p class="field-hint" id="caption-modal-status"></p>
       </div>
     </div>
   </div>

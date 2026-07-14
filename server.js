@@ -3,9 +3,19 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const os = require('os');
+const https = require('https');
 const { spawn } = require('child_process');
 const { renderCaptionPng, resolveFontPath, getFontOptions } = require('./caption');
-const { transcribeSource, checkWhisperSetup } = require('./transcribe');
+const {
+  transcribeSource,
+  checkWhisperSetup,
+  CAPTION_TIERS,
+  TIER_ORDER,
+  DEFAULT_TIER,
+  tierAvailability,
+  tierModelPath,
+} = require('./transcribe');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
@@ -2175,7 +2185,7 @@ app.post('/api/transcribe', (req, res, next) => { req.jobId = crypto.randomUUID(
       }
       inputPath = await fetchPreviewSource(trimmedUrl);
     }
-    const segments = await transcribeSource(inputPath, {
+    const result = await transcribeSource(inputPath, {
       ffmpegBin: FFMPEG_BIN,
       resourcesDir: process.env.CLIP_EDITOR_RESOURCES,
       modelsDir: MODELS_DIR,
@@ -2183,8 +2193,12 @@ app.post('/api/transcribe', (req, res, next) => { req.jobId = crypto.randomUUID(
       // 'words' = one caption per word (TikTok style), 'blocks' = short
       // multi-word lines. Anything else falls back to blocks.
       mode: (req.body || {}).mode === 'words' ? 'words' : 'blocks',
+      // Caption quality tier (fast/better/best); server resolves the model +
+      // transparently downgrades if it's not downloaded yet.
+      tier: readCaptionSettings().tier,
     });
-    res.json({ segments });
+    // tier/downgraded let the client note "Using Fast — Best is still downloading".
+    res.json({ segments: result.segments, tier: result.tier, requestedTier: result.requestedTier, downgraded: result.downgraded });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2346,6 +2360,40 @@ app.get('/api/brand-kit/watermark', (req, res) => {
   }
   if (!fs.existsSync(file)) return res.status(404).end();
   res.sendFile(file);
+});
+
+// --- caption settings (global, userData) -------------------------------------
+// Quality tier + custom vocabulary. Global (shared across projects, survives
+// updates) — lives next to the other userData state.
+const CAPTION_SETTINGS_FILE = path.join(DATA_ROOT, 'caption-settings.json');
+function captionDefaults() {
+  return { tier: DEFAULT_TIER, customVocab: '' };
+}
+function readCaptionSettings() {
+  try {
+    return { ...captionDefaults(), ...JSON.parse(fs.readFileSync(CAPTION_SETTINGS_FILE, 'utf8')) };
+  } catch {
+    return captionDefaults();
+  }
+}
+function writeCaptionSettings(patch) {
+  const merged = { ...readCaptionSettings(), ...(patch || {}) };
+  merged.tier = TIER_ORDER.includes(merged.tier) ? merged.tier : DEFAULT_TIER;
+  merged.customVocab = typeof merged.customVocab === 'string' ? merged.customVocab.slice(0, 2000) : '';
+  fs.writeFileSync(CAPTION_SETTINGS_FILE, JSON.stringify(merged));
+  return merged;
+}
+
+app.get('/api/caption-settings', (req, res) => {
+  res.json({
+    settings: readCaptionSettings(),
+    tiers: tierAvailability({ modelsDir: MODELS_DIR, resourcesDir: process.env.CLIP_EDITOR_RESOURCES }),
+    totalMemBytes: os.totalmem(),
+  });
+});
+
+app.post('/api/caption-settings', (req, res) => {
+  res.json({ settings: writeCaptionSettings(req.body || {}) });
 });
 
 app.get('/api/projects', (req, res) => {

@@ -43,7 +43,9 @@ export async function transcribe(source, mode) {
     formData.append('url', source.url);
   }
   const res = await fetch('/api/transcribe', { method: 'POST', body: formData });
-  return (await parseJsonResponse(res, 'Transcription failed')).segments;
+  // { segments, tier, requestedTier, downgraded } — tier fields let the caller
+  // note a transparent downgrade (requested model not downloaded yet).
+  return parseJsonResponse(res, 'Transcription failed');
 }
 
 export async function fetchSfxPresets() {
@@ -84,6 +86,21 @@ export async function saveBrandKit(kit, { imageFile = null, removeWatermark = fa
 // Cache-busted so a freshly-uploaded watermark shows immediately.
 export function watermarkUrl(v) {
   return `/api/brand-kit/watermark?v=${v || Date.now()}`;
+}
+
+// --- caption settings (tier + custom vocabulary, global userData) ---
+export async function fetchCaptionSettings() {
+  const res = await fetch('/api/caption-settings');
+  return parseJsonResponse(res, 'Failed to load caption settings');
+}
+
+export async function saveCaptionSettings(patch) {
+  const res = await fetch('/api/caption-settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse(res, 'Failed to save caption settings');
 }
 
 export async function startExport(endpoint, formData) {

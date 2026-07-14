@@ -1337,11 +1337,19 @@ async function generateCaptions() {
     // Always transcribe word-level, then group into N-word blocks client-side
     // (see groupCaptionWords) so "words per block" and punctuation cleanup are
     // just post-processing, not a re-transcription.
-    const words = await transcribe(state.source, 'words');
+    const result = await transcribe(state.source, 'words');
+    const words = result.segments || [];
     if (words.length === 0) {
       els.capStatus.textContent = 'No speech was detected in this clip.';
       return;
     }
+    // Transparent downgrade: the chosen tier's model isn't available yet, so the
+    // best downloaded one ran instead. Surface it (S2 makes this a live download).
+    const tierName = { fast: 'Fast', better: 'Better', best: 'Best' };
+    const captionDowngradeNote =
+      result.downgraded && result.requestedTier !== result.tier
+        ? ` (used ${tierName[result.tier] || result.tier} — ${tierName[result.requestedTier] || result.requestedTier} isn’t downloaded yet)`
+        : '';
     const s = state.captionSettings;
     const segments = groupCaptionWords(words, s.maxWords || 1, !!s.punctuationCleanup);
     // Regenerating replaces the previous caption set — hand-made text
@@ -1376,7 +1384,7 @@ async function generateCaptions() {
         { select: false }
       );
     }
-    els.capStatus.textContent = `${segments.length} caption ${segments.length === 1 ? 'block' : 'blocks'} added — restyle them below, or regenerate after changing the settings.`;
+    els.capStatus.textContent = `${segments.length} caption ${segments.length === 1 ? 'block' : 'blocks'} added${captionDowngradeNote} — restyle them below, or regenerate after changing the settings.`;
     // Land on the first block so you're immediately editing it (and the Caption
     // inspector, with its "This block" section, is what shows).
     const firstCap = captionLayersByTime()[0];

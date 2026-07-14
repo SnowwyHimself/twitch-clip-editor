@@ -24,3 +24,4 @@ native/emoji-render-mac/emoji-render
 /projects/
 # Global brand kit (watermark image + brand-kit.json), created at runtime in userData
 /brand-kit/
+/caption-settings.json

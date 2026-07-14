@@ -1225,6 +1225,83 @@ input[type="text"] {
   display: none;
 }
 
+/* Caption quality — compact selector in the inspector */
+.cap-quality-row {
+  margin-bottom: 10px;
+}
+.cap-quality-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.cap-tier-select {
+  flex: 1;
+}
+.cap-quality-controls .icon-btn {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1;
+  padding: 6px 9px;
+}
+
+/* Caption quality — tier cards in the modal */
+.caption-tier-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.caption-tier {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.caption-tier.active {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+.caption-tier-radio {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.caption-tier-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.caption-tier-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.caption-tier-blurb {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.caption-tier-action {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.caption-tier-action .secondary-btn,
+.caption-tier-action .link-btn {
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+}
+.caption-tier-progress {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.caption-ram-warn {
+  color: var(--warning, #ffb020);
+}
+
 /* Section headers + progressive disclosure inside inspectors */
 .insp-sec {
   font-size: var(--fs-xs);
