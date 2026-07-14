@@ -1,6 +1,6 @@
 {
   "name": "clip-vertical-editor",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "CapCut-style editor for turning Twitch clips into vertical TikTok/Reels/Shorts videos.",
   "main": "electron/main.js",
   "author": "SnowwyHimself",
