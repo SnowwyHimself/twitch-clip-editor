@@ -2306,8 +2306,10 @@ img.preset-thumb {
   position: absolute;
   top: 0;
   height: 100%;
-  /* Video-track pieces are contiguous, so no rounded corners — rounded ends on
-     abutting bars leave a dark notch at every clip boundary that reads as a gap. */
+  /* Pieces are square by default so abutting clips meet flush — rounding every
+     bar would leave a dark notch at each cut. JS rounds ONLY the two outer ends
+     of the whole run (.tl-round-left / .tl-round-right) so the video track reads
+     as one rounded strip without notches between clips. */
   border-radius: 0;
   cursor: pointer;
   background: rgba(124, 92, 255, 0.28);
@@ -2316,6 +2318,19 @@ img.preset-thumb {
 
 .tl-segment:hover {
   background: rgba(124, 92, 255, 0.4);
+}
+
+/* Rounded outer ends of the video run. Compound selectors so these beat the
+   later `.tl-appended-clip { border-radius: 0 }` rule by specificity. */
+.tl-segment.tl-round-left,
+.tl-appended-clip.tl-round-left {
+  border-top-left-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+}
+.tl-segment.tl-round-right,
+.tl-appended-clip.tl-round-right {
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
 }
 
 /* Add-clip chooser: URL input sits between the note and the actions. */

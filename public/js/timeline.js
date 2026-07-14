@@ -353,6 +353,15 @@ function layoutVideoTrack() {
     el.style.width = `${Math.max(6, (item.outEnd - item.outStart) * pps)}px`;
     paintFilmstrip(el, item.clip.source.previewUrl, item.clip.start, item.outEnd - item.outStart);
   }
+  // Round only the outer ends of the whole run so the track reads as one rounded
+  // strip while abutting clips still meet flush (see .tl-round-left/right).
+  const pieces = orderedPieces();
+  const firstId = pieces.length ? pieces[0].id : null;
+  const lastId = pieces.length ? pieces[pieces.length - 1].id : null;
+  for (const [id, el] of [...segmentEls, ...appendedClipEls]) {
+    el.classList.toggle('tl-round-left', id === firstId);
+    el.classList.toggle('tl-round-right', id === lastId);
+  }
   layoutTransitionBadges();
 }
 
