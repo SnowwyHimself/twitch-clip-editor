@@ -22,3 +22,5 @@ native/emoji-render-mac/emoji-render
 # Local editor/agent tooling config
 .claude/
 /projects/
+# Global brand kit (watermark image + brand-kit.json), created at runtime in userData
+/brand-kit/

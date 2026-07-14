@@ -110,6 +110,11 @@ function buildFormData() {
   formData.append('crf', qualitySelect.value);
   // Loudness normalization to a consistent -14 LUFS (Feature 8); choice remembered.
   formData.append('normalizeLoudness', loudnessToggle && loudnessToggle.checked ? 'true' : 'false');
+  // Brand-kit watermark (Feature 7) — the image lives on the server, so only the
+  // per-project placement/toggle rides the request.
+  if (state.watermark && state.watermark.enabled) {
+    formData.append('watermark', JSON.stringify({ enabled: true, ...state.watermark }));
+  }
   formData.append('layout', state.layout || 'fill');
   if (state.layout === 'split') formData.append('split', JSON.stringify(state.split));
   formData.append('textLayers', JSON.stringify(buildTextLayersPayload()));

@@ -42,6 +42,7 @@ import {
 import { initTimeline } from './timeline.js';
 import { initPanel, setAddClipHandler } from './panel.js';
 import { initExport } from './export.js';
+import { initBrandKit } from './brandkit.js';
 import { icon, hydrateIcons } from './icons.js';
 import {
   saveProject,
@@ -550,6 +551,7 @@ async function boot() {
   initTimeline();
   initPanel();
   initExport();
+  initBrandKit(); // loads the global brand kit + seeds this session's watermark
   wireIngestion();
   wireToolbar();
   wireShortcuts();

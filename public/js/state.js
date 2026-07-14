@@ -104,6 +104,14 @@ export const state = {
   // skipped at export — the data is kept so it restores exactly when re-shown.
   captionsHidden: false,
 
+  // Global brand kit (default font/colour + the watermark asset), loaded once
+  // from the server at startup. NOT saved per project — it's the same for all.
+  brandKit: null,
+
+  // Per-project watermark toggle + placement. Saved with the project; new
+  // projects start from the brand kit's defaults (see applyBrandKitToNewProject).
+  watermark: { enabled: false, sizePercent: 18, xPercent: 88, yPercent: 90, opacity: 0.7 },
+
   // The Captions tab's shared settings, applied to every group:'caption'
   // layer at once (like CapCut/TikTok's caption styling, which styles the
   // whole caption track, not one block at a time).
@@ -762,9 +770,11 @@ export function addTextLayer(partial = {}, { select = true } = {}) {
     id: `layer-${Date.now()}-${layerCounter++}`,
     text: 'New text',
     style: 'outline', // 'outline' | 'plain' | 'box'
-    fontId: defaultFontId(),
+    // Brand kit defaults (font/colour) apply to fresh text; captions pass their
+    // own fontId/color in `partial`, which wins via the spread below.
+    fontId: (state.brandKit && state.brandKit.defaultFontId) || defaultFontId(),
     fontSize: 64,
-    color: '#ffffff',
+    color: (state.brandKit && state.brandKit.defaultTextColor) || '#ffffff',
     dropShadow: false,
     // D1 text options. strokeWidth is % of font size (null = follow the style:
     // outline→OUTLINE_THICKNESS, plain/box→0). uppercase/opacity apply to any
@@ -1289,6 +1299,30 @@ export function pasteStyle() {
     }
     emit('layers');
   }
+}
+
+// --- brand kit ---------------------------------------------------------------
+export function setBrandKit(kit) {
+  state.brandKit = kit || null;
+}
+
+// New projects start from the brand kit's watermark defaults (including whether
+// it's on by default). Called whenever a fresh project begins.
+export function applyBrandKitToNewProject() {
+  const wm = (state.brandKit && state.brandKit.watermark) || {};
+  state.watermark = {
+    enabled: !!(wm.onByDefault && wm.image),
+    sizePercent: Number.isFinite(wm.sizePercent) ? wm.sizePercent : 18,
+    xPercent: Number.isFinite(wm.xPercent) ? wm.xPercent : 88,
+    yPercent: Number.isFinite(wm.yPercent) ? wm.yPercent : 90,
+    opacity: Number.isFinite(wm.opacity) ? wm.opacity : 0.7,
+  };
+  emit('settings');
+}
+
+export function setWatermark(patch) {
+  Object.assign(state.watermark, patch);
+  emit('settings');
 }
 
 // Duplicate a text/caption layer (⌘D, the Duplicate button, the context menu).

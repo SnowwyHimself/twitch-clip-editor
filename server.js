@@ -34,8 +34,11 @@ const TRANSCRIBE_DIR = path.join(DATA_ROOT, 'transcribe-cache');
 // media/ subfolder for any imported sound/overlay files, so a project reopens
 // self-contained. The special id 'autosave' is the rolling autosave slot.
 const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
+// Global brand kit (default font/colour + a reusable watermark image). Lives in
+// userData so it's shared across projects and survives app updates.
+const BRAND_DIR = path.join(DATA_ROOT, 'brand-kit');
 
-for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR, PROJECTS_DIR]) {
+for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR, PROJECTS_DIR, BRAND_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -1116,9 +1119,15 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
       Number.isFinite(ov.start) && Number.isFinite(ov.end) && ov.end > ov.start
         ? `between(t,${ov.start.toFixed(3)},${ov.end.toFixed(3)})`
         : null;
+    // Opacity (used by the brand-kit watermark) — premultiply the alpha so the
+    // overlay composites semi-transparently.
+    const opChain =
+      Number.isFinite(ov.opacity) && ov.opacity < 1
+        ? `,format=rgba,colorchannelmixer=aa=${Math.max(0, ov.opacity).toFixed(3)}`
+        : '';
     const label = `[ovlm${nextInputIndex}]`;
     overlayStages.push({
-      pre: `[${nextInputIndex}:v]scale=${mediaWidthPx}:-2${cropChain}${label}`,
+      pre: `[${nextInputIndex}:v]scale=${mediaWidthPx}:-2${cropChain}${opChain}${label}`,
       inputLabel: label,
       x: `x=(main_w-overlay_w)*${(ov.xPercent / 100).toFixed(4)}`,
       y: `y=(main_h-overlay_h)*${(ov.yPercent / 100).toFixed(4)}`,
@@ -1518,6 +1527,51 @@ function buildMediaOverlays(body, overlayFiles) {
       offset: Number.isFinite(parseFloat(m.offset)) ? parseFloat(m.offset) : 0,
     };
   });
+}
+
+// The brand-kit watermark as a top-of-stack media overlay (or null). The client
+// sends the per-project watermark config in `watermark`; the image itself is the
+// global brand asset on disk, so it never has to be uploaded per export. Reuses
+// the media-overlay compositor (scale/position + the new opacity path).
+function watermarkOverlay(body) {
+  let wm;
+  try {
+    wm = JSON.parse(body.watermark || 'null');
+  } catch {
+    wm = null;
+  }
+  if (!wm || !wm.enabled) return null;
+  const kit = readBrandKit();
+  const name = kit.watermark && kit.watermark.image;
+  if (!name) return null;
+  let file;
+  try {
+    file = resolveInside(BRAND_DIR, safeLeaf(name));
+  } catch {
+    return null;
+  }
+  if (!fs.existsSync(file)) return null;
+  const num = (v, d) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d);
+  return {
+    path: file,
+    isVideo: false,
+    sizePercent: clampPositionPercent(wm.sizePercent, kit.watermark.sizePercent),
+    xPercent: clampPositionPercent(wm.xPercent, kit.watermark.xPercent),
+    yPercent: clampPositionPercent(wm.yPercent, kit.watermark.yPercent),
+    cropTop: 0,
+    cropBottom: 0,
+    cropLeft: 0,
+    cropRight: 0,
+    start: null,
+    end: null,
+    offset: 0,
+    opacity: Math.max(0, Math.min(1, num(wm.opacity, kit.watermark.opacity))),
+  };
+}
+
+// Media overlays plus the brand-kit watermark (last → composites on top).
+function buildMediaOverlaysWithWatermark(body, overlayFiles) {
+  return [...buildMediaOverlays(body, overlayFiles), watermarkOverlay(body)].filter(Boolean);
 }
 
 // Each sound file (multipart 'audioTrack' field, order-matched to the JSON
@@ -2048,7 +2102,7 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     clampSpeed(speed),
     buildSegments(req.body || {}),
     buildTransitions(req.body || {}),
-    buildMediaOverlays(req.body || {}, req.files.overlay),
+    buildMediaOverlaysWithWatermark(req.body || {}, req.files.overlay),
     buildAudioOverlays(req.body || {}, req.files.audioTrack),
     buildKeyframes(req.body || {}),
     buildFaceTrack(req.body || {}),
@@ -2088,7 +2142,7 @@ app.post(
       clampSpeed(req.body.speed),
       buildSegments(req.body),
       buildTransitions(req.body),
-      buildMediaOverlays(req.body, req.files.overlay),
+      buildMediaOverlaysWithWatermark(req.body, req.files.overlay),
       buildAudioOverlays(req.body, req.files.audioTrack),
       buildKeyframes(req.body),
       buildFaceTrack(req.body),
@@ -2233,6 +2287,65 @@ app.post('/api/project/save', projectUpload.array('media'), (req, res) => {
   } catch (err) {
     res.status(400).json({ error: String((err && err.message) || err) });
   }
+});
+
+// --- brand kit (global, userData) --------------------------------------------
+const BRAND_JSON = path.join(BRAND_DIR, 'brand-kit.json');
+const brandUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+function brandDefaults() {
+  return {
+    defaultFontId: null,
+    defaultTextColor: null,
+    watermark: { image: null, sizePercent: 18, xPercent: 88, yPercent: 90, opacity: 0.7, onByDefault: false },
+  };
+}
+function readBrandKit() {
+  try {
+    return { ...brandDefaults(), ...JSON.parse(fs.readFileSync(BRAND_JSON, 'utf8')) };
+  } catch {
+    return brandDefaults();
+  }
+}
+function clearWatermarkImage() {
+  for (const f of fs.readdirSync(BRAND_DIR)) {
+    if (f.startsWith('watermark.')) fs.unlinkSync(path.join(BRAND_DIR, f));
+  }
+}
+
+app.get('/api/brand-kit', (req, res) => res.json(readBrandKit()));
+
+app.post('/api/brand-kit', brandUpload.single('watermark'), (req, res) => {
+  try {
+    const kit = { ...brandDefaults(), ...JSON.parse(req.body.kit || '{}') };
+    kit.watermark = { ...brandDefaults().watermark, ...(kit.watermark || {}) };
+    if (req.file) {
+      clearWatermarkImage(); // one watermark at a time
+      const ext = ((path.extname(req.file.originalname || '').toLowerCase().match(/^\.(png|jpg|jpeg|webp|gif)$/) || ['.png'])[0]);
+      fs.writeFileSync(path.join(BRAND_DIR, `watermark${ext}`), req.file.buffer);
+      kit.watermark.image = `watermark${ext}`;
+    } else if (req.body.removeWatermark === 'true') {
+      clearWatermarkImage();
+      kit.watermark.image = null;
+    }
+    fs.writeFileSync(BRAND_JSON, JSON.stringify(kit));
+    res.json(kit);
+  } catch (err) {
+    res.status(400).json({ error: String((err && err.message) || err) });
+  }
+});
+
+app.get('/api/brand-kit/watermark', (req, res) => {
+  const name = readBrandKit().watermark.image;
+  if (!name) return res.status(404).end();
+  let file;
+  try {
+    file = resolveInside(BRAND_DIR, safeLeaf(name));
+  } catch {
+    return res.status(400).end();
+  }
+  if (!fs.existsSync(file)) return res.status(404).end();
+  res.sendFile(file);
 });
 
 app.get('/api/projects', (req, res) => {

@@ -64,6 +64,28 @@ export async function presetAsFile(preset) {
   return new File([blob], preset.id, { type: blob.type });
 }
 
+// --- brand kit (global, userData) ---
+export async function fetchBrandKit() {
+  const res = await fetch('/api/brand-kit');
+  return parseJsonResponse(res, 'Failed to load brand kit');
+}
+
+// Saves the brand kit JSON; optionally uploads a new watermark image, or removes
+// the current one (removeWatermark=true).
+export async function saveBrandKit(kit, { imageFile = null, removeWatermark = false } = {}) {
+  const formData = new FormData();
+  formData.append('kit', JSON.stringify(kit));
+  if (imageFile) formData.append('watermark', imageFile);
+  if (removeWatermark) formData.append('removeWatermark', 'true');
+  const res = await fetch('/api/brand-kit', { method: 'POST', body: formData });
+  return parseJsonResponse(res, 'Failed to save brand kit');
+}
+
+// Cache-busted so a freshly-uploaded watermark shows immediately.
+export function watermarkUrl(v) {
+  return `/api/brand-kit/watermark?v=${v || Date.now()}`;
+}
+
 export async function startExport(endpoint, formData) {
   const res = await fetch(endpoint, { method: 'POST', body: formData });
   return parseJsonResponse(res, 'Failed to start export');

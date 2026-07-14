@@ -16,6 +16,7 @@
 // it's selected, so you can style a layer without chasing the playhead).
 
 import { icon } from './icons.js';
+import { watermarkUrl } from './api.js';
 import {
   state,
   on,
@@ -529,6 +530,31 @@ function attachLayerDrag(el, layerId) {
   };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
+}
+
+// --- brand-kit watermark (Feature 7) -----------------------------------------
+// A single <img> pinned in the frame from state.watermark + the global brand
+// asset. Position/size/opacity mirror the export's overlay math so preview and
+// render match: size = % of frame width; x/y place it within the leftover space.
+const watermarkImg = document.getElementById('preview-watermark');
+function renderWatermark() {
+  const wm = state.watermark;
+  const kit = state.brandKit;
+  const on = !!(wm && wm.enabled && kit && kit.watermark && kit.watermark.image);
+  watermarkImg.classList.toggle('hidden', !on);
+  if (!on) return;
+  if (watermarkImg.dataset.img !== kit.watermark.image) {
+    watermarkImg.src = watermarkUrl(kit.watermark.image);
+    watermarkImg.dataset.img = kit.watermark.image;
+    watermarkImg.onload = renderWatermark; // reposition once the height is known
+  }
+  const { width: fw } = frameSize();
+  const w = fw * (wm.sizePercent / 100);
+  watermarkImg.style.width = `${w.toFixed(1)}px`;
+  watermarkImg.style.opacity = String(wm.opacity);
+  const h = watermarkImg.offsetHeight || w; // reflowed after width set
+  watermarkImg.style.left = `calc((100% - ${w.toFixed(1)}px) * ${(wm.xPercent / 100).toFixed(4)})`;
+  watermarkImg.style.top = `calc((100% - ${h.toFixed(1)}px) * ${(wm.yPercent / 100).toFixed(4)})`;
 }
 
 // --- inline text editing (double-click a text/caption layer in the preview) ---
@@ -1965,7 +1991,9 @@ export function initPreview() {
   on('settings', () => {
     fitPreviewFrame();
     updateAll();
+    renderWatermark();
   });
+  renderWatermark();
   on('facetrack', updateAll);
   on('layers', syncLayerEls);
   // Caption/text boxes are sized by MEASURING the rendered text (to match the

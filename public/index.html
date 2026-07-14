@@ -17,6 +17,7 @@
       <button type="button" id="project-save-btn" class="secondary-btn" title="Save project (⌘S)">Save</button>
       <button type="button" id="project-saveas-btn" class="secondary-btn" title="Save as a new project">Save As</button>
       <button type="button" id="project-open-btn" class="secondary-btn" title="Open a saved project">Open</button>
+      <button type="button" id="brand-kit-btn" class="secondary-btn" title="Global brand kit — default font, colour &amp; watermark">Brand kit</button>
       <input id="project-file-input" type="file" accept="video/*" hidden />
     </div>
     <div class="source-input">
@@ -49,6 +50,7 @@
         <div id="preview-guide-x" class="preview-guide preview-guide-x"></div>
         <div id="preview-overlays" class="preview-overlays"></div>
         <div id="text-layers" class="text-layers"></div>
+        <img id="preview-watermark" class="preview-watermark hidden" alt="" />
         <div id="preview-flash" class="preview-flash"></div>
       </div>
       <div id="preview-controls" class="preview-controls hidden">
@@ -114,6 +116,19 @@
           <div id="aspect-ratio-group" class="toggle-group aspect-ratio-group"></div>
         </div>
         <div data-bgblur-slot></div>
+
+        <div class="insp-sec">Watermark</div>
+        <div class="field-group">
+          <label class="switch-row" for="project-watermark-toggle">
+            <span class="field-label switch-label">Show watermark</span>
+            <span class="switch">
+              <input type="checkbox" id="project-watermark-toggle" />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <p class="field-hint" id="project-watermark-hint">Set the image &amp; placement in <strong>Brand kit</strong> (top bar).</p>
+        </div>
+
         <p class="panel-empty insp-hint">Select a clip or layer to edit it.</p>
       </div>
 
@@ -756,6 +771,58 @@
       </div>
       <div id="projects-list" class="projects-list"></div>
       <p id="projects-empty" class="field-hint hidden">No saved projects yet.</p>
+    </div>
+  </div>
+
+  <div id="brand-kit-modal" class="export-modal hidden">
+    <div class="export-card">
+      <div class="export-header">
+        <h2>Brand kit</h2>
+        <button type="button" id="brand-close-btn" class="secondary-btn">Close</button>
+      </div>
+      <div class="export-options">
+        <p class="field-hint">Global defaults for every project — stored on this computer. New projects start branded automatically.</p>
+
+        <div class="field-group">
+          <label class="field-label" for="brand-font">Default font</label>
+          <select id="brand-font" class="font-select"></select>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Default text colour</label>
+          <div id="brand-color" class="color-picker"></div>
+        </div>
+
+        <div class="insp-sec">Watermark</div>
+        <div class="field-group">
+          <img id="brand-wm-preview" class="brand-wm-preview hidden" alt="Watermark preview" />
+          <div class="preset-save-row">
+            <button type="button" id="brand-wm-choose" class="secondary-btn">Choose image…</button>
+            <button type="button" id="brand-wm-remove" class="secondary-btn hidden">Remove</button>
+          </div>
+          <input id="brand-wm-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="brand-wm-size">Size <span id="brand-wm-size-val">18%</span></label>
+          <input id="brand-wm-size" type="range" min="4" max="60" value="18" step="1" />
+          <label class="field-label" for="brand-wm-opacity" style="margin-top:8px">Opacity <span id="brand-wm-opacity-val">70%</span></label>
+          <input id="brand-wm-opacity" type="range" min="10" max="100" value="70" step="1" />
+          <label class="field-label" for="brand-wm-x" style="margin-top:8px">Position X <span id="brand-wm-x-val">88%</span></label>
+          <input id="brand-wm-x" type="range" min="0" max="100" value="88" step="1" />
+          <label class="field-label" for="brand-wm-y" style="margin-top:8px">Position Y <span id="brand-wm-y-val">90%</span></label>
+          <input id="brand-wm-y" type="range" min="0" max="100" value="90" step="1" />
+          <label class="switch-row" for="brand-wm-default" style="margin-top:8px">
+            <span class="field-label switch-label">On by default for new projects</span>
+            <span class="switch">
+              <input type="checkbox" id="brand-wm-default" />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+        </div>
+
+        <button type="button" id="brand-save-btn" class="primary-btn full-width">Save brand kit</button>
+        <p class="field-hint" id="brand-status"></p>
+      </div>
     </div>
   </div>
 
