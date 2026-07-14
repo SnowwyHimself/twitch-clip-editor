@@ -59,6 +59,7 @@ function serialize() {
     panY: state.panY,
     audio: state.audio,
     color: state.color,
+    crop: state.crop,
     layout: state.layout,
     split: state.split,
     keyframes: state.keyframes,
@@ -306,6 +307,9 @@ function applyStateFields(data, overlays, sounds, appendedClips) {
   state.color = data.color && typeof data.color === 'object'
     ? { brightness: 0, contrast: 0, saturation: 0, ...data.color }
     : { brightness: 0, contrast: 0, saturation: 0 };
+  state.crop = data.crop && typeof data.crop === 'object'
+    ? { top: 0, bottom: 0, left: 0, right: 0, ...data.crop }
+    : { top: 0, bottom: 0, left: 0, right: 0 };
   state.layout = data.layout === 'split' ? 'split' : 'fill';
   if (data.split) state.split = data.split;
   state.keyframes = data.keyframes || [];
