@@ -130,6 +130,9 @@ async function createWindow() {
     minHeight: 640,
     title: 'Clip Editor',
     backgroundColor: '#0e0e12',
+    // Window/taskbar icon (dev + Win/Linux). The packaged app icon comes from
+    // build/icon.icns|ico via electron-builder; a missing path here is ignored.
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Explicit, not relying on Electron defaults (see security section 3).

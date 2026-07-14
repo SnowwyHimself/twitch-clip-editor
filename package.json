@@ -74,7 +74,8 @@
           "to": "models"
         }
       ],
-      "artifactName": "Clip-Editor-Mac.${ext}"
+      "artifactName": "Clip-Editor-Mac.${ext}",
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
@@ -95,7 +96,8 @@
           "to": "models"
         }
       ],
-      "artifactName": "Clip-Editor-Windows-Setup.${ext}"
+      "artifactName": "Clip-Editor-Windows-Setup.${ext}",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
