@@ -71,7 +71,8 @@ import {
 import { trackSelectedFace } from './facetrack.js';
 import { confirmDialog } from './confirm.js';
 import { icon } from './icons.js';
-import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile } from './api.js';
+import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile, libraryItemAsFile, libraryFileUrl } from './api.js';
+import { loadLibrary, renderLibrarySection, saveToLibrary, onLibraryChange } from './library.js';
 import { showContextMenu } from './menu.js';
 
 const CAPTION_COLORS = [
@@ -169,6 +170,8 @@ function lookupElements() {
     overlayFile: byId('overlay-file'),
     overlayChooseBtn: byId('overlay-choose-btn'),
     overlayPresets: byId('overlay-presets'),
+    overlaySaveLib: byId('overlay-save-lib'),
+    overlayLibrary: byId('overlay-library'),
     overlaySizeGroup: byId('overlay-size-group'),
     overlaySizeSlider: byId('overlay-size-slider'),
     overlaySizeValue: byId('overlay-size-value'),
@@ -1083,10 +1086,49 @@ async function buildOverlayPresets() {
   }
 }
 
+// A thumbnail element for a library overlay (image preview, or a film glyph for
+// video overlays). Mirrors the built-in preset thumbnails.
+function overlayLibraryThumb(item) {
+  const isVideo = /\.(webm|mp4|mov)$/i.test(item.filename || '');
+  if (isVideo) {
+    const span = document.createElement('span');
+    span.className = 'preset-thumb';
+    span.innerHTML = icon('film');
+    return span;
+  }
+  const img = document.createElement('img');
+  img.className = 'preset-thumb';
+  img.src = item.url || libraryFileUrl(item.id);
+  img.alt = '';
+  return img;
+}
+
+// Render the "My library" overlays section into the Overlay inspector.
+function buildOverlayLibrary() {
+  renderLibrarySection(els.overlayLibrary, 'overlays', {
+    emptyText: 'Overlays you import can be saved here for reuse.',
+    renderThumb: overlayLibraryThumb,
+    onPick: async (item) => addOverlayFromFile(await libraryItemAsFile(item)),
+  });
+}
+
+// Import a user-picked overlay; also save it to the library when the toggle is on.
+async function importOverlay(file) {
+  if (!file) return;
+  addOverlayFromFile(file);
+  if (els.overlaySaveLib && els.overlaySaveLib.checked) {
+    try {
+      await saveToLibrary('overlays', file); // refreshes the library section
+    } catch (err) {
+      console.error('Save overlay to library failed:', err);
+    }
+  }
+}
+
 function wireOverlayControls() {
   els.overlayChooseBtn.addEventListener('click', () => els.overlayFile.click());
   els.overlayFile.addEventListener('change', () => {
-    addOverlayFromFile(els.overlayFile.files[0] || null);
+    importOverlay(els.overlayFile.files[0] || null);
     els.overlayFile.value = '';
   });
   els.overlaySizeSlider.addEventListener('input', () => {
@@ -2026,6 +2068,10 @@ export function initPanel() {
   wireTransitionControls();
   buildOverlayPresets();
   buildSfxPresets();
+  // Personal asset library: load once, render the "My library" sections, and
+  // re-render them whenever an item is saved/renamed/deleted.
+  loadLibrary().then(() => buildOverlayLibrary());
+  onLibraryChange(() => buildOverlayLibrary());
   refreshVideoPanel();
   refreshTextPanel();
   refreshOverlayPanel();

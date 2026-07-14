@@ -1991,6 +1991,89 @@ img.preset-thumb {
   padding: 0;
 }
 
+/* --- personal asset library ------------------------------------------------ */
+.lib-save-row {
+  margin-top: var(--space-2);
+}
+.library-empty {
+  margin: 0;
+  font-style: italic;
+  opacity: 0.8;
+}
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+}
+.library-search {
+  width: 100%;
+  margin-bottom: var(--space-2);
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+/* Each item: the pick button fills the cell; rename/delete float top-right and
+   fade in on hover so the grid stays clean. */
+.library-item {
+  position: relative;
+}
+.library-pick {
+  width: 100%;
+}
+.library-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-item-actions {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.library-item:hover .library-item-actions,
+.library-item:focus-within .library-item-actions {
+  opacity: 1;
+}
+.library-act {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.library-act:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.library-act .icon {
+  width: 13px;
+  height: 13px;
+}
+.library-rename-input {
+  width: 100%;
+  padding: 2px 4px;
+  font-size: var(--fs-xs);
+  text-align: center;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
 .full-width {
   width: 100%;
 }
