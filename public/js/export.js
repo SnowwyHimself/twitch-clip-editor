@@ -11,6 +11,7 @@
 
 import { state, on, keptSegments, orderedPieces, appendedLayout, sourceDuration, sourceToOutput } from './state.js';
 import { startExport, fetchJobStatus } from './api.js';
+import { currentProject } from './project.js';
 
 const exportBtn = document.getElementById('export-btn');
 const modal = document.getElementById('export-modal');
@@ -26,6 +27,20 @@ const startRenderBtn = document.getElementById('export-start-btn');
 const resolutionSelect = document.getElementById('export-resolution');
 const qualitySelect = document.getElementById('export-quality');
 const loudnessToggle = document.getElementById('export-loudness');
+const filenameInput = document.getElementById('export-filename');
+
+// A friendly, filesystem-safe download name from the user's input (or the
+// project name / "Clip Editor" fallback). Drops characters that are illegal in
+// filenames; the browser itself appends " (1)", " (2)" for duplicates.
+function exportFileName() {
+  const raw = (filenameInput && filenameInput.value.trim()) || currentProject().name || 'Clip Editor';
+  const safe = raw
+    .replace(/\.[Mm][Pp]4$/, '') // drop a typed .mp4 so we don't double it
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '') // illegal filename chars
+    .trim()
+    .slice(0, 80);
+  return `${safe || 'Clip Editor'}.mp4`;
+}
 
 const EXPORT_OPTS_KEY = 'clipEditor.exportOpts.v1';
 let pollHandle = null;
@@ -280,6 +295,11 @@ function showOptions() {
   modal.classList.remove('hidden');
   optionsPane.classList.remove('hidden');
   progressPane.classList.add('hidden');
+  // Prefill the name with the project's name (unless the user already typed one).
+  if (filenameInput && !filenameInput.value.trim()) {
+    const n = currentProject().name;
+    filenameInput.value = n && n !== 'Untitled' ? n : 'Clip Editor';
+  }
 }
 
 // Switches the modal to the progress step.
@@ -332,6 +352,7 @@ function pollStatus(jobId) {
         modalResult.classList.remove('hidden');
         resultVideo.src = job.outputUrl;
         downloadLink.href = job.outputUrl;
+        downloadLink.download = exportFileName(); // friendly filename, not the job UUID
       }
     } catch (err) {
       stopPolling();

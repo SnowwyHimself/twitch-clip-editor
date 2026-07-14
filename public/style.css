@@ -3037,6 +3037,39 @@ img.preset-thumb {
   box-shadow: var(--shadow-lg);
 }
 
+/* Export file-name field: text input with a fixed ".mp4" suffix. */
+.export-filename-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+.export-filename-row #export-filename {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.export-filename-row #export-filename:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.export-ext {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
 .export-header {
   display: flex;
   align-items: center;
