@@ -78,6 +78,7 @@ function serialize() {
       start: c.start,
       end: c.end,
       duration: c.duration,
+      outStart: c.outStart, // free-mode output position
       source: {
         kind: c.source.kind,
         url: c.source.url || null,
@@ -275,6 +276,7 @@ async function restoreAppendedClips(projectId, items) {
       start: item.start,
       end: item.end,
       duration: item.duration,
+      outStart: item.outStart, // free-mode output position (undefined in old projects)
       source: {
         kind: s.kind,
         url: s.url || null,

@@ -9,7 +9,7 @@
 // shows over exactly the same frames in the rendered file, whatever was
 // cut before it.
 
-import { state, on, keptSegments, orderedPieces, sourceDuration, sourceToOutput } from './state.js';
+import { state, on, keptSegments, orderedPieces, appendedLayout, sourceDuration, sourceToOutput } from './state.js';
 import { startExport, fetchJobStatus } from './api.js';
 
 const exportBtn = document.getElementById('export-btn');
@@ -231,16 +231,24 @@ function buildFormData() {
     if (speech.length > 0) formData.append('speechRanges', JSON.stringify(speech));
   }
 
-  // Appended clips (sequential multi-source) — each stitched after the primary.
+  // Appended clips (multi-source) — each stitched after the primary. Their
+  // RESOLVED output position (outStart, from appendedLayout — clamp-forward
+  // applied) rides along so the server inserts black filler for free-mode gaps,
+  // exactly like it does for primary segments. In snap mode these are contiguous,
+  // so the server sees no gaps and behaves as before.
   // URL clips ride as metadata (the server re-resolves via the preview cache);
   // file clips ride as 'appendedVideo' files, order-matched to hasFile entries.
+  const layout = appendedLayout();
+  const outStartById = new Map(layout.map((it) => [it.clip.id, it.outStart]));
   const appended = [];
   for (const clip of state.appendedClips) {
     const s = clip.source;
+    const outStart = outStartById.get(clip.id);
     const entry = {
       kind: s.kind,
       start: Number((clip.start || 0).toFixed(3)),
       end: Number((clip.end || 0).toFixed(3)),
+      outStart: Number.isFinite(outStart) ? Number(outStart.toFixed(3)) : null,
       settings: clip.settings || null,
     };
     if (s.kind === 'url') {

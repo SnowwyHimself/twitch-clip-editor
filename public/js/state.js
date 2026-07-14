@@ -221,8 +221,14 @@ export function primaryOutputDuration() {
 }
 
 // Total output length, including the appended clips stitched after the primary.
+// In free mode an appended clip can sit later than the previous piece's end
+// (a black gap), so the true length is the last piece's outEnd — not just the
+// summed lengths. appendedLayout's clamp-forward keeps the array's last entry
+// the furthest-right, so its outEnd is the max.
 export function outputDuration() {
-  return primaryOutputDuration() + appendedTotalDuration();
+  const layout = appendedLayout();
+  const appendedEnd = layout.length ? layout[layout.length - 1].outEnd : 0;
+  return Math.max(primaryOutputDuration(), appendedEnd);
 }
 
 // --- appended clips (sequential multi-source) --------------------------------------
@@ -237,14 +243,21 @@ export function appendedTotalDuration() {
   return state.appendedClips.reduce((sum, c) => sum + appendedClipLength(c), 0);
 }
 
-// Each appended clip's placement on the OUTPUT timeline: it starts where the
-// primary ends and they accumulate in order. Returns [{ clip, outStart, outEnd }].
+// Each appended clip's placement on the OUTPUT timeline.
+// - Snap mode: they accumulate contiguously right after the primary (clip
+//   order = array order), ignoring any stored outStart.
+// - Free mode: each clip sits at its own `outStart`, which can leave a black
+//   gap after the previous piece. concat can't overlap, so we clamp FORWARD
+//   (never before where the previous piece ends); reordering is done by
+//   changing the array order (see placeAppendedClip), not by overlap.
+// Returns [{ clip, outStart, outEnd }] in array (= output) order.
 export function appendedLayout() {
+  const free = state.timelineMode === 'free';
   let cursor = primaryOutputDuration();
   return state.appendedClips.map((clip) => {
-    const outStart = cursor;
     const len = appendedClipLength(clip);
-    cursor += len;
+    const outStart = free && Number.isFinite(clip.outStart) ? Math.max(cursor, clip.outStart) : cursor;
+    cursor = outStart + len;
     return { clip, outStart, outEnd: outStart + len };
   });
 }
@@ -265,6 +278,9 @@ export function addAppendedClip(source) {
     start: 0,
     end: Number.isFinite(source.duration) ? source.duration : 0,
     duration: Number.isFinite(source.duration) ? source.duration : 0,
+    // Free-mode output position: a new clip lands contiguously after the
+    // existing pieces (its natural end). Snap mode ignores this.
+    outStart: primaryOutputDuration() + appendedTotalDuration(),
     // Inherit the current whole-video framing/blur/grade so a stitched clip
     // matches the rest without a manual step (settings are global — see
     // commitVideoSettings).
@@ -299,6 +315,41 @@ export function moveAppendedClip(id, toIndex) {
   const dest = Math.max(0, Math.min(state.appendedClips.length, toIndex));
   state.appendedClips.splice(dest, 0, clip);
   emit('segments');
+}
+
+// Free-mode drop: set a clip's ORDER (array index, from where it was dropped
+// among the others) and its output position in ONE step. outStart can't precede
+// the primary; appendedLayout's clamp-forward then resolves any residual overlap
+// with the new previous neighbour. Order + position together give "reorder by
+// dragging earlier" and "drag later to open a black gap".
+export function placeAppendedClip(id, toIndex, outStart) {
+  const from = state.appendedClips.findIndex((c) => c.id === id);
+  if (from === -1) return;
+  const [clip] = state.appendedClips.splice(from, 1);
+  const dest = Math.max(0, Math.min(state.appendedClips.length, toIndex));
+  state.appendedClips.splice(dest, 0, clip);
+  clip.outStart = Math.max(primaryOutputDuration(), outStart);
+  emit('segments');
+}
+
+// Fill in any missing free-mode positions (old projects, or clips added before
+// a position existed) with their contiguous slot, so free mode always has a
+// defined outStart to drag from.
+function ensureAppendedFreeStarts() {
+  let cursor = primaryOutputDuration();
+  for (const clip of state.appendedClips) {
+    if (!Number.isFinite(clip.outStart)) clip.outStart = cursor;
+    cursor = Math.max(cursor, clip.outStart) + appendedClipLength(clip);
+  }
+}
+
+// Pack appended clips contiguously after the primary (snap mode's invariant).
+function packAppendedContiguous() {
+  let cursor = primaryOutputDuration();
+  for (const clip of state.appendedClips) {
+    clip.outStart = cursor;
+    cursor += appendedClipLength(clip);
+  }
 }
 
 export function selectedAppendedClip() {
@@ -375,7 +426,15 @@ export function normalizeOutStarts() {
 export function setTimelineMode(mode) {
   if (state.timelineMode === mode) return;
   state.timelineMode = mode;
-  if (mode === 'snap') normalizeOutStarts();
+  if (mode === 'snap') {
+    // Pack both the primary pieces and the appended clips back to contiguous.
+    normalizeOutStarts();
+    packAppendedContiguous();
+  } else {
+    // Free mode starts where things visually are (contiguous, coming from
+    // snap); only fill positions that don't exist yet.
+    ensureAppendedFreeStarts();
+  }
   emit('segments');
 }
 

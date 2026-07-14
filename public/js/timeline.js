@@ -58,6 +58,8 @@ import {
   selectedAppendedClip,
   removeAppendedClip,
   moveAppendedClip,
+  placeAppendedClip,
+  appendedClipLength,
   updateAppendedClip,
   sourceToOutput,
   outputToSource,
@@ -361,9 +363,10 @@ function layoutVideoTrack() {
   layoutTransitionBadges();
 }
 
-// Appended-clip bar interaction. Click selects it; a horizontal drag reorders it
-// among the other appended clips (drop position by its centre). Trim handles
-// come with the edge grips added in buildClipBar-style later.
+// Appended-clip bar interaction. Click selects it; a horizontal drag either
+// reorders it (snap mode — pieces re-pack contiguously) or drops it at a free
+// position (free mode — Snap off — opening black gaps), both by its drop centre.
+// Trim handles come with the edge grips added in buildClipBar-style later.
 function attachAppendedClipDrag(el, clip) {
   el.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
@@ -406,20 +409,26 @@ function attachAppendedClipDrag(el, clip) {
         cur.style.transform = '';
       }
       if (!moved) return;
-      // Reorder by where the bar's centre landed among the appended clips.
       const pps = pxPerSecond();
-      const centerOut = (startLeft + (upEvent.clientX - startX) + (cur ? cur.offsetWidth : 0) / 2) / (pps || 1);
-      const order = state.appendedClips.map((c) => c.id).filter((id) => id !== clip.id);
+      const dropOut = (startLeft + (upEvent.clientX - startX)) / (pps || 1);
+      const len = appendedClipLength(clip);
+      // Insertion index = how many OTHER appended clips have their centre before
+      // this clip's dropped centre (their current on-track positions).
+      const centerOut = dropOut + len / 2;
+      const others = appendedLayout().filter((it) => it.clip.id !== clip.id);
       let idx = 0;
-      let cursor = primaryOutputDuration();
-      for (const id of order) {
-        const c = state.appendedClips.find((x) => x.id === id);
-        const len = Math.max(0, (c.end ?? c.duration) - (c.start || 0));
-        if (centerOut < cursor + len / 2) break;
-        cursor += len;
-        idx += 1;
+      for (const it of others) {
+        if (centerOut > (it.outStart + it.outEnd) / 2) idx += 1;
+        else break;
       }
-      moveAppendedClip(clip.id, idx);
+      if (state.timelineMode === 'free') {
+        // Free mode: keep the exact drop position (opens black gaps) AND the new
+        // order in one commit.
+        placeAppendedClip(clip.id, idx, Math.max(0, dropOut));
+      } else {
+        // Snap mode: order only — pieces re-pack contiguously.
+        moveAppendedClip(clip.id, idx);
+      }
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);

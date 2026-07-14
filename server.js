@@ -892,9 +892,12 @@ function buildSegmentFilter(segments, hasAudio, transitions, perPiece, canvasW, 
     // In per-piece mode the real pieces are canvas-sized (composite), so the
     // filler must be too, or concat's identical-link-params rule fails.
     const sizeToCanvas = perPiece ? `,scale=${canvasW}:${canvasH}` : '';
-    chain += `[0:v]trim=start=0:end=${d},setpts=PTS-STARTPTS${sizeToCanvas},drawbox=color=black:t=fill,setsar=1[v${n}];`;
+    // A final trim=end=${d} re-bounds the filler to exactly ${d}s: because [0:v]
+    // is also consumed by the real segments, ffmpeg's split otherwise lets the
+    // leading trim leak extra frames and inflates the concat by the gap length.
+    chain += `[0:v]trim=start=0:end=${d},setpts=PTS-STARTPTS${sizeToCanvas},drawbox=color=black:t=fill,setsar=1,trim=end=${d},setpts=PTS-STARTPTS[v${n}];`;
     if (hasAudio) {
-      chain += `[0:a]atrim=start=0:end=${d},asetpts=PTS-STARTPTS,volume=0,${AFMT}[a${n}];`;
+      chain += `[0:a]atrim=start=0:end=${d},asetpts=PTS-STARTPTS,volume=0,${AFMT},atrim=end=${d},asetpts=PTS-STARTPTS[a${n}];`;
       pairLabels.push(`[v${n}][a${n}]`);
     } else {
       pairLabels.push(`[v${n}]`);
@@ -951,7 +954,7 @@ function buildSegmentFilter(segments, hasAudio, transitions, perPiece, canvasW, 
 // pix_fmt (the primary's) so concat — which demands identical link params —
 // accepts pieces from differently-encoded sources. Used only when there ARE
 // appended clips; the plain single-source path above is untouched otherwise.
-function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appended, appendedInputStart, perPiece) {
+function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appended, appendedInputStart, perPiece, primaryDuration) {
   const AFMT = 'aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo';
   const NV = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p`;
   // concat needs identical fps/pixfmt/sar; composite output gets this suffix.
@@ -973,8 +976,14 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
   };
   const addBlackFiller = (gapSeconds) => {
     const d = gapSeconds.toFixed(3);
-    chain += `[0:v]trim=start=0:end=${d},setpts=PTS-STARTPTS,drawbox=color=black:t=fill,${NV}[v${n}];`;
-    if (hasAudio) chain += `[0:a]atrim=start=0:end=${d},asetpts=PTS-STARTPTS,volume=0,${AFMT}[a${n}];`;
+    // The filler is derived from [0:v]/[0:a] (never a `color` source, whose
+    // fps/timebase mismatch breaks concat — see runFfmpeg notes). But because
+    // [0:v] is ALSO consumed by the primary segments, ffmpeg's split lets the
+    // filler's leading trim pass a few extra frames, inflating the concat by up
+    // to the gap length. A FINAL trim=end=${d} (after all transforms) re-bounds
+    // it to exactly ${d}s so the black gap is the length the timeline shows.
+    chain += `[0:v]trim=start=0:end=${d},setpts=PTS-STARTPTS,drawbox=color=black:t=fill,${NV},trim=end=${d},setpts=PTS-STARTPTS[v${n}];`;
+    if (hasAudio) chain += `[0:a]atrim=start=0:end=${d},asetpts=PTS-STARTPTS,volume=0,${AFMT},atrim=end=${d},asetpts=PTS-STARTPTS[a${n}];`;
     pushPair();
   };
 
@@ -999,10 +1008,12 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
     return out.length ? `,${out.join(',')}` : '';
   };
   if (segs.length === 0) {
-    // No trim on the primary — the whole source is one piece.
+    // No trim on the primary — the whole source is one piece. Its output ends
+    // at the source duration, which is where appended-clip gaps measure from.
     chain += `[0:v]${NV}[v${n}];`;
     if (hasAudio) chain += `[0:a]${AFMT}[a${n}];`;
     pushPair();
+    cursor = primaryDuration || 0;
   } else {
     segs.forEach((seg, i) => {
       const gap = seg.outStart - cursor;
@@ -1027,6 +1038,13 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
     const s = clip.start.toFixed(3);
     const e = clip.end.toFixed(3);
     const len = (clip.end - clip.start).toFixed(3);
+    // Free-mode placement: a gap before this clip (its outStart later than the
+    // previous piece's end) becomes black filler, exactly like the primary's
+    // between-segment gaps. Snap mode / old clients send no outStart → no gap.
+    if (Number.isFinite(clip.outStart)) {
+      const gap = clip.outStart - cursor;
+      if (gap > 0.01) addBlackFiller(gap);
+    }
     // Unified index for an appended clip = segs.length + idx (C2 transitions).
     const fadeChain = fadesFor(segs.length + idx, clip.end - clip.start);
     chain += pieceVideo(`[${inIdx}:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS`, clip.settings, n, fadeChain);
@@ -1039,6 +1057,12 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
       }
     }
     pushPair();
+    // Advance the output cursor past this clip so the NEXT appended clip's gap
+    // measures from here. This clip actually starts at max(outStart, cursor)
+    // (clamp-forward — any gap was already emitted as filler above).
+    const clipLen = clip.end - clip.start;
+    const clipStart = Number.isFinite(clip.outStart) ? Math.max(clip.outStart, cursor) : cursor;
+    cursor = clipStart + clipLen;
   });
 
   const outLabels = hasAudio ? '[segv][sega]' : '[segv]';
@@ -1212,7 +1236,8 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
       fps,
       appended,
       appendedInputStart,
-      perPiece
+      perPiece,
+      mediaInfo.duration || 0
     );
     segmentPrefix = built.chain;
     sourceVideoLabel = built.videoLabel;
@@ -1653,10 +1678,13 @@ function buildAppendedClips(body, appendedFiles) {
   return meta.map((m) => {
     const start = parseFloat(m.start);
     const end = parseFloat(m.end);
+    const outStart = parseFloat(m.outStart);
     const clip = {
       kind: m.kind === 'file' ? 'file' : 'url',
       start: Number.isFinite(start) ? Math.max(0, start) : 0,
       end: Number.isFinite(end) && end > 0 ? end : null,
+      // Free-mode output position; null in snap mode / old clients (contiguous).
+      outStart: Number.isFinite(outStart) ? outStart : null,
       settings: parsePieceSettings(m.settings), // per-piece reframe/blur/grade (B6)
     };
     if (clip.kind === 'url') {
@@ -1791,7 +1819,14 @@ async function resolveAppendedClips(appendedClips) {
       if (end - start < 0.05) continue;
       // Keep the piece's per-clip settings (zoom/blur/pan/colour) — without them
       // an appended clip renders with defaults (no fill/blur), mismatching the preview.
-      out.push({ filePath, start, end, hasAudio: info.hasAudio, settings: clip.settings });
+      out.push({
+        filePath,
+        start,
+        end,
+        hasAudio: info.hasAudio,
+        settings: clip.settings,
+        outStart: Number.isFinite(clip.outStart) ? clip.outStart : null,
+      });
     } catch {
       /* skip an appended clip that can't be resolved */
     }
@@ -1816,7 +1851,6 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     // Resolve appended clips (download URL clips / probe files) so they can be
     // stitched after the primary. Their total length extends the output.
     const appended = await resolveAppendedClips(appendedClips);
-    const appendedTotal = appended.reduce((sum, c) => sum + (c.end - c.start), 0);
 
     captionOverlays = buildCaptionOverlays(jobId, textLayers, canvasW, canvasH);
 
@@ -1829,9 +1863,18 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       segments && segments.length > 0
         ? segments.reduce((max, s) => Math.max(max, s.outStart + (s.end - s.start)), 0)
         : mediaInfo.duration || 0;
+    // The appended section can start later than the primary end and hold black
+    // gaps (free mode), so its true end is the furthest clip outEnd (clamp-forward,
+    // matching buildStitchedFilter), not the summed length. Falls back to the
+    // contiguous sum when clips carry no placement.
+    let appendedCursor = primarySpan;
+    for (const c of appended) {
+      const clipStart = Number.isFinite(c.outStart) ? Math.max(c.outStart, appendedCursor) : appendedCursor;
+      appendedCursor = clipStart + (c.end - c.start);
+    }
     // The stitched [segv]/[sega] (primary + appended) is sped uniformly, so the
     // whole span is divided by speed.
-    const expectedDuration = (primarySpan + appendedTotal) / speed;
+    const expectedDuration = Math.max(primarySpan, appendedCursor) / speed;
     const onProgress = (outTime) => {
       if (expectedDuration > 0) {
         setJob(jobId, { progress: Math.min(0.99, outTime / expectedDuration) });
