@@ -102,9 +102,20 @@ async function loadFromUrl() {
   }
 }
 
+// Resolve a picked File's real disk path (desktop app only) so a file-based
+// project can re-open itself later without re-prompting. Empty in a plain
+// browser — there restore falls back to re-picking the file, as before.
+function filePath(file) {
+  return (window.electronAPI && window.electronAPI.getFilePath && window.electronAPI.getFilePath(file)) || null;
+}
+
 function loadFromFile(file) {
   hideRestoreBanner();
-  attachSource(URL.createObjectURL(file), { kind: 'file', file }, { isObjectUrl: true });
+  attachSource(
+    URL.createObjectURL(file),
+    { kind: 'file', file, path: filePath(file), size: file.size },
+    { isObjectUrl: true }
+  );
 }
 
 // --- append clips (sequential multi-source) ------------------------------------------

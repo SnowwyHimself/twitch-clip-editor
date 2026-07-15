@@ -44,7 +44,10 @@ function serialize() {
           kind: src.kind,
           url: src.url || null,
           name: src.name || (src.file && src.file.name) || null,
-          path: src.path || (src.file && src.file.path) || null,
+          path: src.path || null,
+          // Byte size of the original file — the reopen IPC matches it so a
+          // different file later at the same path is treated as missing.
+          size: Number.isFinite(src.size) ? src.size : (src.file && src.file.size) || null,
           width: src.width || null,
           height: src.height || null,
           duration: src.duration || null,
@@ -222,10 +225,14 @@ async function attachProjectSource(data) {
     // HTTP endpoint that took an arbitrary path was removed (any-file-read). In
     // a plain browser there's no IPC, so fall through to re-picking the file.
     if (window.electronAPI && typeof window.electronAPI.reopenFile === 'function') {
-      const result = await window.electronAPI.reopenFile(src.path).catch(() => null);
+      const result = await window.electronAPI.reopenFile(src.path, { size: src.size }).catch(() => null);
       if (result && result.ok && result.previewUrl) {
         const ready = waitForSource();
-        attachSource(result.previewUrl, { kind: 'file', name: src.name, path: src.path }, { isObjectUrl: false });
+        attachSource(
+          result.previewUrl,
+          { kind: 'file', name: src.name, path: src.path, size: src.size },
+          { isObjectUrl: false }
+        );
         await ready;
         return { ok: true };
       }
@@ -380,7 +387,10 @@ export async function restoreAutosave() {
 // re-picks the file; this finishes loading the rest of the project onto it.
 export async function finishOpenWithFile(id, data, file) {
   const ready = waitForSource();
-  attachSource(URL.createObjectURL(file), { kind: 'file', file }, { isObjectUrl: true });
+  // Capture the newly-located file's path/size so the next save re-records them
+  // and future opens resolve automatically (no repeat re-locate prompt).
+  const path = (window.electronAPI && window.electronAPI.getFilePath && window.electronAPI.getFilePath(file)) || null;
+  attachSource(URL.createObjectURL(file), { kind: 'file', file, path, size: file.size }, { isObjectUrl: true });
   await ready;
   const overlays = await rehydrateMedia(id, data.overlays || []);
   const sounds = await rehydrateMedia(id, data.sounds || []);

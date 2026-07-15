@@ -56,7 +56,7 @@ ipcMain.handle('library:open-folder', async () => {
   }
 });
 
-ipcMain.handle('reopen-file', async (_event, absPath) => {
+ipcMain.handle('reopen-file', async (_event, absPath, opts) => {
   if (typeof absPath !== 'string' || !absPath) return { ok: false, reason: 'bad-path' };
   let stat;
   try {
@@ -65,6 +65,12 @@ ipcMain.handle('reopen-file', async (_event, absPath) => {
     return { ok: false, reason: 'not-found' };
   }
   if (!stat.isFile()) return { ok: false, reason: 'not-a-file' };
+  // Integrity gate: if the project recorded the source's byte size, the file on
+  // disk must still match. A size mismatch means a different file now occupies
+  // that path — treat it as missing so the renderer prompts to re-locate rather
+  // than silently loading the wrong video.
+  const wantSize = opts && Number.isFinite(opts.size) ? opts.size : null;
+  if (wantSize !== null && stat.size !== wantSize) return { ok: false, reason: 'mismatch' };
   try {
     fs.mkdirSync(PREVIEW_CACHE_DIR, { recursive: true });
     const key = crypto.createHash('sha1').update(path.resolve(absPath)).digest('hex');
