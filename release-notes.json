@@ -1,5 +1,11 @@
 {
   "_readme": "Bundled release notes for the in-app 'What's new' card. Keyed by app version (must match package.json 'version'). RELEASE FLOW: when bumping the version (npm version X.Y.Z), add an entry here whose key is X.Y.Z and whose value is up to 5 short bullet strings taken from that release's notes. The app reads the entry for its own version; a version with no entry shows no card. This file is bundled via the build 'files' glob, so the notes ship inside the app — no network needed.",
+  "4.3.0": [
+    "Send to Phone: move an exported clip to your phone over your own Wi-Fi — scan a QR, tap download. No cloud, no account, no quality loss.",
+    "Pin the companion page to your phone's home screen once, and skip the camera next time.",
+    "Turn it on/off anytime in Phone access settings; manage or revoke paired devices.",
+    "Exporting is now a single window: pick your settings, watch it render, then download or send to phone right there."
+  ],
   "4.2.0": [
     "Try the editor instantly with a bundled sample clip and a 3-step tour on first launch.",
     "Exports run in the background now — a corner progress pill, a queue, ETA + size, and a recent-exports list you can re-export from.",
