@@ -3195,6 +3195,65 @@ img.preset-thumb {
   display: block;
 }
 
+/* Export window: progress + result views ------------------------------------- */
+.export-progress {
+  padding: var(--space-2) 0;
+}
+.export-prog-status {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+}
+.export-prog-sub {
+  margin-top: var(--space-2);
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 15px;
+  font-variant-numeric: tabular-nums;
+}
+#export-cancel-btn {
+  margin-top: var(--space-4);
+}
+.export-bar-fill.indeterminate {
+  width: 35% !important;
+  animation: export-indet 1.1s var(--ease) infinite;
+}
+.export-result {
+  text-align: center;
+}
+.export-result-video {
+  width: 100%;
+  max-height: 46vh;
+  border-radius: var(--radius-md);
+  background: #000;
+  margin-bottom: var(--space-3);
+}
+.export-result-name {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.export-result-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.export-result-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+.export-result-actions .primary-btn,
+.export-result-actions .secondary-btn {
+  flex: 1;
+}
+#export-result-again {
+  margin-top: var(--space-3);
+}
+
 /* --- Quiet update pill (desktop) --------------------------------------------
    Shown only once an update is downloaded + verified. Bottom-right, subtle;
    ✕ appears on hover to dismiss for the session. */

@@ -49,7 +49,6 @@ async function newPairCode() {
     const r = await requestPairCode();
     if (r && r.url) {
       renderQR(r.url);
-      $('phone-addr').textContent = `${r.ip}:${r.port}`;
     }
   } catch {
     /* leave the previous QR */
@@ -106,7 +105,7 @@ async function refresh() {
   $('phone-qr-wrap').classList.toggle('hidden', !on);
   $('phone-firewall').classList.toggle('hidden', !on);
   $('phone-status').textContent = on
-    ? `On — reachable at ${lastStatus.ip || '…'}:${lastStatus.port || '…'} on your Wi‑Fi.`
+    ? 'On — scan the QR with your phone to connect over your Wi‑Fi.'
     : 'Off. Turn on to move exported clips to your phone over your own Wi‑Fi — nothing is uploaded to the internet.';
   renderDevices(lastStatus.devices || []);
   if (on) newPairCode();
@@ -116,6 +115,18 @@ async function refresh() {
 // hint that the just-finished export is already on the companion page.
 export async function openPhoneModal({ fromExport = false } = {}) {
   $('phone-modal').classList.remove('hidden');
+  // Launched from an export: clicking "Send to phone" is the consent to open
+  // access, so turn it on if it's off — that renders the pairing QR right away.
+  if (fromExport) {
+    const cur = await fetchPhoneAccess();
+    if (!cur.enabled) {
+      try {
+        await setPhoneAccess(true);
+      } catch {
+        /* refresh will show it still off */
+      }
+    }
+  }
   await refresh();
   const alreadyPaired = fromExport && phoneIsPaired() && phoneIsEnabled();
   $('phone-export-hint').classList.toggle('hidden', !alreadyPaired);

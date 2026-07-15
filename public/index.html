@@ -808,7 +808,7 @@
   <div id="export-modal" class="export-modal hidden">
     <div class="export-card">
       <div class="export-header">
-        <h2>Export</h2>
+        <h2 id="export-title">Export</h2>
         <button type="button" id="export-close-btn" class="secondary-btn">Close</button>
       </div>
       <div id="export-options" class="export-options">
@@ -846,11 +846,30 @@
           <p class="field-hint">Evens out the final volume to a consistent level (−14 LUFS) so clips from different streams don't come out too quiet or too loud.</p>
         </div>
         <button type="button" id="export-start-btn" class="primary-btn full-width">Render</button>
-        <p class="field-hint">Rendering runs in the background — you can keep editing while it works.</p>
         <div id="export-recents" class="export-recents hidden">
           <div class="insp-sec">Recent exports</div>
           <div id="export-recents-list" class="export-recents-list"></div>
         </div>
+      </div>
+
+      <!-- Progress: shown in-place after Render until the render finishes. -->
+      <div id="export-progress" class="export-progress hidden">
+        <div class="export-prog-status" id="export-prog-status">Rendering…</div>
+        <div class="export-bar"><div id="export-bar-fill" class="export-bar-fill"></div></div>
+        <div class="export-prog-sub" id="export-prog-sub"></div>
+        <button type="button" id="export-cancel-btn" class="secondary-btn full-width">Cancel</button>
+      </div>
+
+      <!-- Result: the finished export with its actions. -->
+      <div id="export-result" class="export-result hidden">
+        <video id="export-result-video" class="export-result-video" muted loop playsinline></video>
+        <div class="export-result-name" id="export-result-name"></div>
+        <div class="export-result-meta" id="export-result-meta"></div>
+        <div class="export-result-actions">
+          <button type="button" id="export-result-primary" class="primary-btn">Show in folder</button>
+          <button type="button" id="export-result-phone" class="secondary-btn">Send to phone</button>
+        </div>
+        <button type="button" id="export-result-again" class="link-btn">Export another</button>
       </div>
     </div>
   </div>
@@ -953,19 +972,7 @@
     <button type="button" id="restore-no-btn" class="secondary-btn">Dismiss</button>
   </div>
 
-  <!-- Background export progress pill: percent + a cancel, plus a queued count
-       when more exports are waiting. Lives in the corner so editing continues. -->
-  <div id="export-pill" class="export-pill hidden" role="status" aria-live="polite">
-    <div class="export-pill-spinner" aria-hidden="true"></div>
-    <div class="export-pill-main">
-      <div class="export-pill-top"><span id="export-pill-label" class="export-pill-label">Exporting…</span><span id="export-pill-pct" class="export-pill-pct">0%</span></div>
-      <div class="export-pill-bar"><div id="export-pill-fill" class="export-pill-fill"></div></div>
-      <div id="export-pill-sub" class="export-pill-sub"></div>
-    </div>
-    <button type="button" id="export-pill-cancel" class="export-pill-x" aria-label="Cancel export">✕</button>
-  </div>
-
-  <!-- Toast stack: quiet, auto-dismissing notices (export finished, etc.). -->
+  <!-- Toast stack: quiet, auto-dismissing notices (template saved, etc.). -->
   <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
   <!-- "What's new" card: one-time, per-version, dismissible (corner). -->
@@ -1028,7 +1035,6 @@
           <div class="phone-qr" id="phone-qr"></div>
           <p class="field-hint">Scan with your phone’s camera. The code works once and expires in 2 minutes.</p>
           <div class="phone-addr-row">
-            <span class="phone-addr" id="phone-addr"></span>
             <button type="button" id="phone-new-code" class="secondary-btn">New code</button>
           </div>
           <p class="field-hint phone-export-hint hidden" id="phone-export-hint">Your export is already on your phone — just open the Clip Editor page there and it’s at the top.</p>

@@ -1,21 +1,28 @@
-// Background export manager: renders run off a snapshot taken at export start,
-// so editing during a render is safe. A compact corner pill shows progress
-// (percent + a rough ETA + estimated size) and a cancel; starting another export
-// while one runs queues it (FIFO, one render at a time). Finished exports record
-// into the userData recents list and raise a quiet toast.
+// Export manager: renders run off a snapshot taken at export start (so the
+// request can't change under the render). The UI is the export WINDOW itself —
+// this module drives it through callbacks (setExportUI): progress while
+// rendering, then the finished result. A second export started while one runs
+// still queues (FIFO, one at a time); in the single-window flow that's rare, but
+// the engine stays correct if it happens.
 import { startExport, fetchJobStatus, cancelExport, recordRecentExport } from './api.js';
-import { showToast } from './toast.js';
-import { openPhoneModal } from './phone.js';
 
-// active: { item, jobId, meta, requestedAt, renderStartedAt, lastJob }
-let active = null;
-const queue = []; // pending items: { endpoint, formData, meta }
+let active = null; // { item, jobId, meta, renderStartedAt, lastJob }
+const queue = [];
 const changeCbs = [];
 let pollTimer = null;
+let ui = {}; // { onStart, onProgress, onDone, onError, onCancelled }
 
-const el = (id) => document.getElementById(id);
+export function setExportUI(handlers) {
+  ui = handlers || {};
+}
+function call(name, arg) {
+  try {
+    if (ui[name]) ui[name](arg);
+  } catch {
+    /* a bad UI handler must not break the render loop */
+  }
+}
 
-// Lets the export panel refresh its "recent exports" list when it changes.
 export function onExportsChanged(cb) {
   changeCbs.push(cb);
 }
@@ -24,7 +31,7 @@ function emitChanged() {
     try {
       cb();
     } catch {
-      /* ignore a bad listener */
+      /* ignore */
     }
   }
 }
@@ -32,27 +39,26 @@ function emitChanged() {
 // item = { endpoint, formData, meta:{ filename, durationSec, res, crf, loudness } }
 export function enqueueExport(item) {
   queue.push(item);
-  renderPill();
   if (!active) startNext();
+  else call('onProgress', progressPayload());
 }
 
 async function startNext() {
   const item = queue.shift();
   if (!item) {
     active = null;
-    renderPill();
     return;
   }
-  active = { item, jobId: null, meta: item.meta, requestedAt: Date.now(), renderStartedAt: null, lastJob: null };
-  renderPill();
+  active = { item, jobId: null, meta: item.meta, renderStartedAt: null, lastJob: null };
+  call('onStart', { meta: active.meta, queued: queue.length });
+  call('onProgress', progressPayload());
   try {
     const { jobId } = await startExport(item.endpoint, item.formData);
     active.jobId = jobId;
     startPoll();
   } catch (err) {
-    showToast({ message: `Export failed to start: ${err && err.message ? err.message : 'unknown error'}` });
     active = null;
-    renderPill();
+    call('onError', { message: `Couldn't start export: ${err && err.message ? err.message : 'unknown error'}` });
     startNext();
   }
 }
@@ -72,11 +78,9 @@ function startPoll() {
     try {
       job = await fetchJobStatus(active.jobId);
     } catch {
-      return; // transient network hiccup — keep polling
+      return; // transient — keep polling
     }
     active.lastJob = job;
-    // Mark when real rendering begins (first non-zero progress) so the ETA is
-    // measured from render start, not from the download/startup phase.
     if (!active.renderStartedAt && Number.isFinite(job.progress) && job.progress > 0) {
       active.renderStartedAt = Date.now();
     }
@@ -86,20 +90,20 @@ function startPoll() {
     }
     if (job.status === 'error') {
       stopPoll();
-      showToast({ message: `Export failed: ${job.error || 'unknown error'}` });
+      const msg = job.error || 'unknown error';
       active = null;
-      renderPill();
+      call('onError', { message: `Export failed: ${msg}` });
       startNext();
       return;
     }
     if (job.status === 'cancelled') {
       stopPoll();
       active = null;
-      renderPill();
+      call('onCancelled');
       startNext();
       return;
     }
-    renderPill(job);
+    call('onProgress', progressPayload(job));
   }, 700);
 }
 
@@ -116,91 +120,60 @@ async function finishActive(job) {
     sizeBytes: Number.isFinite(job.outputBytes) ? job.outputBytes : null,
   });
   emitChanged();
-  showExportDoneToast(meta.filename, job.outputUrl);
+  call('onDone', { meta, outputUrl: job.outputUrl, sizeBytes: Number.isFinite(job.outputBytes) ? job.outputBytes : null });
   active = null;
-  renderPill();
   startNext();
 }
 
-function cancelActive() {
-  if (!active || !active.jobId) return;
-  cancelExport(active.jobId);
-  // The poll will observe 'cancelled' and advance the queue; nothing else to do.
-}
-
-// --- completion toast --------------------------------------------------------
-function showExportDoneToast(filename, outputUrl) {
-  const actions = [];
-  if (window.electronAPI && window.electronAPI.showExportInFolder) {
-    actions.push({ label: 'Show in folder', onAction: () => window.electronAPI.showExportInFolder(outputUrl) });
-  } else {
-    // Browser fallback: no OS file manager — offer the download.
-    actions.push({
-      label: 'Download',
-      onAction: () => {
-        const a = document.createElement('a');
-        a.href = outputUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      },
-    });
-  }
-  // Send to phone (opens the pairing QR / companion hint).
-  actions.push({ label: 'Send to phone', onAction: () => openPhoneModal({ fromExport: true }) });
-  showToast({ message: `Exported ${filename}`, actions });
-}
-
-// --- corner pill -------------------------------------------------------------
-function renderPill(job) {
-  const pill = el('export-pill');
-  if (!pill) return;
-  if (!active && queue.length === 0) {
-    pill.classList.add('hidden');
+// Cancel the current render (or a not-yet-started one). The poll observes
+// 'cancelled' and fires onCancelled; a pre-start cancel fires it directly.
+export function cancelActiveExport() {
+  if (!active) return;
+  if (!active.jobId) {
+    active = null;
+    stopPoll();
+    call('onCancelled');
+    startNext();
     return;
   }
-  pill.classList.remove('hidden');
+  cancelExport(active.jobId);
+}
 
+export function isExporting() {
+  return !!active;
+}
+
+// The payload the window's progress view renders: percent, a status line, and an
+// honest ETA/size sub-line (only once there's enough signal).
+function progressPayload(job) {
   const j = job || (active && active.lastJob) || {};
   const downloading = j.status === 'downloading';
   const progress = Number.isFinite(j.progress) ? j.progress : 0;
   const pct = Math.round(progress * 100);
-
-  el('export-pill-label').textContent = active ? `Exporting ${truncate(active.meta.filename, 22)}` : 'Queued';
-  el('export-pill-pct').textContent = downloading || !active ? '' : `${pct}%`;
-  el('export-pill-fill').style.width = active && !downloading ? `${pct}%` : '0%';
-  el('export-pill-fill').classList.toggle('indeterminate', downloading || (active && progress === 0));
-
+  let status = 'Rendering…';
+  if (downloading) status = 'Downloading clip…';
+  else if (active && progress === 0) status = 'Starting…';
   const parts = [];
-  if (downloading) {
-    parts.push('Downloading…');
-  } else if (active && progress === 0) {
-    parts.push('Starting…');
-  } else if (active && active.renderStartedAt) {
+  if (active && active.renderStartedAt && !downloading) {
     const elapsed = Date.now() - active.renderStartedAt;
-    // Only offer an ETA once there's enough signal to be honest.
-    if (progress > 0.05 && elapsed > 1500) {
-      parts.push(`~${fmtDuration((elapsed * (1 - progress)) / progress / 1000)} left`);
-    }
-    if (Number.isFinite(j.outputBytes) && progress > 0.15) {
-      parts.push(`~${fmtBytes(j.outputBytes / progress)}`);
-    }
+    if (progress > 0.05 && elapsed > 1500) parts.push(`~${fmtDuration((elapsed * (1 - progress)) / progress / 1000)} left`);
+    if (Number.isFinite(j.outputBytes) && progress > 0.15) parts.push(`~${fmtBytes(j.outputBytes / progress)}`);
   }
-  if (queue.length > 0) parts.push(`${queue.length} queued`);
-  el('export-pill-sub').textContent = parts.join(' · ');
+  if (queue.length > 0) parts.push(`${queue.length} more queued`);
+  return {
+    pct,
+    status,
+    sub: parts.join(' · '),
+    indeterminate: downloading || (active && progress === 0),
+    filename: active && active.meta.filename,
+  };
 }
 
 export function initExportQueue() {
-  const cancelBtn = el('export-pill-cancel');
-  if (cancelBtn) cancelBtn.addEventListener('click', cancelActive);
+  /* nothing to wire — the export window owns the UI (see export.js setExportUI) */
 }
 
 // --- small formatters --------------------------------------------------------
-function truncate(s, n) {
-  s = String(s || '');
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-}
 function fmtDuration(sec) {
   sec = Math.max(0, Math.round(sec));
   if (sec < 60) return `${sec}s`;

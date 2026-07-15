@@ -12,8 +12,9 @@
 import { state, on, keptSegments, orderedPieces, appendedLayout, sourceDuration, sourceToOutput, outputDuration } from './state.js';
 import { fetchRecentExports } from './api.js';
 import { currentProject } from './project.js';
-import { enqueueExport, onExportsChanged } from './exportqueue.js';
+import { enqueueExport, onExportsChanged, setExportUI, cancelActiveExport, isExporting, fmtBytes } from './exportqueue.js';
 import { showToast } from './toast.js';
+import { openPhoneModal } from './phone.js';
 
 const exportBtn = document.getElementById('export-btn');
 const modal = document.getElementById('export-modal');
@@ -26,6 +27,21 @@ const loudnessToggle = document.getElementById('export-loudness');
 const filenameInput = document.getElementById('export-filename');
 const recentsWrap = document.getElementById('export-recents');
 const recentsList = document.getElementById('export-recents-list');
+const exportTitle = document.getElementById('export-title');
+const progressPane = document.getElementById('export-progress');
+const progStatus = document.getElementById('export-prog-status');
+const barFill = document.getElementById('export-bar-fill');
+const progSub = document.getElementById('export-prog-sub');
+const cancelBtn = document.getElementById('export-cancel-btn');
+const resultPane = document.getElementById('export-result');
+const resultVideo = document.getElementById('export-result-video');
+const resultName = document.getElementById('export-result-name');
+const resultMeta = document.getElementById('export-result-meta');
+const resultPrimary = document.getElementById('export-result-primary');
+const resultPhone = document.getElementById('export-result-phone');
+const resultAgain = document.getElementById('export-result-again');
+
+let lastResult = null; // { meta, outputUrl } for the result-pane actions
 
 // A friendly, filesystem-safe download name from the user's input (or the
 // project name / "Clip Editor" fallback). Drops characters that are illegal in
@@ -309,12 +325,19 @@ function buildExportSnapshot(opts) {
   };
 }
 
-// Opens the export dialog (pick name/resolution/quality, then Render) and
-// refreshes the recent-exports list below the options.
+// The export WINDOW has three views: options → progress → result. One window
+// the whole way through (no corner pills/toasts).
+function showPane(which) {
+  optionsPane.classList.toggle('hidden', which !== 'options');
+  progressPane.classList.toggle('hidden', which !== 'progress');
+  resultPane.classList.toggle('hidden', which !== 'result');
+  exportTitle.textContent = which === 'progress' ? 'Rendering…' : which === 'result' ? 'Export ready' : 'Export';
+}
+
+// Opens the export dialog on the options view and refreshes the recents list.
 function showOptions() {
   modal.classList.remove('hidden');
-  optionsPane.classList.remove('hidden');
-  // Prefill the name with the project's name (unless the user already typed one).
+  showPane('options');
   if (filenameInput && !filenameInput.value.trim()) {
     const n = currentProject().name;
     filenameInput.value = n && n !== 'Untitled' ? n : 'Clip Editor';
@@ -322,14 +345,19 @@ function showOptions() {
   renderRecents();
 }
 
+// Opening Export while a render is already going drops straight into progress.
 function beginExport() {
   if (!state.source) return;
+  if (isExporting()) {
+    modal.classList.remove('hidden');
+    showPane('progress');
+    return;
+  }
   showOptions();
 }
 
-// Render now runs in the BACKGROUND: snapshot the state, hand it to the queue,
-// and return to editing. Progress/queue/completion all live in the corner pill
-// and toast (see exportqueue.js) — no blocking modal.
+// Render: snapshot the state, enqueue it, and show progress IN this window; it
+// becomes the result view when the render finishes.
 function startRender() {
   if (!state.source) return;
   localStorage.setItem(
@@ -338,7 +366,8 @@ function startRender() {
   );
   try {
     enqueueExport(buildExportSnapshot());
-    modal.classList.add('hidden');
+    modal.classList.remove('hidden');
+    showPane('progress');
   } catch (err) {
     showToast({ message: `Couldn't start export: ${err && err.message ? err.message : 'unknown error'}` });
   }
@@ -351,6 +380,33 @@ function reExport(rec) {
     return;
   }
   enqueueExport(buildExportSnapshot({ outHeight: rec.res, crf: rec.crf, loudness: rec.loudness !== false }));
+  modal.classList.remove('hidden');
+  showPane('progress');
+}
+
+function updateProgress(p) {
+  if (progressPane.classList.contains('hidden')) showPane('progress');
+  progStatus.textContent = p.status || 'Rendering…';
+  barFill.style.width = p.indeterminate ? '35%' : `${p.pct}%`;
+  barFill.classList.toggle('indeterminate', !!p.indeterminate);
+  progSub.textContent = p.sub || '';
+}
+
+function showResult({ meta, outputUrl, sizeBytes }) {
+  lastResult = { meta, outputUrl };
+  modal.classList.remove('hidden');
+  showPane('result');
+  resultVideo.src = outputUrl;
+  resultVideo.play().catch(() => {});
+  resultName.textContent = meta.filename;
+  resultMeta.textContent = [fmtDur(meta.durationSec), sizeBytes ? fmtBytes(sizeBytes) : ''].filter(Boolean).join(' · ');
+  const canReveal = !!(window.electronAPI && window.electronAPI.showExportInFolder);
+  resultPrimary.textContent = canReveal ? 'Show in folder' : 'Download';
+}
+
+function closeModal() {
+  resultVideo.pause();
+  resultVideo.removeAttribute('src');
   modal.classList.add('hidden');
 }
 
@@ -439,13 +495,61 @@ export function initExport() {
   } catch {
     /* defaults */
   }
-  closeModalBtn.addEventListener('click', () => modal.classList.add('hidden'));
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) modal.classList.add('hidden');
+  // Header Close: while rendering it cancels; otherwise it just closes.
+  closeModalBtn.addEventListener('click', () => {
+    if (!progressPane.classList.contains('hidden')) cancelActiveExport();
+    closeModal();
   });
+  // Backdrop click closes — except mid-render, so a render isn't lost by accident.
+  modal.addEventListener('click', (e) => {
+    if (e.target !== modal) return;
+    if (!progressPane.classList.contains('hidden')) return;
+    closeModal();
+  });
+
+  // The export WINDOW is the render UI. The queue drives it through callbacks.
+  cancelBtn.addEventListener('click', () => cancelActiveExport());
+  resultPrimary.addEventListener('click', () => {
+    if (!lastResult) return;
+    if (window.electronAPI && window.electronAPI.showExportInFolder) {
+      window.electronAPI.showExportInFolder(lastResult.outputUrl);
+    } else {
+      const a = document.createElement('a');
+      a.href = lastResult.outputUrl;
+      a.download = lastResult.meta.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+  });
+  resultPhone.addEventListener('click', () => {
+    closeModal();
+    openPhoneModal({ fromExport: true });
+  });
+  resultAgain.addEventListener('click', () => {
+    resultVideo.pause();
+    showOptions();
+  });
+
+  setExportUI({
+    onStart: () => {
+      modal.classList.remove('hidden');
+      showPane('progress');
+    },
+    onProgress: (p) => updateProgress(p),
+    onDone: (r) => showResult(r),
+    onError: (e) => {
+      showToast({ message: e.message });
+      if (!modal.classList.contains('hidden')) showPane('options');
+    },
+    onCancelled: () => {
+      if (!modal.classList.contains('hidden')) showPane('options');
+    },
+  });
+
   // Keep the recents list fresh whenever the queue records a new export.
   onExportsChanged(() => {
-    if (!modal.classList.contains('hidden')) renderRecents();
+    if (!modal.classList.contains('hidden') && !optionsPane.classList.contains('hidden')) renderRecents();
   });
   on('source', () => {
     exportBtn.disabled = !state.source;
