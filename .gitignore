@@ -27,3 +27,7 @@ native/emoji-render-mac/emoji-render
 /brand-kit/
 /library/
 /caption-settings.json
+# Misc runtime userData state, created when the server runs with DATA_DIR=repo
+/app-state.json
+/recent-exports.json
+/templates/
