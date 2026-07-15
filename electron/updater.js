@@ -30,6 +30,7 @@ let checkTimer = null;
 let readyVersion = null; // set once an update is downloaded + verified
 let macStagedZip = null; // path to the verified staged zip (mac)
 let applying = false;
+let handlersReady = false; // app-lifetime IPC/timers registered exactly once
 
 // --- tiny persisted settings (auto-update on/off) ---------------------------
 function loadSettings() {
@@ -239,7 +240,17 @@ function relaunchToUpdate() {
 }
 
 function init(window) {
+  // Always point at the CURRENT window — on macOS the window can be closed and
+  // re-created (dock reopen) many times over one app run, and each new window
+  // should receive the update pill.
   mainWindow = window;
+
+  // Everything below is app-lifetime state that must be registered exactly once.
+  // ipcMain.handle THROWS if a channel already has a handler, so calling init on
+  // every re-created window (as the 'activate' handler does) would throw here,
+  // abort createWindow before loadURL, and leave a blank (black) window. Guard it.
+  if (handlersReady) return;
+  handlersReady = true;
 
   // Renderer-facing IPC (also surfaced through the preload contextBridge).
   ipcMain.handle('update:relaunch', () => relaunchToUpdate());

@@ -141,7 +141,13 @@ function lockDownNavigation(contents) {
   contents.on('will-attach-webview', (event) => event.preventDefault());
 }
 
+// Guards against two overlapping createWindow() calls (e.g. a rapid double
+// dock-click firing 'activate' twice) racing to open two windows.
+let creatingWindow = false;
+
 async function createWindow() {
+  if (creatingWindow) return null;
+  creatingWindow = true;
   const win = new BrowserWindow({
     width: 960,
     height: 1040,
@@ -165,9 +171,15 @@ async function createWindow() {
   });
 
   lockDownNavigation(win.webContents);
-  updater.init(win); // quiet auto-update: checks on launch + every 4h, shows the pill
-  await waitForServer(`${APP_ORIGIN}/`);
-  win.loadURL(`${APP_ORIGIN}/`);
+  try {
+    await waitForServer(`${APP_ORIGIN}/`);
+    win.loadURL(`${APP_ORIGIN}/`);
+    // AFTER loadURL: the updater's IPC/timer setup can never sit between window
+    // creation and page load, so it can't leave a blank window even if it threw.
+    updater.init(win); // quiet auto-update: checks on launch + every 4h, shows the pill
+  } finally {
+    creatingWindow = false;
+  }
   return win;
 }
 
@@ -246,8 +258,15 @@ app.whenReady().then(() => {
   createWindow();
   buildMenu();
 
+  // macOS: closing the window (red X) does NOT quit the app (see
+  // window-all-closed below) — it stays in the dock. Clicking the dock icon
+  // fires 'activate'; with no window open we build a fresh, fully-wired one
+  // (server already running, token/IPC re-used, autosave offers to restore the
+  // session). Re-creating the window is safe now that updater.init is idempotent.
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow().catch((err) => console.error('Failed to re-create window:', err));
+    }
   });
 });
 
