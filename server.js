@@ -44,6 +44,7 @@ const TRANSCRIBE_DIR = path.join(DATA_ROOT, 'transcribe-cache');
 // media/ subfolder for any imported sound/overlay files, so a project reopens
 // self-contained. The special id 'autosave' is the rolling autosave slot.
 const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
+const TEMPLATES_DIR = path.join(DATA_ROOT, 'templates');
 // Global brand kit (default font/colour + a reusable watermark image). Lives in
 // userData so it's shared across projects and survives app updates.
 const BRAND_DIR = path.join(DATA_ROOT, 'brand-kit');
@@ -64,7 +65,7 @@ const LIBRARY_EXT = {
   fonts: /\.(ttf|otf)$/i,
 };
 
-for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR, PROJECTS_DIR, BRAND_DIR, LIBRARY_DIR, ...LIBRARY_CATEGORIES.map((c) => path.join(LIBRARY_DIR, c))]) {
+for (const dir of [UPLOADS_DIR, DOWNLOADS_DIR, OUTPUTS_DIR, CAPTIONS_DIR, PREVIEW_CACHE_DIR, MODELS_DIR, TRANSCRIBE_DIR, PROJECTS_DIR, TEMPLATES_DIR, BRAND_DIR, LIBRARY_DIR, ...LIBRARY_CATEGORIES.map((c) => path.join(LIBRARY_DIR, c))]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -2841,6 +2842,94 @@ function writeAppState(patch) {
 }
 app.get('/api/app-state', (req, res) => res.json(readAppState()));
 app.post('/api/app-state', (req, res) => res.json(writeAppState(req.body || {})));
+
+// --- project templates (global, userData) ------------------------------------
+// A template = a JSON snapshot of the reusable LOOK of a project (aspect,
+// layout, background, caption group style, watermark, manual text layers) —
+// never the source clip or transcript. One <id>.json per template so rename and
+// delete touch a single file. No media rides along (templates carry no uploads).
+function templateFile(id) {
+  const safe = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safe) return null;
+  try {
+    return resolveInside(TEMPLATES_DIR, `${safe}.json`);
+  } catch {
+    return null;
+  }
+}
+function readAllTemplates() {
+  let files = [];
+  try {
+    files = fs.readdirSync(TEMPLATES_DIR).filter((f) => f.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of files) {
+    try {
+      const t = JSON.parse(fs.readFileSync(path.join(TEMPLATES_DIR, f), 'utf8'));
+      if (t && t.id) out.push(t);
+    } catch {
+      /* skip a corrupt template file */
+    }
+  }
+  out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return out;
+}
+app.get('/api/templates', (req, res) => res.json({ templates: readAllTemplates() }));
+
+app.post('/api/templates', (req, res) => {
+  try {
+    const body = req.body || {};
+    const id = (body.id && String(body.id).replace(/[^a-zA-Z0-9_-]/g, '')) || crypto.randomUUID();
+    const file = templateFile(id);
+    if (!file) return res.status(400).json({ error: 'bad template id' });
+    const name = (typeof body.name === 'string' && body.name.trim().slice(0, 80)) || 'Untitled template';
+    const existing = (() => {
+      try {
+        return JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch {
+        return null;
+      }
+    })();
+    const template = {
+      id,
+      name,
+      createdAt: (existing && existing.createdAt) || Date.now(),
+      updatedAt: Date.now(),
+      data: body.data && typeof body.data === 'object' ? body.data : {},
+      summary: body.summary && typeof body.summary === 'object' ? body.summary : {},
+    };
+    fs.writeFileSync(file, JSON.stringify(template));
+    res.json({ template });
+  } catch (err) {
+    res.status(400).json({ error: String((err && err.message) || err) });
+  }
+});
+
+app.post('/api/templates/rename', (req, res) => {
+  const { id, name } = req.body || {};
+  const file = templateFile(id);
+  if (!file || !fs.existsSync(file)) return res.status(404).json({ error: 'not found' });
+  try {
+    const t = JSON.parse(fs.readFileSync(file, 'utf8'));
+    t.name = (typeof name === 'string' && name.trim().slice(0, 80)) || t.name;
+    t.updatedAt = Date.now();
+    fs.writeFileSync(file, JSON.stringify(t));
+    res.json({ template: t });
+  } catch (err) {
+    res.status(400).json({ error: String((err && err.message) || err) });
+  }
+});
+
+app.post('/api/templates/delete', (req, res) => {
+  const file = templateFile((req.body || {}).id);
+  if (!file) return res.status(400).json({ error: 'bad id' });
+  try {
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  } catch {}
+  res.json({ ok: true });
+});
 
 // --- caption model downloads (user-initiated, from Hugging Face) --------------
 // The ONLY new network activity in the app (see SECURITY.md). Streams a tier's

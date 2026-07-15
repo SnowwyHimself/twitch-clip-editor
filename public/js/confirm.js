@@ -87,6 +87,88 @@ export function addClipDialog({ prefillUrl = '' } = {}) {
   });
 }
 
+// A single-line text prompt (name a template, rename, etc.). Resolves to the
+// trimmed string on confirm, or null on cancel. Matches the confirm dialog's
+// look; Enter confirms, Esc cancels.
+export function promptDialog({
+  title = 'Name',
+  label = '',
+  value = '',
+  placeholder = '',
+  confirmLabel = 'Save',
+  cancelLabel = 'Cancel',
+  maxLength = 80,
+} = {}) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'export-modal confirm-modal';
+    const card = document.createElement('div');
+    card.className = 'export-card confirm-card';
+
+    const h = document.createElement('h2');
+    h.className = 'confirm-title';
+    h.textContent = title;
+    card.appendChild(h);
+
+    if (label) {
+      const l = document.createElement('label');
+      l.className = 'field-label';
+      l.textContent = label;
+      card.appendChild(l);
+    }
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'prompt-input';
+    input.value = value;
+    input.placeholder = placeholder;
+    input.maxLength = maxLength;
+    card.appendChild(input);
+
+    const actions = document.createElement('div');
+    actions.className = 'confirm-actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'secondary-btn';
+    cancelBtn.textContent = cancelLabel;
+    const okBtn = document.createElement('button');
+    okBtn.type = 'button';
+    okBtn.className = 'primary-btn';
+    okBtn.textContent = confirmLabel;
+    actions.append(cancelBtn, okBtn);
+    card.appendChild(actions);
+
+    backdrop.appendChild(card);
+    document.body.appendChild(backdrop);
+
+    const close = (result) => {
+      document.removeEventListener('keydown', onKey, true);
+      backdrop.remove();
+      resolve(result);
+    };
+    const submit = () => {
+      const v = input.value.trim();
+      close(v || null);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close(null);
+      } else if (e.key === 'Enter') {
+        e.stopPropagation();
+        submit();
+      }
+    };
+    backdrop.addEventListener('pointerdown', (e) => {
+      if (e.target === backdrop) close(null);
+    });
+    cancelBtn.addEventListener('click', () => close(null));
+    okBtn.addEventListener('click', submit);
+    document.addEventListener('keydown', onKey, true);
+    input.focus();
+    input.select();
+  });
+}
+
 export function confirmDialog({
   title = 'Are you sure?',
   itemName = '',

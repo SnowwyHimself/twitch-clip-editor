@@ -3347,6 +3347,77 @@ img.preset-thumb {
   }
 }
 
+/* Project templates: start-screen cards + prompt dialog ------------------------ */
+.start-templates {
+  margin-top: var(--space-4);
+  width: 100%;
+  max-width: 420px;
+}
+.start-templates-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.template-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 2px 2px 0;
+  border-radius: var(--radius-md);
+}
+.template-card:hover {
+  background: var(--panel-2);
+}
+.template-card-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.template-card-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.template-card-sum {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.template-card-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s var(--ease);
+}
+.template-card:hover .template-card-actions {
+  opacity: 1;
+}
+.template-icon-btn {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+}
+.template-icon-btn:hover {
+  color: var(--text);
+  background: var(--panel-3);
+}
+.prompt-input {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
 /* Background export: corner progress pill --------------------------------------- */
 .export-pill {
   position: fixed;

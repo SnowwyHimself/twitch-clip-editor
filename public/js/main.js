@@ -60,9 +60,18 @@ import {
   onProjectChange,
   finishOpenWithFile,
 } from './project.js';
-import { confirmDialog, addClipDialog } from './confirm.js';
+import { confirmDialog, addClipDialog, promptDialog } from './confirm.js';
 import { initOnboarding, onSourceLoaded } from './onboarding.js';
 import { initExportQueue } from './exportqueue.js';
+import { showToast } from './toast.js';
+import {
+  saveCurrentAsTemplate,
+  fetchTemplates,
+  renameTemplate,
+  deleteTemplate,
+  applyTemplateData,
+  onTemplateClipLoaded,
+} from './templates.js';
 
 const urlInput = document.getElementById('clip-url');
 const loadUrlBtn = document.getElementById('load-url-btn');
@@ -358,6 +367,9 @@ const restoreYesBtn = document.getElementById('restore-yes-btn');
 const restoreNoBtn = document.getElementById('restore-no-btn');
 const startRecent = document.getElementById('start-recent');
 const startRecentList = document.getElementById('start-recent-list');
+const startTemplates = document.getElementById('start-templates');
+const startTemplatesList = document.getElementById('start-templates-list');
+const saveTemplateBtn = document.getElementById('save-template-btn');
 
 // When a project can't auto-resolve its (moved/renamed) source file, we hold it
 // here and let the user re-pick the video, then finish loading.
@@ -466,6 +478,105 @@ async function refreshStartRecent() {
   startRecent.classList.toggle('hidden', !has);
 }
 
+// --- templates -----------------------------------------------------------------
+
+async function refreshStartTemplates() {
+  if (!startTemplates) return;
+  if (state.source) {
+    startTemplates.classList.add('hidden');
+    return;
+  }
+  const templates = await fetchTemplates();
+  if (!templates.length) {
+    startTemplates.classList.add('hidden');
+    return;
+  }
+  startTemplates.classList.remove('hidden');
+  startTemplatesList.innerHTML = '';
+  for (const t of templates) {
+    const s = t.summary || {};
+    const bits = [
+      s.aspect,
+      s.layout === 'split' ? 'split' : null,
+      s.textCount ? `${s.textCount} text` : null,
+      s.watermark ? 'watermark' : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const card = document.createElement('div');
+    card.className = 'template-card';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'template-card-open';
+    open.innerHTML = `<span class="template-card-name">${escapeHtml(t.name)}</span><span class="template-card-sum">${escapeHtml(bits || 'Look only')}</span>`;
+    open.addEventListener('click', () => newFromTemplate(t));
+    card.appendChild(open);
+
+    const actions = document.createElement('div');
+    actions.className = 'template-card-actions';
+    const ren = document.createElement('button');
+    ren.type = 'button';
+    ren.className = 'template-icon-btn';
+    ren.title = 'Rename';
+    ren.innerHTML = icon('pencil', 13);
+    ren.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const name = await promptDialog({ title: 'Rename template', label: 'Template name', value: t.name, confirmLabel: 'Rename' });
+      if (name) {
+        await renameTemplate(t.id, name);
+        refreshStartTemplates();
+      }
+    });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'template-icon-btn';
+    del.title = 'Delete';
+    del.innerHTML = icon('trash', 13);
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ok = await confirmDialog({ title: 'Delete template?', itemName: t.name, confirmLabel: 'Delete' });
+      if (ok) {
+        await deleteTemplate(t.id);
+        refreshStartTemplates();
+      }
+    });
+    actions.append(ren, del);
+    card.appendChild(actions);
+    startTemplatesList.appendChild(card);
+  }
+}
+
+function newFromTemplate(t) {
+  applyTemplateData(t.data);
+  hideRestoreBanner();
+  // Still no clip, so the start screen stays; refresh it and prompt for a clip.
+  refreshStartTemplates();
+  setPlaceholder('Template ready — paste a clip link or open a file to start.');
+}
+
+function wireTemplates() {
+  if (saveTemplateBtn) {
+    saveTemplateBtn.addEventListener('click', async () => {
+      const cur = projectNameEl.textContent || '';
+      const suggested = cur && cur !== 'Untitled' ? cur : '';
+      const name = await promptDialog({
+        title: 'Save as template',
+        label: 'Template name',
+        value: suggested,
+        placeholder: 'My template',
+        confirmLabel: 'Save',
+      });
+      if (!name) return;
+      try {
+        await saveCurrentAsTemplate(name);
+        showToast({ message: `Saved template “${name}”` });
+      } catch (err) {
+        showToast({ message: `Couldn't save template: ${err && err.message ? err.message : 'error'}` });
+      }
+    });
+  }
+}
+
 function wireProjects() {
   projectSaveBtn.addEventListener('click', doSave);
   projectSaveAsBtn.addEventListener('click', doSaveAs);
@@ -492,7 +603,10 @@ function wireProjects() {
     projectNameEl.textContent = name || 'Untitled';
   });
 
-  on('source', () => startRecent.classList.add('hidden'));
+  on('source', () => {
+    startRecent.classList.add('hidden');
+    if (startTemplates) startTemplates.classList.add('hidden');
+  });
 
   startAutosave();
 }
@@ -589,12 +703,16 @@ async function boot() {
   on('segments', syncFullDurationLayers);
   emit('settings');
 
+  wireTemplates();
   refreshStartRecent();
+  refreshStartTemplates();
   offerRestore();
   wireUpdatePill();
   // First-run onboarding: reveals the "try a sample clip" option + tour on the
   // very first launch only. Any real source load retires the offer silently.
   on('source', () => onSourceLoaded());
+  // Fit template text to the clip once one loads into a template-based project.
+  on('source', () => onTemplateClipLoaded());
   initOnboarding({ loadSample: loadSampleClip });
 
   // Debug/scripting handle (used by automated tests; harmless in prod —

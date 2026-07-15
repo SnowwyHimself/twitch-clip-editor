@@ -166,6 +166,40 @@ export async function saveAppState(patch) {
   }
 }
 
+// --- project templates ---
+export async function fetchTemplates() {
+  try {
+    const res = await fetch('/api/templates');
+    const data = await parseJsonResponse(res, 'Failed to load templates');
+    return Array.isArray(data.templates) ? data.templates : [];
+  } catch {
+    return [];
+  }
+}
+export async function saveTemplate({ id, name, data, summary }) {
+  const res = await fetch('/api/templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, name, data, summary }),
+  });
+  return parseJsonResponse(res, 'Failed to save template');
+}
+export async function renameTemplate(id, name) {
+  const res = await fetch('/api/templates/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, name }),
+  });
+  return parseJsonResponse(res, 'Failed to rename template');
+}
+export async function deleteTemplate(id) {
+  await fetch('/api/templates/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+}
+
 // --- caption model downloads ---
 export async function startModelDownload(tier) {
   const res = await fetch('/api/model/download', {

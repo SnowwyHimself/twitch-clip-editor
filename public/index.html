@@ -18,6 +18,7 @@
       <button type="button" id="project-saveas-btn" class="secondary-btn" title="Save as a new project">Save As</button>
       <button type="button" id="project-open-btn" class="secondary-btn" title="Open a saved project">Open</button>
       <button type="button" id="brand-kit-btn" class="secondary-btn" title="Global brand kit — default font, colour &amp; watermark">Brand kit</button>
+      <button type="button" id="save-template-btn" class="secondary-btn" title="Save this project's look as a reusable template">Template</button>
       <input id="project-file-input" type="file" accept="video/*" hidden />
     </div>
     <div class="source-input">
@@ -42,6 +43,10 @@
           <p id="preview-empty-title" class="preview-empty-title">Paste a Twitch clip link to start</p>
           <p class="preview-empty-hint">…or open a video file. It loads straight into the timeline.</p>
           <button type="button" id="try-sample-btn" class="secondary-btn icon-text-btn try-sample-btn hidden"><span data-icon="play"></span> Try it with a sample clip</button>
+          <div id="start-templates" class="start-templates hidden">
+            <p class="start-recent-title">Templates</p>
+            <div id="start-templates-list" class="start-templates-list"></div>
+          </div>
           <div id="start-recent" class="start-recent hidden">
             <p class="start-recent-title">Recent projects</p>
             <div id="start-recent-list" class="start-recent-list"></div>
