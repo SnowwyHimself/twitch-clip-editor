@@ -430,21 +430,30 @@ function applyCaptionEntrance(layer, entry, srcT) {
   const anim = layer.animation || 'none';
   if (anim === 'none' || srcT < layer.start) {
     entry.root.style.opacity = '';
+    entry.root.style.clipPath = '';
     setCenterTransform(entry.root, base.x, base.y, width, height, layer.rotation || 0);
     return;
   }
   const p = Math.min(1, (srcT - layer.start) / CAP_ANIM_DURATION);
-  entry.root.style.opacity = p.toFixed(3);
   let dx = 0;
   let dy = 0;
-  if (anim === 'slide') {
-    dy = (1 - p) * height * CAP_SLIDE_FRAC;
-  } else if (anim === 'bounce') {
-    const u = p - 1;
-    const easeOutBack = 1 + BACK_C3 * u * u * u + BACK_C1 * u * u;
-    dy = (1 - easeOutBack) * height * CAP_BOUNCE_FRAC;
-  } else if (anim === 'shake') {
-    dx = Math.sin(p * CAP_SHAKE_CYCLES * 2 * Math.PI) * (1 - p) * height * CAP_SHAKE_FRAC;
+  if (anim === 'wipe') {
+    // Hard left→right reveal (no opacity fade), matching the export's per-frame
+    // crop of the caption PNG. Clip the right (1-p) fraction of the box.
+    entry.root.style.opacity = '1';
+    entry.root.style.clipPath = `inset(0 ${((1 - p) * 100).toFixed(2)}% 0 0)`;
+  } else {
+    entry.root.style.opacity = p.toFixed(3);
+    entry.root.style.clipPath = '';
+    if (anim === 'slide') {
+      dy = (1 - p) * height * CAP_SLIDE_FRAC;
+    } else if (anim === 'bounce') {
+      const u = p - 1;
+      const easeOutBack = 1 + BACK_C3 * u * u * u + BACK_C1 * u * u;
+      dy = (1 - easeOutBack) * height * CAP_BOUNCE_FRAC;
+    } else if (anim === 'shake') {
+      dx = Math.sin(p * CAP_SHAKE_CYCLES * 2 * Math.PI) * (1 - p) * height * CAP_SHAKE_FRAC;
+    }
   }
   setCenterTransform(entry.root, base.x + dx, base.y + dy, width, height, layer.rotation || 0);
 }

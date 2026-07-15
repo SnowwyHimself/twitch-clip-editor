@@ -1243,7 +1243,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     nextInputIndex += 1;
   }
   for (const cap of captionOverlays) {
-    const animated = ['fade', 'slide', 'bounce', 'shake'].includes(cap.animation);
+    const animated = ['fade', 'slide', 'bounce', 'shake', 'wipe'].includes(cap.animation);
     // An animated caption needs a continuous stream to ramp alpha over time, so
     // it's looped — but BOUNDED with -t (to its end + a margin) so the input
     // EOFs instead of looping forever, which otherwise wedges ffmpeg at the
@@ -1255,13 +1255,29 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     if (animated) {
       const d = CAP_ANIM_DURATION.toFixed(3);
       const st = cap.start.toFixed(3);
+      // Progress p over the entrance window (0→1), commas escaped for overlay.
+      const P = `clip((t-${st})/${d}\\,0\\,1)`;
+      if (cap.animation === 'wipe') {
+        // Hard left→right reveal: gate the caption's alpha per pixel/frame so only
+        // the left X < W*p is shown. crop can't do this (its width is evaluated
+        // once at init, not per frame), but geq re-evaluates every pixel every
+        // frame with T (time). No opacity fade — matches the preview's clip-path
+        // reveal. Each geq plane expr is single-quoted, so its commas are literal.
+        const Pq = `clip((T-${st})/${d},0,1)`;
+        const wiped = `[capw${nextInputIndex}]`;
+        stage.pre =
+          `${rawLabel}format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':` +
+          `a='if(lt(X,W*${Pq}),alpha(X,Y),0)'${wiped}`;
+        stage.inputLabel = wiped;
+        overlayStages.push(stage);
+        nextInputIndex += 1;
+        continue;
+      }
       const faded = `[capf${nextInputIndex}]`;
       // Fade the caption's alpha in over the first CAP_ANIM_DURATION after it
       // appears (st is on the main timeline; a -loop 1 image shares that clock).
       stage.pre = `${rawLabel}format=yuva420p,fade=t=in:st=${st}:d=${d}:alpha=1${faded}`;
       stage.inputLabel = faded;
-      // Progress p over the entrance window (0→1), commas escaped for overlay.
-      const P = `clip((t-${st})/${d}\\,0\\,1)`;
       if (cap.animation === 'slide') {
         // Ease the caption up from slidePx below its resting y — matches the
         // preview's per-frame translate.
@@ -1449,7 +1465,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   // can outlast the video and pad the render with a frozen tail. -shortest ends
   // the output with the (bounded) video/audio instead. Only added when such a
   // looped input exists, so nothing else changes.
-  const hasLoopedCaption = captionOverlays.some((c) => c.animation === 'fade' || c.animation === 'slide');
+  const hasLoopedCaption = captionOverlays.some((c) => ['fade', 'slide', 'bounce', 'shake', 'wipe'].includes(c.animation));
   if (hasLoopedCaption) outputArgs.push('-shortest');
   args.push(
     ...outputArgs,
@@ -2249,7 +2265,7 @@ function buildTextLayers(body) {
       xPercent: clampPositionPercent(l && l.xPercent, 50),
       yPercent: clampPositionPercent(l && l.yPercent, 25),
       wrapWidth: clampWrapRatio(l && l.wrapWidth),
-      animation: ['fade', 'slide', 'bounce', 'shake'].includes(l && l.animation) ? l.animation : 'none',
+      animation: ['fade', 'slide', 'bounce', 'shake', 'wipe'].includes(l && l.animation) ? l.animation : 'none',
       start: num(l && l.start),
       end: num(l && l.end),
     }))
