@@ -200,3 +200,35 @@ export async function fetchJobStatus(jobId) {
   const res = await fetch(`/api/status/${jobId}`);
   return parseJsonResponse(res, 'Failed to fetch job status');
 }
+
+export async function cancelExport(jobId) {
+  try {
+    await fetch(`/api/cancel/${jobId}`, { method: 'POST' });
+  } catch {
+    /* best-effort — the poller will also stop on the client side */
+  }
+}
+
+export async function fetchRecentExports() {
+  try {
+    const res = await fetch('/api/recent-exports');
+    const data = await parseJsonResponse(res, 'Failed to load recent exports');
+    return Array.isArray(data.exports) ? data.exports : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function recordRecentExport(rec) {
+  try {
+    const res = await fetch('/api/recent-exports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rec),
+    });
+    const data = await parseJsonResponse(res, 'Failed to record export');
+    return Array.isArray(data.exports) ? data.exports : [];
+  } catch {
+    return [];
+  }
+}

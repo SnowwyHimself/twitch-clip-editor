@@ -56,6 +56,27 @@ ipcMain.handle('library:open-folder', async () => {
   }
 });
 
+const OUTPUTS_DIR = path.join(app.getPath('userData'), 'outputs');
+
+// Reveal a finished export in the OS file manager. The renderer passes the
+// export's public /outputs/<name> URL; we re-derive the on-disk path INSIDE
+// OUTPUTS_DIR (leaf only, no traversal) and only reveal it if it still exists —
+// a stale "recent exports" row can never open an arbitrary path, and a deleted
+// file fails gracefully.
+ipcMain.handle('export:show-in-folder', async (_event, outputUrl) => {
+  if (typeof outputUrl !== 'string') return { ok: false, reason: 'bad-url' };
+  const leaf = path.basename(outputUrl.replace(/^\/outputs\//, ''));
+  if (!leaf || leaf.includes('/') || leaf.includes('\\') || leaf.startsWith('.')) {
+    return { ok: false, reason: 'bad-name' };
+  }
+  const full = path.join(OUTPUTS_DIR, leaf);
+  if (path.dirname(full) !== OUTPUTS_DIR || !fs.existsSync(full)) {
+    return { ok: false, reason: 'not-found' };
+  }
+  shell.showItemInFolder(full);
+  return { ok: true };
+});
+
 ipcMain.handle('reopen-file', async (_event, absPath, opts) => {
   if (typeof absPath !== 'string' || !absPath) return { ok: false, reason: 'bad-path' };
   let stat;

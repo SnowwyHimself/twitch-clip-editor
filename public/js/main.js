@@ -62,6 +62,7 @@ import {
 } from './project.js';
 import { confirmDialog, addClipDialog } from './confirm.js';
 import { initOnboarding, onSourceLoaded } from './onboarding.js';
+import { initExportQueue } from './exportqueue.js';
 
 const urlInput = document.getElementById('clip-url');
 const loadUrlBtn = document.getElementById('load-url-btn');
@@ -576,6 +577,7 @@ async function boot() {
   initTimeline();
   initPanel();
   initExport();
+  initExportQueue(); // background export pill + queue (wires the pill's cancel)
   initBrandKit(); // loads the global brand kit + seeds this session's watermark
   initCaptionSettings(); // caption quality tier + custom vocabulary
   wireIngestion();

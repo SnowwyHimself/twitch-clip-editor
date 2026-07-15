@@ -9,25 +9,23 @@
 // shows over exactly the same frames in the rendered file, whatever was
 // cut before it.
 
-import { state, on, keptSegments, orderedPieces, appendedLayout, sourceDuration, sourceToOutput } from './state.js';
-import { startExport, fetchJobStatus } from './api.js';
+import { state, on, keptSegments, orderedPieces, appendedLayout, sourceDuration, sourceToOutput, outputDuration } from './state.js';
+import { fetchRecentExports } from './api.js';
 import { currentProject } from './project.js';
+import { enqueueExport, onExportsChanged } from './exportqueue.js';
+import { showToast } from './toast.js';
 
 const exportBtn = document.getElementById('export-btn');
 const modal = document.getElementById('export-modal');
-const modalStatus = document.getElementById('export-status');
-const modalBarFill = document.getElementById('export-bar-fill');
-const modalResult = document.getElementById('export-result');
-const resultVideo = document.getElementById('result-video');
-const downloadLink = document.getElementById('download-link');
 const closeModalBtn = document.getElementById('export-close-btn');
 const optionsPane = document.getElementById('export-options');
-const progressPane = document.getElementById('export-progress');
 const startRenderBtn = document.getElementById('export-start-btn');
 const resolutionSelect = document.getElementById('export-resolution');
 const qualitySelect = document.getElementById('export-quality');
 const loudnessToggle = document.getElementById('export-loudness');
 const filenameInput = document.getElementById('export-filename');
+const recentsWrap = document.getElementById('export-recents');
+const recentsList = document.getElementById('export-recents-list');
 
 // A friendly, filesystem-safe download name from the user's input (or the
 // project name / "Clip Editor" fallback). Drops characters that are illegal in
@@ -43,14 +41,6 @@ function exportFileName() {
 }
 
 const EXPORT_OPTS_KEY = 'clipEditor.exportOpts.v1';
-let pollHandle = null;
-
-const STATUS_LABELS = {
-  queued: 'Queued...',
-  downloading: 'Downloading clip...',
-  processing: 'Rendering...',
-  done: 'Done!',
-};
 
 // state's sourceToOutput handles pieces, cuts, and free-mode gaps; the
 // division by speed converts concat-domain seconds into the final video's
@@ -105,7 +95,12 @@ function buildTextLayersPayload() {
   return payload;
 }
 
-function buildFormData() {
+// opts lets a re-export reuse a saved export's exact settings; when omitted it
+// reads the current option controls (the normal Render flow).
+function buildFormData(opts) {
+  const outHeight = opts && opts.outHeight != null ? opts.outHeight : resolutionSelect.value;
+  const crf = opts && opts.crf != null ? opts.crf : qualitySelect.value;
+  const loudness = opts && opts.loudness != null ? opts.loudness : !!(loudnessToggle && loudnessToggle.checked);
   const formData = new FormData();
   formData.append('aspectRatio', state.aspect.id);
   formData.append('zoom', state.zoom);
@@ -124,10 +119,10 @@ function buildFormData() {
   // source before the fill composite, mirroring the preview's object-view-box.
   formData.append('crop', JSON.stringify(state.crop || {}));
   // Export options — output height (px) + x264 CRF (lower = higher quality).
-  formData.append('outHeight', resolutionSelect.value);
-  formData.append('crf', qualitySelect.value);
+  formData.append('outHeight', outHeight);
+  formData.append('crf', crf);
   // Loudness normalization to a consistent -14 LUFS (Feature 8); choice remembered.
-  formData.append('normalizeLoudness', loudnessToggle && loudnessToggle.checked ? 'true' : 'false');
+  formData.append('normalizeLoudness', loudness ? 'true' : 'false');
   // Brand-kit watermark (Feature 7) — the image lives on the server, so only the
   // per-project placement/toggle rides the request.
   if (state.watermark && state.watermark.enabled) {
@@ -290,98 +285,142 @@ function buildFormData() {
   return { endpoint, formData };
 }
 
-// Opens the modal on the options step (pick resolution/quality, then Render).
+// A full render request captured from the CURRENT state — endpoint + FormData
+// (a snapshot: once built, later edits can't change it) plus the metadata a
+// recent-exports row and the pill need. `opts` overrides the option controls
+// (used by re-export to reuse a saved export's exact settings).
+function buildExportSnapshot(opts) {
+  const { endpoint, formData } = buildFormData(opts);
+  const outHeight = opts && opts.outHeight != null ? opts.outHeight : resolutionSelect.value;
+  const crf = opts && opts.crf != null ? opts.crf : qualitySelect.value;
+  const loudness = opts && opts.loudness != null ? opts.loudness : !!(loudnessToggle && loudnessToggle.checked);
+  return {
+    endpoint,
+    formData,
+    meta: {
+      filename: exportFileName(),
+      durationSec: Math.round((outputDuration() || 0) * 10) / 10,
+      res: String(outHeight),
+      crf: String(crf),
+      loudness: !!loudness,
+    },
+  };
+}
+
+// Opens the export dialog (pick name/resolution/quality, then Render) and
+// refreshes the recent-exports list below the options.
 function showOptions() {
   modal.classList.remove('hidden');
   optionsPane.classList.remove('hidden');
-  progressPane.classList.add('hidden');
   // Prefill the name with the project's name (unless the user already typed one).
   if (filenameInput && !filenameInput.value.trim()) {
     const n = currentProject().name;
     filenameInput.value = n && n !== 'Untitled' ? n : 'Clip Editor';
   }
-}
-
-// Switches the modal to the progress step.
-function showProgress() {
-  optionsPane.classList.add('hidden');
-  progressPane.classList.remove('hidden');
-  modalResult.classList.add('hidden');
-  modalBarFill.style.width = '0%';
-  modalBarFill.classList.remove('error', 'done');
-  modalStatus.classList.remove('error');
-}
-
-function stopPolling() {
-  if (pollHandle) {
-    clearInterval(pollHandle);
-    pollHandle = null;
-  }
-}
-
-function setExporting(isExporting) {
-  exportBtn.disabled = isExporting;
-  exportBtn.textContent = isExporting ? 'Exporting...' : 'Export';
-}
-
-function showError(message) {
-  modalStatus.textContent = message || 'Something went wrong.';
-  modalStatus.classList.add('error');
-  modalBarFill.classList.add('error');
-  setExporting(false);
-}
-
-function pollStatus(jobId) {
-  pollHandle = setInterval(async () => {
-    try {
-      const job = await fetchJobStatus(jobId);
-      if (job.status === 'error') {
-        stopPolling();
-        showError(job.error);
-        return;
-      }
-      modalStatus.textContent = STATUS_LABELS[job.status] || 'Working...';
-      if (Number.isFinite(job.progress)) {
-        modalBarFill.style.width = `${Math.round(job.progress * 100)}%`;
-      }
-      if (job.status === 'done') {
-        stopPolling();
-        setExporting(false);
-        modalBarFill.style.width = '100%';
-        modalBarFill.classList.add('done'); // stop the running-sheen animation
-        modalResult.classList.remove('hidden');
-        resultVideo.src = job.outputUrl;
-        downloadLink.href = job.outputUrl;
-        downloadLink.download = exportFileName(); // friendly filename, not the job UUID
-      }
-    } catch (err) {
-      stopPolling();
-      showError(err.message);
-    }
-  }, 700);
+  renderRecents();
 }
 
 function beginExport() {
   if (!state.source) return;
-  stopPolling();
   showOptions();
 }
 
-async function startRender() {
-  stopPolling();
-  showProgress();
-  setExporting(true);
-  modalStatus.textContent = 'Starting...';
+// Render now runs in the BACKGROUND: snapshot the state, hand it to the queue,
+// and return to editing. Progress/queue/completion all live in the corner pill
+// and toast (see exportqueue.js) — no blocking modal.
+function startRender() {
+  if (!state.source) return;
   localStorage.setItem(
     EXPORT_OPTS_KEY,
     JSON.stringify({ res: resolutionSelect.value, crf: qualitySelect.value, loudness: !loudnessToggle || loudnessToggle.checked })
   );
   try {
-    const { endpoint, formData } = buildFormData();
-    const { jobId } = await startExport(endpoint, formData);
-    pollStatus(jobId);
+    enqueueExport(buildExportSnapshot());
+    modal.classList.add('hidden');
   } catch (err) {
-    showError(err.message);
+    showToast({ message: `Couldn't start export: ${err && err.message ? err.message : 'unknown error'}` });
+  }
+}
+
+// Re-render the CURRENT project using a saved export's settings.
+function reExport(rec) {
+  if (!state.source) {
+    showToast({ message: 'Load a clip first to re-export.' });
+    return;
+  }
+  enqueueExport(buildExportSnapshot({ outHeight: rec.res, crf: rec.crf, loudness: rec.loudness !== false }));
+  modal.classList.add('hidden');
+}
+
+function fmtWhen(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return sameDay ? time : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+}
+function fmtDur(sec) {
+  if (!Number.isFinite(sec) || sec <= 0) return '';
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+function safeText(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s == null ? '' : s);
+  return d.innerHTML;
+}
+
+async function renderRecents() {
+  if (!recentsWrap || !recentsList) return;
+  const exports = await fetchRecentExports();
+  if (!exports.length) {
+    recentsWrap.classList.add('hidden');
+    return;
+  }
+  recentsWrap.classList.remove('hidden');
+  recentsList.innerHTML = '';
+  const canReveal = !!(window.electronAPI && window.electronAPI.showExportInFolder);
+  for (const rec of exports) {
+    const row = document.createElement('div');
+    row.className = 'export-recent-row';
+    const meta = [fmtDur(rec.durationSec), fmtWhen(rec.savedAt)].filter(Boolean).join(' · ');
+    row.innerHTML = `
+      <div class="export-recent-info">
+        <span class="export-recent-name">${safeText(rec.filename)}</span>
+        <span class="export-recent-meta">${safeText(meta)}</span>
+      </div>
+      <div class="export-recent-actions"></div>`;
+    const actions = row.querySelector('.export-recent-actions');
+
+    if (canReveal) {
+      const show = document.createElement('button');
+      show.type = 'button';
+      show.className = 'link-btn';
+      show.textContent = 'Show in folder';
+      show.disabled = rec.fileExists === false;
+      if (show.disabled) show.title = 'The exported file is no longer there';
+      show.addEventListener('click', () => window.electronAPI.showExportInFolder(rec.outputUrl));
+      actions.appendChild(show);
+    } else if (rec.outputUrl) {
+      const dl = document.createElement('a');
+      dl.className = 'link-btn';
+      dl.textContent = 'Download';
+      dl.href = rec.outputUrl;
+      dl.download = rec.filename;
+      actions.appendChild(dl);
+    }
+
+    const re = document.createElement('button');
+    re.type = 'button';
+    re.className = 'link-btn';
+    re.textContent = 'Re-export';
+    re.title = 'Re-render the current project with these settings';
+    re.addEventListener('click', () => reExport(rec));
+    actions.appendChild(re);
+
+    recentsList.appendChild(row);
   }
 }
 
@@ -398,11 +437,13 @@ export function initExport() {
   } catch {
     /* defaults */
   }
-  closeModalBtn.addEventListener('click', () => {
-    stopPolling();
-    setExporting(false);
-    resultVideo.pause();
-    modal.classList.add('hidden');
+  closeModalBtn.addEventListener('click', () => modal.classList.add('hidden'));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.classList.add('hidden');
+  });
+  // Keep the recents list fresh whenever the queue records a new export.
+  onExportsChanged(() => {
+    if (!modal.classList.contains('hidden')) renderRecents();
   });
   on('source', () => {
     exportBtn.disabled = !state.source;

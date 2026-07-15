@@ -126,6 +126,8 @@ const DEFAULT_FONT_SIZE = 64;
 
 // jobId -> { status, outputUrl, error }
 const jobs = new Map();
+// jobId -> the live ffmpeg child, so an export can be cancelled mid-render.
+const exportChildren = new Map();
 
 function createJob() {
   const jobId = crypto.randomUUID();
@@ -136,6 +138,10 @@ function createJob() {
 function setJob(jobId, patch) {
   jobs.set(jobId, { ...jobs.get(jobId), ...patch });
 }
+
+// True once the client asked to cancel this job — checked around the render so a
+// cancel that lands before ffmpeg spawns still aborts.
+const cancelledJobs = new Set();
 
 function clampZoom(value) {
   const zoom = parseFloat(value);
@@ -1136,7 +1142,7 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress, onChild) {
   const hasAppended = Array.isArray(appended) && appended.length > 0;
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
@@ -1454,7 +1460,7 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     '-movflags', '+faststart', // moves the moov atom to the front so <video> playback doesn't fail/stall before the file is fully downloaded
     outputPath,
   );
-  await runFfmpegWithProgress(args, onProgress);
+  await runFfmpegWithProgress(args, onProgress, onChild);
 }
 
 // Same contract as runCommand, but reads ffmpeg's -progress key=value
@@ -1463,18 +1469,19 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
 // the 1e6 divisor.
 const FFMPEG_TIMEOUT_MS = 60 * 60 * 1000; // 1h ceiling on a single render; a wedged ffmpeg is killed
 
-async function runFfmpegWithProgress(args, onProgress) {
+async function runFfmpegWithProgress(args, onProgress, onChild) {
   await acquireHeavySlot();
   try {
-    return await runFfmpegWithProgressInner(args, onProgress);
+    return await runFfmpegWithProgressInner(args, onProgress, onChild);
   } finally {
     releaseHeavySlot();
   }
 }
 
-function runFfmpegWithProgressInner(args, onProgress) {
+function runFfmpegWithProgressInner(args, onProgress, onChild) {
   return new Promise((resolve, reject) => {
     const child = spawn(FFMPEG_BIN, args);
+    if (onChild) onChild(child); // let the job track this child so it can be cancelled
     let stderr = '';
     let stdoutBuf = '';
     let timedOut = false;
@@ -1961,15 +1968,48 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     const expectedDuration = Math.max(primarySpan, appendedCursor) / speed;
     const onProgress = (outTime) => {
       if (expectedDuration > 0) {
-        setJob(jobId, { progress: Math.min(0.99, outTime / expectedDuration) });
+        // Alongside the percentage, expose the bytes written so far so the client
+        // can extrapolate an honest final-size estimate (partialBytes / progress).
+        let outputBytes;
+        try {
+          outputBytes = fs.statSync(outputPath).size;
+        } catch {
+          outputBytes = undefined;
+        }
+        setJob(jobId, { progress: Math.min(0.99, outTime / expectedDuration), outputBytes });
       }
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress);
-    setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4` });
+    // A cancel that lands before the child spawns (still queued) aborts here.
+    if (cancelledJobs.has(jobId)) throw new Error('cancelled');
+    const onChild = (child) => {
+      exportChildren.set(jobId, child);
+      // If cancel raced in between the check above and spawn, kill immediately.
+      if (cancelledJobs.has(jobId)) child.kill('SIGKILL');
+    };
+
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress, onChild);
+    let outputBytes;
+    try {
+      outputBytes = fs.statSync(outputPath).size;
+    } catch {
+      outputBytes = undefined;
+    }
+    setJob(jobId, { status: 'done', progress: 1, outputUrl: `/outputs/${jobId}.mp4`, outputBytes });
   } catch (err) {
-    setJob(jobId, { status: 'error', error: err.message });
+    // A killed ffmpeg (cancel) surfaces as a non-zero exit — report it as a clean
+    // 'cancelled' status rather than an error the UI would show as a failure.
+    if (cancelledJobs.has(jobId)) {
+      setJob(jobId, { status: 'cancelled' });
+      try {
+        fs.unlinkSync(path.join(OUTPUTS_DIR, `${jobId}.mp4`));
+      } catch {}
+    } else {
+      setJob(jobId, { status: 'error', error: err.message });
+    }
   } finally {
+    exportChildren.delete(jobId);
+    cancelledJobs.delete(jobId);
     // Only the text-layer PNGs are server-generated temp artifacts cleaned
     // up here — overlay/sound uploads are genuine files,
     // left in place same as the main video upload (see the Notes section
@@ -1989,7 +2029,12 @@ async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, pan
     const inputPath = cachedPath || (await downloadWithYtDlp(url, jobId));
     await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts);
   } catch (err) {
-    setJob(jobId, { status: 'error', error: err.message });
+    if (cancelledJobs.has(jobId)) {
+      setJob(jobId, { status: 'cancelled' });
+      cancelledJobs.delete(jobId);
+    } else {
+      setJob(jobId, { status: 'error', error: err.message });
+    }
   }
 }
 
@@ -2568,6 +2613,72 @@ app.get('/api/status/:jobId', (req, res) => {
     return res.status(404).json({ error: 'Unknown job id' });
   }
   res.json(job);
+});
+
+// Cancel an in-flight (or still-queued) export: kill the ffmpeg child if one is
+// running; a not-yet-spawned job is flagged so processJob aborts before it
+// starts. Idempotent — cancelling a finished job just echoes its status.
+app.post('/api/cancel/:jobId', (req, res) => {
+  const jobId = req.params.jobId;
+  const job = jobs.get(jobId);
+  if (!job) return res.status(404).json({ error: 'Unknown job id' });
+  if (['done', 'error', 'cancelled'].includes(job.status)) {
+    return res.json({ ok: true, status: job.status });
+  }
+  cancelledJobs.add(jobId);
+  const child = exportChildren.get(jobId);
+  if (child) child.kill('SIGKILL');
+  setJob(jobId, { status: 'cancelled' });
+  res.json({ ok: true, status: 'cancelled' });
+});
+
+// --- recent exports (global, userData) ---------------------------------------
+// A small rolling list (last 10) of finished exports so the user can re-open the
+// folder or re-render with the same settings. Persisted in userData; the file
+// path is never stored — Show-in-Folder re-derives it from OUTPUTS_DIR in the
+// main process, so a stale record can never point the shell at an arbitrary path.
+const RECENT_EXPORTS_FILE = path.join(DATA_ROOT, 'recent-exports.json');
+const RECENT_EXPORTS_MAX = 10;
+function readRecentExports() {
+  try {
+    const v = JSON.parse(fs.readFileSync(RECENT_EXPORTS_FILE, 'utf8'));
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function writeRecentExports(list) {
+  fs.writeFileSync(RECENT_EXPORTS_FILE, JSON.stringify(list.slice(0, RECENT_EXPORTS_MAX)));
+}
+app.get('/api/recent-exports', (req, res) => {
+  // Annotate each row with whether its output file still exists on disk, so the
+  // UI can grey out Show-in-Folder for exports the user has since deleted/moved.
+  const list = readRecentExports().map((r) => {
+    let fileExists = false;
+    try {
+      const leaf = safeLeaf(String(r.outputUrl || '').replace('/outputs/', ''));
+      fileExists = !!leaf && fs.existsSync(path.join(OUTPUTS_DIR, leaf));
+    } catch {}
+    return { ...r, fileExists };
+  });
+  res.json({ exports: list });
+});
+app.post('/api/recent-exports', (req, res) => {
+  const b = req.body || {};
+  const rec = {
+    id: crypto.randomUUID(),
+    filename: typeof b.filename === 'string' ? b.filename.slice(0, 200) : 'export.mp4',
+    durationSec: Number.isFinite(b.durationSec) ? b.durationSec : null,
+    savedAt: Date.now(),
+    outputUrl: typeof b.outputUrl === 'string' ? b.outputUrl.slice(0, 200) : null,
+    res: b.res || null,
+    crf: b.crf || null,
+    loudness: b.loudness !== false,
+    sizeBytes: Number.isFinite(b.sizeBytes) ? b.sizeBytes : null,
+  };
+  const list = [rec, ...readRecentExports()].slice(0, RECENT_EXPORTS_MAX);
+  writeRecentExports(list);
+  res.json({ exports: list });
 });
 
 // --- projects (save/load/autosave) --------------------------------------------

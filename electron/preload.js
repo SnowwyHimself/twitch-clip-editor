@@ -43,4 +43,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Open the personal asset library folder in the OS file manager (Settings).
   openLibraryFolder: () => ipcRenderer.invoke('library:open-folder'),
+
+  // Reveal a finished export in Finder/Explorer. Takes the export's /outputs/…
+  // URL; the main process re-derives the real path inside userData/outputs, so
+  // the renderer can never point the shell at an arbitrary file.
+  showExportInFolder: (outputUrl) => ipcRenderer.invoke('export:show-in-folder', outputUrl),
 });
