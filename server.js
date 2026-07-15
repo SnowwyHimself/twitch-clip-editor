@@ -2810,7 +2810,12 @@ app.post('/api/phone-access/pair-code', async (req, res) => {
   const st = transferServer.getStatus();
   if (!st.ip || !st.port) return res.status(409).json({ error: 'not-listening' });
   const code = transferServer.createPairCode();
-  res.json({ url: `http://${st.ip}:${st.port}/pair?code=${code}`, ip: st.ip, port: st.port, expiresInMs: 120000 });
+  // Default URL uses the friendly clip-editor.local hostname (mDNS) so the phone
+  // shows that in its address bar; the raw-IP URL is a silent fallback for phones
+  // that don't resolve .local.
+  const ipUrl = `http://${st.ip}:${st.port}/pair?code=${code}`;
+  const url = st.host ? `http://${st.host}:${st.port}/pair?code=${code}` : ipUrl;
+  res.json({ url, ipUrl, host: st.host || null, ip: st.ip, port: st.port, expiresInMs: 120000 });
 });
 
 app.post('/api/phone-access/device/rename', (req, res) => {

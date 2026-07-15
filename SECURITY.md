@@ -60,6 +60,12 @@ shares nothing with the main app server above.
   the desktop shows your paired devices and lets you **Revoke** one (or all) —
   which takes effect immediately. Pairing and downloads are rate-limited, and
   nothing sensitive (codes or tokens) is logged.
+- **Friendly hostname (mDNS).** While access is on, the app advertises the name
+  `clip-editor.local` on the local network (standard mDNS/Bonjour, UDP 5353) so
+  the phone shows that instead of a raw IP. This only maps the name to the
+  machine's LAN address — which anyone on the network can already see — and it
+  stops (sends a goodbye) when you turn access off. Phones that don't resolve
+  `.local` fall back to the IP.
 - **Plain HTTP on the LAN — the tradeoff.** Traffic between your phone and this
   computer is plain HTTP, not HTTPS. For this threat model that is an accepted
   tradeoff: it's your own local network, the transfer is authenticated with an

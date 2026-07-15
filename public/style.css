@@ -3506,6 +3506,12 @@ img.preset-thumb {
 .phone-firewall {
   color: var(--text-dim);
 }
+.phone-use-ip {
+  display: block;
+  margin: var(--space-2) auto 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
 .phone-export-hint {
   color: var(--accent);
 }

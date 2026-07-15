@@ -21,6 +21,16 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+let makeMdns = null;
+try {
+  makeMdns = require('multicast-dns');
+} catch {
+  makeMdns = null; // mDNS is a nicety; the IP always works as a fallback
+}
+
+// The friendly hostname the phone sees in its address bar instead of a raw IP.
+// We answer mDNS A-queries for it with the active LAN IP (see startMdns).
+const MDNS_HOST = 'clip-editor.local';
 
 const PAIR_CODE_TTL_MS = 2 * 60 * 1000; // one-time pairing codes expire in 2 min
 const DEVICE_TOKEN_BYTES = 32; // 256-bit per-device tokens
@@ -381,6 +391,38 @@ function createTransferServer({ outputsDir, resolveInside, safeLeaf, listExports
     return send(res, 404, { 'Content-Type': 'text/plain' }, 'Not found');
   }
 
+  // --- mDNS: answer A-queries for clip-editor.local with the LAN IP so the
+  // phone sees a friendly hostname instead of a raw IP. Pure nicety — the IP is
+  // always a valid fallback in the QR. Skipped for loopback (tests). ------------
+  let mdns = null;
+  function startMdns(ip) {
+    stopMdns();
+    if (!makeMdns || !ip || ip.startsWith('127.')) return;
+    try {
+      mdns = makeMdns();
+      mdns.on('query', (query) => {
+        for (const q of query.questions || []) {
+          if ((q.type === 'A' || q.type === 'ANY') && String(q.name).toLowerCase() === MDNS_HOST) {
+            try {
+              mdns.respond({ answers: [{ name: MDNS_HOST, type: 'A', ttl: 120, data: ip }] });
+            } catch {}
+          }
+        }
+      });
+      mdns.respond({ answers: [{ name: MDNS_HOST, type: 'A', ttl: 120, data: ip }] }); // announce
+    } catch {
+      mdns = null;
+    }
+  }
+  function stopMdns() {
+    if (!mdns) return;
+    try {
+      if (address && address.ip) mdns.respond({ answers: [{ name: MDNS_HOST, type: 'A', ttl: 0, data: address.ip }] }); // goodbye
+      mdns.destroy();
+    } catch {}
+    mdns = null;
+  }
+
   // --- lifecycle --------------------------------------------------------------
   // Resolves once the server is actually listening (so the caller has the port
   // for the QR). OS-assigned random high port, bound to the specific LAN IP only.
@@ -405,15 +447,17 @@ function createTransferServer({ outputsDir, resolveInside, safeLeaf, listExports
       s.listen(0, ip, () => {
         server = s;
         address = { ip, port: s.address().port };
+        startMdns(ip);
         if (!settled) {
           settled = true;
-          resolve({ enabled: true, ip, port: address.port });
+          resolve({ enabled: true, ip, port: address.port, host: mdns ? MDNS_HOST : null });
         }
       });
     });
   }
   function disable() {
     pairCodes.clear();
+    stopMdns();
     if (server) {
       try {
         server.close();
@@ -431,6 +475,7 @@ function createTransferServer({ outputsDir, resolveInside, safeLeaf, listExports
       enabled: !!server,
       ip: address && address.ip,
       port: address && address.port,
+      host: mdns ? MDNS_HOST : null, // friendly hostname when mDNS is advertising
       otherAddresses: listLanAddresses(),
       devices: publicDevices(),
     };

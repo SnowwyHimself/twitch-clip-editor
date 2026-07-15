@@ -44,15 +44,30 @@ function renderQR(url) {
   box.appendChild(img);
 }
 
+let lastPair = null; // { url (clip-editor.local), ipUrl, host }
+let showingIp = false;
 async function newPairCode() {
   try {
     const r = await requestPairCode();
     if (r && r.url) {
+      lastPair = r;
+      showingIp = false;
       renderQR(r.url);
+      updateFallbackUi();
     }
   } catch {
     /* leave the previous QR */
   }
+}
+// The IP fallback link only appears when a friendly hostname is in use (mDNS).
+// Clicking it swaps the QR to the raw-IP URL for phones that don't resolve
+// .local; clicking again swaps back.
+function updateFallbackUi() {
+  const btn = $('phone-use-ip');
+  if (!btn) return;
+  const hasHost = !!(lastPair && lastPair.host && lastPair.ipUrl);
+  btn.classList.toggle('hidden', !hasHost);
+  btn.textContent = showingIp ? 'Use the clip-editor.local address again' : 'Phone won’t connect? Use the IP address';
 }
 
 function renderDevices(devices) {
@@ -152,6 +167,12 @@ export function initPhone() {
     refresh();
   });
   $('phone-new-code').addEventListener('click', newPairCode);
+  $('phone-use-ip').addEventListener('click', () => {
+    if (!lastPair) return;
+    showingIp = !showingIp;
+    renderQR(showingIp ? lastPair.ipUrl : lastPair.url);
+    updateFallbackUi();
+  });
   $('phone-revoke-all').addEventListener('click', async () => {
     const ok = await confirmDialog({ title: 'Revoke all devices?', note: 'Every paired phone will need to scan the QR again.', confirmLabel: 'Revoke all' });
     if (ok) {
