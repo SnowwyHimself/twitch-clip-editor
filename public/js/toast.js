@@ -1,6 +1,6 @@
 // Quiet, auto-dismissing toast notices (export finished, etc.). One optional
 // inline action + a dismiss ✕. Stacks bottom-right, above the corner pills.
-export function showToast({ message, actionLabel, onAction, duration = 6000 } = {}) {
+export function showToast({ message, actionLabel, onAction, actions, duration = 6000 } = {}) {
   const host = document.getElementById('toast-stack');
   if (!host) return () => {};
 
@@ -12,14 +12,18 @@ export function showToast({ message, actionLabel, onAction, duration = 6000 } = 
   msg.textContent = message || '';
   el.appendChild(msg);
 
-  if (actionLabel && onAction) {
+  // One or more inline actions. `actions` (array) takes precedence; the single
+  // actionLabel/onAction pair still works for existing callers.
+  const acts = Array.isArray(actions) ? actions : actionLabel && onAction ? [{ label: actionLabel, onAction }] : [];
+  for (const a of acts) {
+    if (!a || !a.label || !a.onAction) continue;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'link-btn toast-action';
-    btn.textContent = actionLabel;
+    btn.textContent = a.label;
     btn.addEventListener('click', () => {
       try {
-        onAction();
+        a.onAction();
       } finally {
         dismiss();
       }

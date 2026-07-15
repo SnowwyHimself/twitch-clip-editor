@@ -1007,8 +1007,47 @@
     <button type="button" class="update-pill-x" id="update-pill-dismiss" aria-label="Dismiss">✕</button>
   </div>
 
+  <!-- Send to Phone: "Phone access" settings + pairing QR. The transfer server
+       is a separate LAN-bound server; this modal only drives its loopback
+       control API. -->
+  <div id="phone-modal" class="export-modal hidden">
+    <div class="export-card">
+      <div class="export-header">
+        <h2>Phone access</h2>
+        <button type="button" id="phone-close-btn" class="secondary-btn">Close</button>
+      </div>
+      <div class="export-options">
+        <label class="switch-row" for="phone-toggle">
+          <span class="field-label switch-label">Phone access</span>
+          <span class="switch"><input type="checkbox" id="phone-toggle" /><span class="switch-track"></span></span>
+        </label>
+        <p class="field-hint" id="phone-status">Off. Turn on to move exported clips to your phone over your own Wi‑Fi — nothing is uploaded to the internet.</p>
+        <p class="field-hint phone-firewall hidden" id="phone-firewall">Your Mac or PC may ask to “allow incoming connections” the first time — that’s expected, and it only lets your phone reach this computer on your local network.</p>
+
+        <div id="phone-qr-wrap" class="phone-qr-wrap hidden">
+          <div class="phone-qr" id="phone-qr"></div>
+          <p class="field-hint">Scan with your phone’s camera. The code works once and expires in 2 minutes.</p>
+          <div class="phone-addr-row">
+            <span class="phone-addr" id="phone-addr"></span>
+            <button type="button" id="phone-new-code" class="secondary-btn">New code</button>
+          </div>
+          <p class="field-hint phone-export-hint hidden" id="phone-export-hint">Your export is already on your phone — just open the Clip Editor page there and it’s at the top.</p>
+        </div>
+
+        <div id="phone-devices-wrap" class="phone-devices-wrap hidden">
+          <div class="insp-sec">Paired devices</div>
+          <div id="phone-devices"></div>
+          <button type="button" id="phone-revoke-all" class="link-btn">Revoke all</button>
+        </div>
+
+        <p class="field-hint">Clips stay on your network — no cloud, no account. Turn this off any time to close access; revoked devices lose it immediately.</p>
+      </div>
+    </div>
+  </div>
+
 </div>
 
+<script src="js/vendor/qrcode.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

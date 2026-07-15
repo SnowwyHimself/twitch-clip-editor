@@ -3414,6 +3414,71 @@ img.preset-thumb {
   }
 }
 
+/* Send to Phone: pairing modal ------------------------------------------------ */
+.phone-qr-wrap {
+  margin-top: var(--space-4);
+  text-align: center;
+}
+.phone-qr {
+  display: inline-block;
+  background: #fff;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  line-height: 0;
+}
+.phone-qr-img {
+  width: 208px;
+  height: 208px;
+  image-rendering: pixelated;
+  display: block;
+}
+.phone-addr-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+.phone-addr {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.phone-firewall {
+  color: var(--text-dim);
+}
+.phone-export-hint {
+  color: var(--accent);
+}
+.phone-devices-wrap {
+  margin-top: var(--space-4);
+}
+.phone-device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.phone-device-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.phone-device-name {
+  font-size: 13px;
+}
+.phone-device-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.phone-device-actions {
+  display: inline-flex;
+  gap: var(--space-3);
+  flex: none;
+}
+
 /* Command palette (⌘K) + shortcuts overlay (?) -------------------------------- */
 .cmd-palette {
   position: fixed;

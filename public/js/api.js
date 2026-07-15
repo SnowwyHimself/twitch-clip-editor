@@ -166,6 +166,48 @@ export async function saveAppState(patch) {
   }
 }
 
+// --- Send to Phone (control plane; loopback + token authed) ---
+export async function fetchPhoneAccess() {
+  try {
+    const res = await fetch('/api/phone-access');
+    return await parseJsonResponse(res, 'Failed to read phone access');
+  } catch {
+    return { enabled: false, devices: [] };
+  }
+}
+export async function setPhoneAccess(enabled) {
+  const res = await fetch('/api/phone-access', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  return parseJsonResponse(res, 'Failed to change phone access');
+}
+export async function requestPairCode() {
+  const res = await fetch('/api/phone-access/pair-code', { method: 'POST' });
+  return parseJsonResponse(res, 'Failed to create a pairing code');
+}
+export async function renamePhoneDevice(id, name) {
+  const res = await fetch('/api/phone-access/device/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, name }),
+  });
+  return parseJsonResponse(res, 'Failed to rename device');
+}
+export async function revokePhoneDevice(id) {
+  const res = await fetch('/api/phone-access/device/revoke', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  return parseJsonResponse(res, 'Failed to revoke device');
+}
+export async function revokeAllPhoneDevices() {
+  const res = await fetch('/api/phone-access/devices/revoke-all', { method: 'POST' });
+  return parseJsonResponse(res, 'Failed to revoke devices');
+}
+
 // --- what's-new release notes ---
 export async function fetchReleaseNotes() {
   try {

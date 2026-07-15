@@ -2710,6 +2710,121 @@ app.post('/api/recent-exports', (req, res) => {
   res.json({ exports: list });
 });
 
+// --- Send to Phone: a SEPARATE, scoped LAN transfer server -------------------
+// The transfer server (transfer-server.js) is fully isolated from THIS server:
+// it binds the LAN, serves only the companion page + exports downloads, and has
+// no access to any editor API. Its CONTROL plane, however, lives here on the
+// loopback+token-guarded server (these routes sit AFTER the guard middleware, so
+// only the local app can enable phone access, mint pairing codes, or manage
+// devices). The main server binding is completely unchanged (still 127.0.0.1).
+const { createTransferServer } = require('./transfer-server.js');
+
+// Recent exports, shaped for the phone (leaf filename + metadata) and filtered to
+// files that still exist on disk. The transfer server serves ONLY these names.
+function listExportsForPhone() {
+  return readRecentExports()
+    .map((r) => {
+      const leaf = safeLeaf(String(r.outputUrl || '').replace('/outputs/', ''));
+      if (!leaf) return null;
+      return { name: leaf, filename: r.filename, durationSec: r.durationSec, sizeBytes: r.sizeBytes, savedAt: r.savedAt };
+    })
+    .filter((e) => e && fs.existsSync(path.join(OUTPUTS_DIR, e.name)));
+}
+
+// Small JPEG poster for an export (one frame ~0.5s in, scaled to 360px wide),
+// cached next to the video as <name>.jpg. Best-effort — resolves false on any error.
+function makePoster(leaf) {
+  return new Promise((resolve) => {
+    let src;
+    let dest;
+    try {
+      src = resolveInside(OUTPUTS_DIR, leaf);
+      dest = resolveInside(OUTPUTS_DIR, leaf.replace(/\.[^.]+$/, '') + '.jpg');
+    } catch {
+      return resolve(false);
+    }
+    if (!fs.existsSync(src)) return resolve(false);
+    if (fs.existsSync(dest)) return resolve(true);
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      resolve(ok && fs.existsSync(dest));
+    };
+    let child;
+    try {
+      child = spawn(FFMPEG_BIN, ['-y', '-ss', '0.5', '-i', src, '-frames:v', '1', '-vf', 'scale=360:-2', '-q:v', '5', dest]);
+    } catch {
+      return finish(false);
+    }
+    child.on('error', () => finish(false));
+    child.on('close', (code) => finish(code === 0));
+    setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+      finish(false);
+    }, 15000);
+  });
+}
+
+const transferServer = createTransferServer({
+  outputsDir: OUTPUTS_DIR,
+  resolveInside,
+  safeLeaf,
+  listExports: listExportsForPhone,
+  dataDir: DATA_ROOT,
+  phoneDir: path.join(ROOT, 'public', 'phone'),
+  makePoster,
+});
+// Never leave the LAN port open past the app: stop on process exit (in the
+// packaged app this fires on quit; the socket is force-closed regardless).
+process.on('exit', () => {
+  try {
+    transferServer.disable();
+  } catch {}
+});
+
+// Status: on/off, address (ip:port) while running, other LAN addresses, devices.
+app.get('/api/phone-access', (req, res) => res.json(transferServer.getStatus()));
+
+// Master toggle. Enabling binds the LAN + random port; disabling stops it and
+// clears live pairing codes. Default OFF; not auto-started on launch.
+app.post('/api/phone-access', async (req, res) => {
+  const on = !!(req.body && req.body.enabled);
+  if (on) {
+    const r = await transferServer.enable();
+    return res.json({ ...transferServer.getStatus(), result: r });
+  }
+  transferServer.disable();
+  res.json(transferServer.getStatus());
+});
+
+// Mint a one-time pairing code (single-use, 2-min TTL) and return the URL a phone
+// scans (the client renders it as a QR). Enables the server first if needed.
+app.post('/api/phone-access/pair-code', async (req, res) => {
+  if (!transferServer.isEnabled()) {
+    const r = await transferServer.enable();
+    if (!r.enabled) return res.status(409).json({ error: r.reason || 'cannot-enable' });
+  }
+  const st = transferServer.getStatus();
+  if (!st.ip || !st.port) return res.status(409).json({ error: 'not-listening' });
+  const code = transferServer.createPairCode();
+  res.json({ url: `http://${st.ip}:${st.port}/pair?code=${code}`, ip: st.ip, port: st.port, expiresInMs: 120000 });
+});
+
+app.post('/api/phone-access/device/rename', (req, res) => {
+  const { id, name } = req.body || {};
+  res.json({ ok: transferServer.renameDevice(id, name), devices: transferServer.publicDevices() });
+});
+app.post('/api/phone-access/device/revoke', (req, res) => {
+  res.json({ ok: transferServer.revokeDevice((req.body || {}).id), devices: transferServer.publicDevices() });
+});
+app.post('/api/phone-access/devices/revoke-all', (req, res) => {
+  transferServer.revokeAll();
+  res.json({ ok: true, devices: transferServer.publicDevices() });
+});
+
 // --- projects (save/load/autosave) --------------------------------------------
 // A project = a JSON snapshot of the editor state + any imported sound/overlay
 // media, stored under projects/<id>/. Media rides along in the same multipart

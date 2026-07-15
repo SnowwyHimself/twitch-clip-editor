@@ -5,6 +5,7 @@
 // into the userData recents list and raise a quiet toast.
 import { startExport, fetchJobStatus, cancelExport, recordRecentExport } from './api.js';
 import { showToast } from './toast.js';
+import { openPhoneModal } from './phone.js';
 
 // active: { item, jobId, meta, requestedAt, renderStartedAt, lastJob }
 let active = null;
@@ -129,18 +130,13 @@ function cancelActive() {
 
 // --- completion toast --------------------------------------------------------
 function showExportDoneToast(filename, outputUrl) {
-  const canReveal = !!(window.electronAPI && window.electronAPI.showExportInFolder);
-  if (canReveal) {
-    showToast({
-      message: `Exported ${filename}`,
-      actionLabel: 'Show in folder',
-      onAction: () => window.electronAPI.showExportInFolder(outputUrl),
-    });
+  const actions = [];
+  if (window.electronAPI && window.electronAPI.showExportInFolder) {
+    actions.push({ label: 'Show in folder', onAction: () => window.electronAPI.showExportInFolder(outputUrl) });
   } else {
     // Browser fallback: no OS file manager — offer the download.
-    showToast({
-      message: `Exported ${filename}`,
-      actionLabel: 'Download',
+    actions.push({
+      label: 'Download',
       onAction: () => {
         const a = document.createElement('a');
         a.href = outputUrl;
@@ -151,6 +147,9 @@ function showExportDoneToast(filename, outputUrl) {
       },
     });
   }
+  // Send to phone (opens the pairing QR / companion hint).
+  actions.push({ label: 'Send to phone', onAction: () => openPhoneModal({ fromExport: true }) });
+  showToast({ message: `Exported ${filename}`, actions });
 }
 
 // --- corner pill -------------------------------------------------------------

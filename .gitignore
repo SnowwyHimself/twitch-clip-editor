@@ -31,3 +31,4 @@ native/emoji-render-mac/emoji-render
 /app-state.json
 /recent-exports.json
 /templates/
+/phone-devices.json

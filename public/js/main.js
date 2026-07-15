@@ -48,6 +48,7 @@ import { initPanel, setAddClipHandler, runAddAction } from './panel.js';
 import { registerAction, actionForEvent, isEnabled, GROUPS } from './actions.js';
 import { initCommandUI, openPalette, openShortcuts, paletteOpen, shortcutsOpen } from './palette.js';
 import { initWhatsNew } from './whatsnew.js';
+import { initPhone, openPhoneModal } from './phone.js';
 import { initExport } from './export.js';
 import { initBrandKit } from './brandkit.js';
 import { initCaptionSettings } from './captionsettings.js';
@@ -359,6 +360,7 @@ function registerAllActions() {
   A({ id: 'save-as-template', group: GROUPS.APP, label: 'Save as template…', run: () => clickIfPresent('save-template-btn') });
   A({ id: 'brand-kit', group: GROUPS.APP, label: 'Open brand kit', run: () => clickIfPresent('brand-kit-btn') });
   A({ id: 'caption-settings', group: GROUPS.APP, label: 'Caption quality settings', run: () => clickIfPresent('cap-quality-settings-btn') });
+  A({ id: 'phone-access', group: GROUPS.APP, label: 'Send to phone / Phone access', run: () => openPhoneModal() });
   A({ id: 'command-palette', group: GROUPS.APP, label: 'Command palette', shortcut: { mod: true, key: 'k', display: '⌘K', whileTyping: true }, run: openPalette });
   A({ id: 'shortcuts', group: GROUPS.APP, label: 'Keyboard shortcuts', shortcut: { key: '?', display: '?' }, run: openShortcuts });
 }
@@ -722,6 +724,7 @@ async function boot() {
   initPanel();
   initExport();
   initExportQueue(); // background export pill + queue (wires the pill's cancel)
+  initPhone(); // Send to Phone — "Phone access" settings modal + pairing
   initBrandKit(); // loads the global brand kit + seeds this session's watermark
   initCaptionSettings(); // caption quality tier + custom vocabulary
   wireIngestion();

@@ -38,6 +38,7 @@
     "files": [
       "electron/**/*",
       "server.js",
+      "transfer-server.js",
       "caption.js",
       "transcribe.js",
       "release-notes.json",

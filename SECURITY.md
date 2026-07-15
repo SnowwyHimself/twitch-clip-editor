@@ -31,6 +31,46 @@ happen on your computer.
   `twitch.tv` / `www` / `clips` / `m.twitch.tv` — never an arbitrary or internal
   address.
 
+## Send to Phone (optional, off by default)
+
+"Phone access" lets you move **exported clips** to your phone over your own
+Wi-Fi — no cloud, no account. It is the one feature that deliberately opens the
+app to the local network, so it is built as a **separate, scoped server** that
+shares nothing with the main app server above.
+
+- **Off by default; you control it.** Nothing listens on the network until you
+  turn "Phone access" on in Settings. Turning it off (or quitting the app) stops
+  the server and closes the port immediately. The main app server stays
+  loopback-only and completely unchanged.
+- **A second, minimal server.** When enabled, it binds your active LAN address on
+  a random high port. Your OS may ask to "allow incoming connections" the first
+  time — that's expected, and it only lets your phone reach this computer on your
+  local network.
+- **It serves almost nothing.** Only: the companion web page, the pairing
+  endpoint, and — to a **paired** device — the list of your recent exports and
+  downloads of those exact files (served from the exports folder through the same
+  path-containment check the rest of the app uses). It has **no access** to the
+  editor API, your projects, your library, or settings. Every other path is a
+  `404`. Path-traversal attempts (`../`, encoded, absolute) are rejected, and only
+  files that are actually in your recent-exports list are downloadable.
+- **Pairing.** Enabling access (or "Send to phone" on an export) shows a QR that
+  encodes a **one-time code** (128-bit, single-use, expires in 2 minutes). Your
+  phone scans it and receives its own long random **device token** (256-bit,
+  stored in the phone's browser). Every list/download must carry a valid token;
+  the desktop shows your paired devices and lets you **Revoke** one (or all) —
+  which takes effect immediately. Pairing and downloads are rate-limited, and
+  nothing sensitive (codes or tokens) is logged.
+- **Plain HTTP on the LAN — the tradeoff.** Traffic between your phone and this
+  computer is plain HTTP, not HTTPS. For this threat model that is an accepted
+  tradeoff: it's your own local network, the transfer is authenticated with an
+  unguessable per-device token, and the alternative (a trusted TLS certificate a
+  phone would accept for a random local IP) isn't attainable without a cloud
+  service — exactly what this feature avoids. Someone already on your Wi-Fi still
+  cannot list or download anything without a paired token, and cannot reach any
+  other part of the app.
+- **To turn it off:** flip "Phone access" off in Settings (or quit the app). To
+  cut a specific phone off, Revoke it there.
+
 ## The desktop window is hardened
 
 - Renderer runs sandboxed and context-isolated with `nodeIntegration` off; it can
