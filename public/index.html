@@ -755,23 +755,35 @@
     </div>
     <div id="tl-body" class="tl-body">
       <p id="tl-empty" class="tl-empty">Load a clip to start editing</p>
-      <div id="tl-grid" class="tl-grid">
-        <div class="tl-label"></div>
-        <div id="tl-ruler" class="tl-ruler"></div>
+      <!-- Fixed left gutter: row labels ONLY, outside the horizontal scroll so
+           clip content can never render under or beside them. Rows match the
+           tracks pane 1:1 in height and in show/hide (same .hidden toggling),
+           so the two panes stay aligned. -->
+      <div id="tl-gutter" class="tl-gutter">
+        <div class="tl-label tl-ruler-spacer"></div>
         <div class="tl-label tl-kf-label hidden icon-btn" id="tl-kf-label"><span data-icon="diamond"></span></div>
-        <div id="tl-keyframe-row" class="tl-keyframe-row hidden"></div>
-        <div class="tl-label">Video</div>
-        <div id="tl-video-track" class="tl-video-track"></div>
-        <div class="tl-label hidden">Overlay</div>
-        <div id="tl-overlay-row" class="tl-type-row hidden"></div>
-        <div class="tl-label hidden">Captions</div>
-        <div id="tl-captions-row" class="tl-type-row hidden"></div>
-        <div class="tl-label hidden">Text</div>
-        <div id="tl-text-row" class="tl-type-row hidden"></div>
-        <div class="tl-label hidden">Sound</div>
-        <div id="tl-sound-row" class="tl-type-row hidden"></div>
+        <div class="tl-label" id="tl-lbl-video">Video</div>
+        <div class="tl-label hidden" id="tl-lbl-overlay">Overlay</div>
+        <div class="tl-label hidden" id="tl-lbl-captions">Captions</div>
+        <div class="tl-label hidden" id="tl-lbl-text">Text</div>
+        <div class="tl-label hidden" id="tl-lbl-sound">Sound</div>
       </div>
-      <div id="tl-playhead" class="tl-playhead hidden"></div>
+      <!-- Scrollable tracks pane: clips its own content (overflow-x), so nothing
+           ever paints left of its own x=0. This pane's left edge is THE single
+           time→pixel origin — the ruler, every row, and the playhead all live
+           inside it and map time via outTimeToX(t) with no offset. -->
+      <div id="tl-scroll" class="tl-scroll">
+        <div id="tl-tracks" class="tl-tracks">
+          <div id="tl-ruler" class="tl-ruler"></div>
+          <div id="tl-keyframe-row" class="tl-keyframe-row hidden"></div>
+          <div id="tl-video-track" class="tl-video-track"></div>
+          <div id="tl-overlay-row" class="tl-type-row hidden"></div>
+          <div id="tl-captions-row" class="tl-type-row hidden"></div>
+          <div id="tl-text-row" class="tl-type-row hidden"></div>
+          <div id="tl-sound-row" class="tl-type-row hidden"></div>
+          <div id="tl-playhead" class="tl-playhead hidden"></div>
+        </div>
+      </div>
     </div>
   </section>
 

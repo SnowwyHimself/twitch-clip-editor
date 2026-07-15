@@ -2332,13 +2332,39 @@ img.preset-thumb {
   text-overflow: ellipsis;
 }
 
+/* Two-pane timeline: a fixed label gutter + a horizontally-scrolling tracks
+   pane. The body itself never scrolls horizontally (that's the tracks pane's
+   job) so a label can never sit over scrolled content. */
 .tl-body {
   position: relative;
   flex: 1;
-  min-width: 0; /* let overflow-x actually contain the zoomed-wide grid */
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   overflow-y: auto;
-  overflow-x: auto; /* scrolls when the timeline is zoomed wider than the pane */
+  overflow-x: hidden;
   padding: 0 14px 10px;
+}
+.tl-gutter {
+  flex: 0 0 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tl-scroll {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  overflow-x: auto; /* the ONLY horizontal scroller; clips content to its own box */
+  overflow-y: hidden;
+}
+.tl-tracks {
+  position: relative; /* origin for the playhead + all absolutely-placed bars */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 100%;
 }
 
 /* Timeline zoom control */
@@ -2383,12 +2409,31 @@ img.preset-thumb {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-/* Keep the row labels pinned while the tracks scroll under them. */
-.tl-label {
-  position: sticky;
-  left: 0;
-  z-index: 6;
-  background: var(--panel);
+/* Row heights — applied identically to each gutter label and its track row so
+   the two panes stay aligned (box-sizing:border-box keeps borders from adding
+   height). Rows toggle .hidden together, so the flex gap stays in step. */
+.tl-gutter .tl-label,
+.tl-tracks > * {
+  box-sizing: border-box;
+}
+.tl-ruler-spacer,
+.tl-ruler {
+  height: 23px;
+}
+#tl-kf-label,
+.tl-keyframe-row {
+  height: 16px;
+}
+#tl-lbl-video,
+.tl-video-track {
+  height: 44px;
+}
+#tl-lbl-overlay,
+#tl-lbl-captions,
+#tl-lbl-text,
+#tl-lbl-sound,
+.tl-type-row {
+  height: 26px;
 }
 
 .tl-empty {
@@ -2405,10 +2450,8 @@ img.preset-thumb {
 
 .tl-ruler {
   position: relative;
-  height: 22px;
   cursor: ew-resize;
   border-bottom: 1px solid var(--border);
-  margin-bottom: var(--space-2);
 }
 
 .tl-tick {
@@ -2766,15 +2809,6 @@ img.preset-thumb {
   right: 3px;
 }
 
-/* Label gutter + track column; every element type gets its own row. */
-.tl-grid {
-  display: grid;
-  grid-template-columns: 64px 1fr;
-  row-gap: 6px;
-  column-gap: var(--space-2);
-  align-items: stretch;
-}
-
 .tl-label {
   display: flex;
   align-items: center;
@@ -2788,7 +2822,6 @@ img.preset-thumb {
 
 .tl-type-row {
   position: relative;
-  height: 26px;
   border-radius: var(--radius-sm);
   background: var(--bg);
 }

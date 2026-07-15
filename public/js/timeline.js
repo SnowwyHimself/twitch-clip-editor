@@ -125,6 +125,15 @@ const soundRow = document.getElementById('tl-sound-row');
 const playhead = document.getElementById('tl-playhead');
 const emptyMsg = document.getElementById('tl-empty');
 const tlBody = document.getElementById('tl-body');
+const tlScroll = document.getElementById('tl-scroll'); // the horizontal scroller
+const tlTracks = document.getElementById('tl-tracks'); // width-controlled tracks pane
+// Each track row's gutter label (they toggle .hidden together with the row).
+const rowLabels = {
+  'tl-overlay-row': document.getElementById('tl-lbl-overlay'),
+  'tl-captions-row': document.getElementById('tl-lbl-captions'),
+  'tl-text-row': document.getElementById('tl-lbl-text'),
+  'tl-sound-row': document.getElementById('tl-lbl-sound'),
+};
 
 // Selectable elements on the timeline — a pointerdown anywhere that ISN'T one
 // of these clears the selection (click-away deselect).
@@ -132,7 +141,6 @@ const SELECTABLE_SELECTOR =
   '.tl-segment, .tl-seg-edge, .tl-text-bar, .tl-sound-bar, .tl-overlay-bar, .tl-appended-clip, .tl-kf-marker, .tl-transition-badge';
 const splitBtn = document.getElementById('tl-split');
 const deleteBtn = document.getElementById('tl-delete');
-const tlGrid = document.getElementById('tl-grid');
 const zoomInBtn = document.getElementById('tl-zoom-in');
 const zoomOutBtn = document.getElementById('tl-zoom-out');
 const zoomLabel = document.getElementById('tl-zoom-label');
@@ -158,8 +166,9 @@ function clampZoom(z) {
 }
 
 function fitTrackWidth() {
-  // Visible width available to the track column (body minus the label gutter).
-  return Math.max(120, tlBody.clientWidth - 64 - 8);
+  // Visible width available to the tracks — the scroll pane's own width (the
+  // label gutter is a separate element outside it, so no fixed offsets here).
+  return Math.max(120, tlScroll.clientWidth);
 }
 
 // Applies the current zoom: sizes the grid, syncs the slider/label/buttons, then
@@ -167,9 +176,9 @@ function fitTrackWidth() {
 // ruler re-renders because its tick density adapts to zoom.
 function applyTimelineZoom() {
   if (tlZoom <= 1) {
-    tlGrid.style.width = '';
+    tlTracks.style.width = ''; // min-width:100% fills the scroll pane at fit
   } else {
-    tlGrid.style.width = `${Math.round(64 + 8 + fitTrackWidth() * tlZoom)}px`;
+    tlTracks.style.width = `${Math.round(fitTrackWidth() * tlZoom)}px`;
   }
   zoomLabel.textContent = `${Math.round(tlZoom * 100)}%`;
   if (zoomSlider) {
@@ -186,20 +195,20 @@ function applyTimelineZoom() {
 
 // Zoom to `next`, keeping `anchorOutTime` pinned under the same on-screen
 // position (so the timeline grows/shrinks *around* the playhead or the mouse,
-// not the left edge). trackOriginX() is the single content-origin; outTimeToX
-// rescales with the new pxPerSecond after applyTimelineZoom relays out the grid.
+// not the left edge). outTimeToX is the single time→x map (tracks-pane origin);
+// it rescales with the new pxPerSecond after applyTimelineZoom relays out.
 // The final scroll is clamped so the anchor math can never leave a left gap.
 function zoomTo(next, anchorOutTime) {
   next = clampZoom(next);
   if (Math.abs(next - tlZoom) < 1e-4) return;
-  recomputeOrigin();
-  const anchorContentBefore = trackOriginX() + outTimeToX(anchorOutTime);
-  const viewportX = anchorContentBefore - tlBody.scrollLeft;
+  // The tracks pane's left edge is x=0, so outTimeToX IS the content x directly.
+  const anchorContentBefore = outTimeToX(anchorOutTime);
+  const viewportX = anchorContentBefore - tlScroll.scrollLeft;
   tlZoom = next;
-  applyTimelineZoom(); // relays out + recomputes the origin
-  const anchorContentAfter = trackOriginX() + outTimeToX(anchorOutTime);
-  const maxScroll = Math.max(0, tlBody.scrollWidth - tlBody.clientWidth);
-  tlBody.scrollLeft = Math.min(maxScroll, Math.max(0, anchorContentAfter - viewportX));
+  applyTimelineZoom(); // relays out at the new scale
+  const anchorContentAfter = outTimeToX(anchorOutTime);
+  const maxScroll = Math.max(0, tlScroll.scrollWidth - tlScroll.clientWidth);
+  tlScroll.scrollLeft = Math.min(maxScroll, Math.max(0, anchorContentAfter - viewportX));
 }
 
 // Smooth (~120ms) zoom for discrete triggers — +/- buttons, keys, Fit. Wheel
@@ -242,7 +251,7 @@ function stepZoom(dir) {
 // Fit the whole project into the viewport (zoom 1) and scroll to the start.
 function fitZoom() {
   animateZoomTo(TL_ZOOM_MIN, 0);
-  tlBody.scrollLeft = 0;
+  tlScroll.scrollLeft = 0;
 }
 
 function trackWidth() {
@@ -250,12 +259,12 @@ function trackWidth() {
 }
 
 // ── Single source of truth for time↔pixel ────────────────────────────────────
-// The whole timeline maps time→x through exactly these. The ruler and every
-// track share the SAME grid content column, so one scale (pxPerSecond) and one
-// origin (trackOriginX) govern ticks, clip bars, keyframes AND the playhead —
-// nothing can drift apart, which is the failure mode behind the "left gap on
-// zoom". Track/ruler-cell children use outTimeToX(t) (their cell left IS x=0);
-// elements that live in .tl-body directly (the playhead) add trackOriginX().
+// The whole timeline maps time→x through exactly ONE function, outTimeToX(t).
+// The ruler, every track row, the keyframe markers AND the playhead all live
+// inside the tracks pane (#tl-tracks), whose left edge IS x=0 — so there is no
+// origin offset to keep in sync (the old trackOriginX/label-gutter offset is
+// gone with the two-pane restructure, which is also what made the "left gap on
+// zoom" impossible now: content is clipped to the pane and starts flush at t=0).
 //
 // Pinned scale: source duration normally, stretched only if free-mode gaps push
 // the output past it. Constant while trimming/deleting, so the track never
@@ -267,21 +276,6 @@ function pxPerSecond() {
 
 function outTimeToX(t) {
   return t * pxPerSecond();
-}
-
-// x of t=0 in .tl-body scroll-content space. Measured off the REAL track cell
-// (not a hand-computed label+gap constant), so padding / positioning changes
-// can't desync the playhead from the bars. Cached because updatePlayhead runs
-// per animation frame; refreshed by recomputeOrigin() on every relayout/zoom/
-// resize — the only times it can actually change (it's scroll-independent).
-let trackOriginXCache = 0;
-function recomputeOrigin() {
-  const b = tlBody.getBoundingClientRect();
-  const v = videoTrack.getBoundingClientRect();
-  trackOriginXCache = v.left - b.left + tlBody.scrollLeft;
-}
-function trackOriginX() {
-  return trackOriginXCache;
 }
 
 function xToOutTime(clientX) {
@@ -547,7 +541,6 @@ function layoutOverlayBars() {
 }
 
 function layoutAll() {
-  recomputeOrigin(); // refresh the single origin before anything positions to it
   layoutVideoTrack();
   layoutLayerBars();
   layoutSoundBars();
@@ -936,8 +929,10 @@ function refreshToolbar() {
 
 function setRowVisible(rowEl, visible) {
   rowEl.classList.toggle('hidden', !visible);
-  const label = rowEl.previousElementSibling;
-  if (label && label.classList.contains('tl-label')) label.classList.toggle('hidden', !visible);
+  // The label now lives in the separate gutter (not a DOM sibling), so toggle it
+  // by id-map. Both panes hide the same rows, keeping them aligned.
+  const label = rowLabels[rowEl.id];
+  if (label) label.classList.toggle('hidden', !visible);
 }
 
 // Generic clip bar shared by layers, sounds, and overlays: a label, two
@@ -1126,7 +1121,7 @@ function renderOverlayRow() {
 // --- playhead / scrubbing ---------------------------------------------------------
 
 function updatePlayhead() {
-  playhead.style.left = `${trackOriginX() + outTimeToX(getCurrentOutputTime())}px`;
+  playhead.style.left = `${outTimeToX(getCurrentOutputTime())}px`;
   playhead.classList.toggle('hidden', sourceDuration() <= 0);
 }
 
@@ -1179,7 +1174,7 @@ export function initTimeline() {
   zoomSlider.addEventListener('dblclick', fitZoom);
   // ⌘/Ctrl + scroll — and trackpad pinch, which the browser reports as a
   // ctrlKey wheel — zoom smoothly around the cursor. Plain scroll pans normally.
-  tlBody.addEventListener(
+  tlScroll.addEventListener(
     'wheel',
     (e) => {
       if (!(e.ctrlKey || e.metaKey)) return;
