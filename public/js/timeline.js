@@ -880,7 +880,7 @@ function attachSegmentEdgeDrag(edgeEl, seg, prev, next, isLeft) {
 // clip — splitting it at the playhead into two independent clips. With a
 // video segment selected (or nothing), it splits the video piece under the
 // playhead, as before.
-function splitAtPlayhead() {
+export function splitAtPlayhead() {
   const t = getCurrentTime();
   const layer = selectedLayer();
   if (layer) {
@@ -902,6 +902,20 @@ function splitAtPlayhead() {
   }
   const piece = splitSegmentAt(t);
   if (piece) selectSegment(piece.id);
+}
+
+// I / O: trim the SELECTED video piece's in-point (edge='in') or out-point
+// (edge='out') to the playhead, keeping the piece's source range. Only acts when
+// the playhead is inside the piece; leaves a minimum sliver. Snap mode re-packs.
+export function trimToPlayhead(edge) {
+  const seg = selectedSegment();
+  if (!seg) return;
+  const t = getCurrentTime(); // source seconds under the playhead
+  if (t <= seg.start + MIN_SEGMENT_SECONDS || t >= seg.end - MIN_SEGMENT_SECONDS) return;
+  if (edge === 'in') seg.start = t;
+  else seg.end = t;
+  if (state.timelineMode === 'snap') normalizeOutStarts();
+  emit('segments');
 }
 
 // Delete acts on whatever's selected — clip of any kind, or a video piece.

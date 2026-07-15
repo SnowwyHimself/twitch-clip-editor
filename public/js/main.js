@@ -20,6 +20,7 @@ import {
   addAppendedClip,
   selectedAppendedClip,
   removeAppendedClip,
+  clearSelection,
   syncFullDurationLayers,
   sourceDuration,
   outputDuration,
@@ -38,8 +39,11 @@ import {
   getCurrentOutputTime,
   seekOutput,
   togglePlay,
+  shuttleForward,
+  shuttleBackward,
+  shuttleStop,
 } from './preview.js';
-import { initTimeline } from './timeline.js';
+import { initTimeline, splitAtPlayhead, trimToPlayhead } from './timeline.js';
 import { initPanel, setAddClipHandler } from './panel.js';
 import { initExport } from './export.js';
 import { initBrandKit } from './brandkit.js';
@@ -247,64 +251,70 @@ function isTypingTarget(el) {
   return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 }
 
+// Deletes whatever is selected — text layer, sound, overlay, appended clip, or
+// a video piece — mirroring the timeline toolbar's Delete button.
+function deleteSelection() {
+  const layer = selectedLayer();
+  const sound = selectedSound();
+  const overlay = selectedOverlay();
+  const segment = selectedSegment();
+  const appendedClip = selectedAppendedClip();
+  if (layer) removeLayer(layer.id);
+  else if (sound) removeSound(sound.id);
+  else if (overlay) removeOverlay(overlay.id);
+  else if (appendedClip) removeAppendedClip(appendedClip.id);
+  else if (segment) removeSegment(segment.id);
+}
+
+// ⌘E — open the Export dialog (no-op with no clip; the button is disabled then).
+function openExport() {
+  const btn = document.getElementById('export-btn');
+  if (btn && !btn.disabled) btn.click();
+}
+
+// The one global shortcut map. ⌘-combos are allowed while typing (conventional
+// app commands + so the browser's copy/paste still work in inputs); every
+// single-key shortcut bails when focus is in an input/textarea/contenteditable
+// so typing an 's' never splits, etc. Fires on buttons/timeline/preview/body.
 function wireShortcuts() {
   document.addEventListener('keydown', (e) => {
-    // Undo/redo work even while typing — standard editor behavior.
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-      e.preventDefault();
-      if (e.shiftKey) redo();
-      else undo();
+    if (e.metaKey || e.ctrlKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+      if (k === 's') { e.preventDefault(); doSave(); return; }
+      if (k === 'e') { e.preventDefault(); openExport(); return; }
+      if (k === 'd') {
+        // Duplicate the selected text/caption layer (the app's duplicable item).
+        const layer = selectedLayer();
+        if (layer) { e.preventDefault(); duplicateLayer(layer.id); }
+        return;
+      }
+      return; // leave cut/copy/paste/select-all and other ⌘ combos to the OS
+    }
+
+    // Esc: leave whatever's selected → Project inspector (or just blur an input).
+    if (e.key === 'Escape') {
+      if (isTypingTarget(e.target)) e.target.blur();
+      else clearSelection();
       return;
     }
-    if (isTypingTarget(e.target)) return;
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
-      // ⌘D / Ctrl+D duplicates the selected text/caption layer.
-      const layer = selectedLayer();
-      if (layer) {
-        e.preventDefault();
-        duplicateLayer(layer.id);
-      }
-      return;
-    }
-    if (e.key === ' ') {
-      e.preventDefault();
-      togglePlay();
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      seekOutput(getCurrentOutputTime() + (e.shiftKey ? 1 : 0.1));
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      seekOutput(getCurrentOutputTime() - (e.shiftKey ? 1 : 0.1));
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      seekOutput(0);
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      seekOutput(outputDuration());
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      // Deletes whatever is selected — a text layer, sound, overlay, or a
-      // video segment — mirroring the timeline toolbar's Delete button.
-      const layer = selectedLayer();
-      const sound = selectedSound();
-      const overlay = selectedOverlay();
-      const segment = selectedSegment();
-      const appendedClip = selectedAppendedClip();
-      if (layer) {
-        e.preventDefault();
-        removeLayer(layer.id);
-      } else if (sound) {
-        e.preventDefault();
-        removeSound(sound.id);
-      } else if (overlay) {
-        e.preventDefault();
-        removeOverlay(overlay.id);
-      } else if (appendedClip) {
-        e.preventDefault();
-        removeAppendedClip(appendedClip.id);
-      } else if (segment) {
-        e.preventDefault();
-        removeSegment(segment.id);
-      }
+
+    if (isTypingTarget(e.target)) return; // single-key shortcuts never while typing
+
+    switch (e.key) {
+      case ' ': e.preventDefault(); togglePlay(); break;
+      case 'k': case 'K': e.preventDefault(); shuttleStop(); break; // pause
+      case 'l': case 'L': e.preventDefault(); shuttleForward(); break; // play fwd (again → 2×)
+      case 'j': case 'J': e.preventDefault(); shuttleBackward(); break; // play back (again → 2×)
+      case 's': case 'S': e.preventDefault(); splitAtPlayhead(); break;
+      case 'i': case 'I': e.preventDefault(); trimToPlayhead('in'); break;
+      case 'o': case 'O': e.preventDefault(); trimToPlayhead('out'); break;
+      case 'ArrowRight': e.preventDefault(); seekOutput(getCurrentOutputTime() + (e.shiftKey ? 1 : 0.1)); break;
+      case 'ArrowLeft': e.preventDefault(); seekOutput(getCurrentOutputTime() - (e.shiftKey ? 1 : 0.1)); break;
+      case 'Home': e.preventDefault(); seekOutput(0); break;
+      case 'End': e.preventDefault(); seekOutput(outputDuration()); break;
+      case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); break;
+      default: break;
     }
   });
 }
@@ -457,14 +467,6 @@ function wireProjects() {
 
   onProjectChange(({ name }) => {
     projectNameEl.textContent = name || 'Untitled';
-  });
-
-  // ⌘S / Ctrl+S saves.
-  document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      doSave();
-    }
   });
 
   on('source', () => startRecent.classList.add('hidden'));

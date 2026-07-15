@@ -1280,12 +1280,64 @@ export function getCurrentOutputTime() {
 }
 
 export function togglePlay() {
+  resetShuttle(); // a plain play/pause is always normal 1× forward
   setLogicalPlaying(!logicalPlaying);
 }
 
 // Stops logical playback so a task (e.g. face tracking) can seek the video
 // frame-by-frame without the rAF loop fighting it with boundary seeks.
 export function pausePlayback() {
+  setLogicalPlaying(false);
+}
+
+// --- J/K/L shuttle -----------------------------------------------------------
+// K pauses, L plays forward (press again → 2×), J plays backward (again → 2×).
+// A <video> can't play in reverse, so backward steps the output clock back per
+// frame; forward rides playbackRate. shuttleFwd feeds updateAll's playbackRate.
+let shuttleFwd = 1; // forward playback-rate multiplier (1 = normal)
+let shuttleBackRaf = null;
+function stopReverse() {
+  if (shuttleBackRaf) {
+    cancelAnimationFrame(shuttleBackRaf);
+    shuttleBackRaf = null;
+  }
+}
+// Reset to normal 1× forward — used by Space/togglePlay so a plain play is never
+// stuck at a shuttle rate.
+export function resetShuttle() {
+  shuttleFwd = 1;
+  stopReverse();
+  fgVideo.playbackRate = bgVideo.playbackRate = state.speed;
+}
+export function shuttleForward() {
+  stopReverse();
+  shuttleFwd = logicalPlaying ? 2 : 1; // paused → 1×; already forward → 2×
+  fgVideo.playbackRate = bgVideo.playbackRate = state.speed * shuttleFwd;
+  setLogicalPlaying(true);
+}
+export function shuttleBackward() {
+  const wasReversing = !!shuttleBackRaf;
+  stopReverse();
+  shuttleFwd = 1;
+  setLogicalPlaying(false); // native playback off; we drive the clock backward
+  const rate = wasReversing ? 2 : 1; // press again → 2×
+  let last = performance.now();
+  const step = (now) => {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    const next = getCurrentOutputTime() - rate * state.speed * dt;
+    if (next <= 0) {
+      seekOutput(0);
+      stopReverse();
+      return;
+    }
+    seekOutput(next);
+    shuttleBackRaf = requestAnimationFrame(step);
+  };
+  shuttleBackRaf = requestAnimationFrame(step);
+}
+export function shuttleStop() {
+  resetShuttle();
   setLogicalPlaying(false);
 }
 
@@ -1845,8 +1897,10 @@ function updateAll() {
     bgVideo.style.filter = grade;
   }
 
-  fgVideo.playbackRate = state.speed;
-  bgVideo.playbackRate = state.speed;
+  // shuttleFwd is 2 while L-shuttling at 2×, else 1 (normal). Multiplied in here
+  // so a re-render never clobbers the shuttle rate back to normal.
+  fgVideo.playbackRate = state.speed * shuttleFwd;
+  bgVideo.playbackRate = state.speed * shuttleFwd;
 
   syncSplit();
   updateClipOutline();

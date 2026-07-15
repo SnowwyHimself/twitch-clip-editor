@@ -196,7 +196,23 @@ function buildMenu() {
       { role: 'quit' },
     ],
   };
-  const template = process.platform === 'darwin' ? [appMenu, { role: 'editMenu' }, { role: 'windowMenu' }] : [{ label: 'File', submenu: [checkItem, autoItem, { type: 'separator' }, { role: 'quit' }] }, { role: 'editMenu' }];
+  // Custom Edit menu: keep cut/copy/paste/selectAll (Electron needs these ROLES
+  // for the accelerators to work inside the app's text fields on macOS) but
+  // deliberately OMIT Undo/Redo. The native Undo/Redo roles bind ⌘Z / ⇧⌘Z as
+  // menu accelerators that are consumed in the MAIN process and never reach the
+  // renderer — which is why the app's own undo/redo (project history) silently
+  // did nothing in the packaged build while working in the browser. Dropping
+  // them lets ⌘Z / ⇧⌘Z fall through to the renderer's keydown handler.
+  const editMenu = {
+    label: 'Edit',
+    submenu: [
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'selectAll' },
+    ],
+  };
+  const template = process.platform === 'darwin' ? [appMenu, editMenu, { role: 'windowMenu' }] : [{ label: 'File', submenu: [checkItem, autoItem, { type: 'separator' }, { role: 'quit' }] }, editMenu];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
