@@ -2341,7 +2341,7 @@ function wireAddMenu() {
 
 // Each add action creates (or reveals the source for) a thing at the playhead
 // and lands you editing it — the "add → immediately editing" flow.
-function runAddAction(kind) {
+export function runAddAction(kind) {
   switch (kind) {
     case 'clip':
       addClipHandler();

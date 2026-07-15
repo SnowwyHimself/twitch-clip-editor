@@ -44,7 +44,9 @@ import {
   shuttleStop,
 } from './preview.js';
 import { initTimeline, splitAtPlayhead, trimToPlayhead } from './timeline.js';
-import { initPanel, setAddClipHandler } from './panel.js';
+import { initPanel, setAddClipHandler, runAddAction } from './panel.js';
+import { registerAction, actionForEvent, isEnabled, GROUPS } from './actions.js';
+import { initCommandUI, openPalette, openShortcuts, paletteOpen, shortcutsOpen } from './palette.js';
 import { initExport } from './export.js';
 import { initBrandKit } from './brandkit.js';
 import { initCaptionSettings } from './captionsettings.js';
@@ -304,50 +306,77 @@ function openExport() {
   if (btn && !btn.disabled) btn.click();
 }
 
-// The one global shortcut map. ⌘-combos are allowed while typing (conventional
-// app commands + so the browser's copy/paste still work in inputs); every
-// single-key shortcut bails when focus is in an input/textarea/contenteditable
-// so typing an 's' never splits, etc. Fires on buttons/timeline/preview/body.
+const hasSource = () => !!state.source;
+const clickIfPresent = (id) => {
+  const el = document.getElementById(id);
+  if (el && !el.disabled) el.click();
+};
+
+// Every user-facing action lives here ONCE. Keyboard shortcuts, the command
+// palette, and the shortcuts overlay all run these same entries — the run()
+// bodies call the existing functions/controls, so there's no duplicated logic.
+function registerAllActions() {
+  const A = registerAction;
+  // Playback
+  A({ id: 'play-pause', group: GROUPS.PLAYBACK, label: 'Play / pause', shortcut: { key: ' ', display: 'Space' }, enabled: hasSource, run: togglePlay });
+  A({ id: 'shuttle-forward', group: GROUPS.PLAYBACK, label: 'Shuttle forward (again = 2×)', shortcut: { key: 'l', display: 'L' }, enabled: hasSource, run: shuttleForward });
+  A({ id: 'shuttle-back', group: GROUPS.PLAYBACK, label: 'Shuttle backward (again = 2×)', shortcut: { key: 'j', display: 'J' }, enabled: hasSource, run: shuttleBackward });
+  A({ id: 'shuttle-pause', group: GROUPS.PLAYBACK, label: 'Pause shuttle', shortcut: { key: 'k', display: 'K' }, enabled: hasSource, run: shuttleStop });
+  A({ id: 'seek-forward', group: GROUPS.PLAYBACK, label: 'Step forward', shortcut: { key: 'ArrowRight', shift: false, display: '→' }, enabled: hasSource, run: () => seekOutput(getCurrentOutputTime() + 0.1) });
+  A({ id: 'seek-back', group: GROUPS.PLAYBACK, label: 'Step back', shortcut: { key: 'ArrowLeft', shift: false, display: '←' }, enabled: hasSource, run: () => seekOutput(getCurrentOutputTime() - 0.1) });
+  A({ id: 'seek-forward-1s', group: GROUPS.PLAYBACK, label: 'Jump forward 1s', shortcut: { key: 'ArrowRight', shift: true, display: '⇧→' }, enabled: hasSource, run: () => seekOutput(getCurrentOutputTime() + 1) });
+  A({ id: 'seek-back-1s', group: GROUPS.PLAYBACK, label: 'Jump back 1s', shortcut: { key: 'ArrowLeft', shift: true, display: '⇧←' }, enabled: hasSource, run: () => seekOutput(getCurrentOutputTime() - 1) });
+  A({ id: 'seek-start', group: GROUPS.PLAYBACK, label: 'Go to start', shortcut: { key: 'Home', display: 'Home' }, enabled: hasSource, run: () => seekOutput(0) });
+  A({ id: 'seek-end', group: GROUPS.PLAYBACK, label: 'Go to end', shortcut: { key: 'End', display: 'End' }, enabled: hasSource, run: () => seekOutput(outputDuration()) });
+
+  // Editing
+  A({ id: 'undo', group: GROUPS.EDITING, label: 'Undo', shortcut: { mod: true, shift: false, key: 'z', display: '⌘Z', whileTyping: true }, enabled: canUndo, run: undo });
+  A({ id: 'redo', group: GROUPS.EDITING, label: 'Redo', shortcut: { mod: true, shift: true, key: 'z', display: '⌘⇧Z', whileTyping: true }, enabled: canRedo, run: redo });
+  A({ id: 'split', group: GROUPS.EDITING, label: 'Split at playhead', shortcut: { key: 's', display: 'S' }, enabled: hasSource, run: splitAtPlayhead });
+  A({ id: 'trim-in', group: GROUPS.EDITING, label: 'Trim in to playhead', shortcut: { key: 'i', display: 'I' }, enabled: () => !!selectedSegment(), run: () => trimToPlayhead('in') });
+  A({ id: 'trim-out', group: GROUPS.EDITING, label: 'Trim out to playhead', shortcut: { key: 'o', display: 'O' }, enabled: () => !!selectedSegment(), run: () => trimToPlayhead('out') });
+  A({ id: 'duplicate', group: GROUPS.EDITING, label: 'Duplicate selected layer', shortcut: { mod: true, key: 'd', display: '⌘D', whileTyping: true }, enabled: () => !!selectedLayer(), run: () => { const l = selectedLayer(); if (l) duplicateLayer(l.id); } });
+  A({ id: 'delete', group: GROUPS.EDITING, label: 'Delete selection', shortcut: { key: 'Delete', display: 'Del' }, run: deleteSelection });
+  A({ id: 'delete-bksp', group: GROUPS.EDITING, label: 'Delete selection', shortcut: { key: 'Backspace' }, hidden: true, run: deleteSelection });
+  A({ id: 'deselect', group: GROUPS.EDITING, label: 'Deselect', shortcut: { key: 'Escape', display: 'Esc' }, run: clearSelection });
+  A({ id: 'add-text', group: GROUPS.EDITING, label: 'Add text', enabled: hasSource, run: () => runAddAction('text') });
+  A({ id: 'add-captions', group: GROUPS.EDITING, label: 'Generate auto captions', enabled: hasSource, run: () => runAddAction('captions') });
+  A({ id: 'add-overlay', group: GROUPS.EDITING, label: 'Add overlay', enabled: hasSource, run: () => runAddAction('overlay') });
+  A({ id: 'add-sound', group: GROUPS.EDITING, label: 'Add sound', enabled: hasSource, run: () => runAddAction('sound') });
+
+  // Timeline
+  A({ id: 'zoom-in', group: GROUPS.TIMELINE, label: 'Zoom in timeline', shortcut: { key: '+', display: '+' }, enabled: hasSource, run: () => clickIfPresent('tl-zoom-in') });
+  A({ id: 'zoom-in-eq', group: GROUPS.TIMELINE, label: 'Zoom in timeline', shortcut: { key: '=' }, hidden: true, enabled: hasSource, run: () => clickIfPresent('tl-zoom-in') });
+  A({ id: 'zoom-out', group: GROUPS.TIMELINE, label: 'Zoom out timeline', shortcut: { key: '-', display: '−' }, enabled: hasSource, run: () => clickIfPresent('tl-zoom-out') });
+  A({ id: 'zoom-fit', group: GROUPS.TIMELINE, label: 'Fit timeline to project', enabled: hasSource, run: () => clickIfPresent('tl-zoom-fit') });
+  A({ id: 'toggle-snap', group: GROUPS.TIMELINE, label: 'Toggle snap / free timeline', enabled: hasSource, run: () => { snapToggle.checked = !snapToggle.checked; snapToggle.dispatchEvent(new Event('change')); } });
+
+  // App
+  A({ id: 'save', group: GROUPS.APP, label: 'Save project', shortcut: { mod: true, key: 's', display: '⌘S', whileTyping: true }, enabled: hasSource, run: doSave });
+  A({ id: 'export', group: GROUPS.APP, label: 'Export', shortcut: { mod: true, key: 'e', display: '⌘E', whileTyping: true }, enabled: hasSource, run: openExport });
+  A({ id: 'open-project', group: GROUPS.APP, label: 'Open project…', run: () => clickIfPresent('project-open-btn') });
+  A({ id: 'save-as-template', group: GROUPS.APP, label: 'Save as template…', run: () => clickIfPresent('save-template-btn') });
+  A({ id: 'brand-kit', group: GROUPS.APP, label: 'Open brand kit', run: () => clickIfPresent('brand-kit-btn') });
+  A({ id: 'caption-settings', group: GROUPS.APP, label: 'Caption quality settings', run: () => clickIfPresent('cap-quality-settings-btn') });
+  A({ id: 'command-palette', group: GROUPS.APP, label: 'Command palette', shortcut: { mod: true, key: 'k', display: '⌘K', whileTyping: true }, run: openPalette });
+  A({ id: 'shortcuts', group: GROUPS.APP, label: 'Keyboard shortcuts', shortcut: { key: '?', display: '?' }, run: openShortcuts });
+}
+
+// One global keydown → the registry. ⌘-combos may fire while typing (they're
+// flagged whileTyping); single-key shortcuts never do. The palette/overlay own
+// their keys while open.
 function wireShortcuts() {
   document.addEventListener('keydown', (e) => {
-    if (e.metaKey || e.ctrlKey) {
-      const k = e.key.toLowerCase();
-      if (k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
-      if (k === 's') { e.preventDefault(); doSave(); return; }
-      if (k === 'e') { e.preventDefault(); openExport(); return; }
-      if (k === 'd') {
-        // Duplicate the selected text/caption layer (the app's duplicable item).
-        const layer = selectedLayer();
-        if (layer) { e.preventDefault(); duplicateLayer(layer.id); }
-        return;
-      }
-      return; // leave cut/copy/paste/select-all and other ⌘ combos to the OS
-    }
-
-    // Esc: leave whatever's selected → Project inspector (or just blur an input).
-    if (e.key === 'Escape') {
-      if (isTypingTarget(e.target)) e.target.blur();
-      else clearSelection();
+    if (paletteOpen() || shortcutsOpen()) return; // those surfaces own their keys
+    // Esc while typing blurs the field (not a registry command).
+    if (e.key === 'Escape' && isTypingTarget(e.target)) {
+      e.target.blur();
       return;
     }
-
-    if (isTypingTarget(e.target)) return; // single-key shortcuts never while typing
-
-    switch (e.key) {
-      case ' ': e.preventDefault(); togglePlay(); break;
-      case 'k': case 'K': e.preventDefault(); shuttleStop(); break; // pause
-      case 'l': case 'L': e.preventDefault(); shuttleForward(); break; // play fwd (again → 2×)
-      case 'j': case 'J': e.preventDefault(); shuttleBackward(); break; // play back (again → 2×)
-      case 's': case 'S': e.preventDefault(); splitAtPlayhead(); break;
-      case 'i': case 'I': e.preventDefault(); trimToPlayhead('in'); break;
-      case 'o': case 'O': e.preventDefault(); trimToPlayhead('out'); break;
-      case 'ArrowRight': e.preventDefault(); seekOutput(getCurrentOutputTime() + (e.shiftKey ? 1 : 0.1)); break;
-      case 'ArrowLeft': e.preventDefault(); seekOutput(getCurrentOutputTime() - (e.shiftKey ? 1 : 0.1)); break;
-      case 'Home': e.preventDefault(); seekOutput(0); break;
-      case 'End': e.preventDefault(); seekOutput(outputDuration()); break;
-      case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); break;
-      default: break;
-    }
+    const a = actionForEvent(e, { typing: isTypingTarget(e.target) });
+    if (!a) return;
+    e.preventDefault();
+    if (isEnabled(a)) a.run();
   });
 }
 
@@ -696,7 +725,9 @@ async function boot() {
   initCaptionSettings(); // caption quality tier + custom vocabulary
   wireIngestion();
   wireToolbar();
+  registerAllActions(); // single action registry (shortcuts + palette + overlay)
   wireShortcuts();
+  initCommandUI(); // ⌘K command palette + ? shortcuts overlay
   wireProjects();
   // Keep "apply to whole video" text layers pinned to the project length as
   // clips are added, trimmed, or deleted.

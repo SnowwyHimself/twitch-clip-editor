@@ -956,6 +956,25 @@
   <!-- Toast stack: quiet, auto-dismissing notices (export finished, etc.). -->
   <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
+  <!-- Command palette (⌘K): fuzzy search over every action; keyboard-first. -->
+  <div id="cmd-palette" class="cmd-palette hidden" role="dialog" aria-label="Command palette">
+    <div class="cmd-palette-box">
+      <input id="cmd-input" class="cmd-input" type="text" placeholder="Type a command…" autocomplete="off" spellcheck="false" aria-label="Command search" />
+      <div id="cmd-list" class="cmd-list" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- Shortcuts overlay (?): read-only sheet, grouped by area, from the registry. -->
+  <div id="shortcuts-overlay" class="shortcuts-overlay hidden" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="shortcuts-box">
+      <div class="shortcuts-head">
+        <span>Keyboard shortcuts</span>
+        <button type="button" id="shortcuts-close" class="secondary-btn">Close</button>
+      </div>
+      <div id="shortcuts-grid" class="shortcuts-grid"></div>
+    </div>
+  </div>
+
   <!-- Quiet update pill: shown only once an update is downloaded, verified, and
        ready (desktop app only). Click to relaunch into it; ✕ (on hover) dismisses
        for the session — it applies on next quit either way. -->
