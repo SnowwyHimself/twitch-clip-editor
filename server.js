@@ -2843,6 +2843,28 @@ function writeAppState(patch) {
 app.get('/api/app-state', (req, res) => res.json(readAppState()));
 app.post('/api/app-state', (req, res) => res.json(writeAppState(req.body || {})));
 
+// --- what's-new release notes ------------------------------------------------
+// The app's own version + the bundled bullet notes for it (release-notes.json,
+// keyed by version). The client compares this version to app-state.lastSeenVersion
+// to decide whether to show the one-time "What's new" card. Notes ship inside the
+// build — no network — so this works fully offline.
+app.get('/api/release-notes', (req, res) => {
+  let version = '';
+  try {
+    version = String(require('./package.json').version || '');
+  } catch {
+    version = '';
+  }
+  let notes = [];
+  try {
+    const all = JSON.parse(fs.readFileSync(path.join(ROOT, 'release-notes.json'), 'utf8'));
+    if (all && Array.isArray(all[version])) notes = all[version].filter((n) => typeof n === 'string').slice(0, 5);
+  } catch {
+    notes = [];
+  }
+  res.json({ version, notes });
+});
+
 // --- project templates (global, userData) ------------------------------------
 // A template = a JSON snapshot of the reusable LOOK of a project (aspect,
 // layout, background, caption group style, watermark, manual text layers) —

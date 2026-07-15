@@ -47,6 +47,7 @@ import { initTimeline, splitAtPlayhead, trimToPlayhead } from './timeline.js';
 import { initPanel, setAddClipHandler, runAddAction } from './panel.js';
 import { registerAction, actionForEvent, isEnabled, GROUPS } from './actions.js';
 import { initCommandUI, openPalette, openShortcuts, paletteOpen, shortcutsOpen } from './palette.js';
+import { initWhatsNew } from './whatsnew.js';
 import { initExport } from './export.js';
 import { initBrandKit } from './brandkit.js';
 import { initCaptionSettings } from './captionsettings.js';
@@ -745,6 +746,7 @@ async function boot() {
   // Fit template text to the clip once one loads into a template-based project.
   on('source', () => onTemplateClipLoaded());
   initOnboarding({ loadSample: loadSampleClip });
+  initWhatsNew(); // one-time per-version "what's new" card after an update
 
   // Debug/scripting handle (used by automated tests; harmless in prod —
   // everything still flows through the same emit() paths).

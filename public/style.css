@@ -3347,6 +3347,73 @@ img.preset-thumb {
   }
 }
 
+/* "What's new" card ----------------------------------------------------------- */
+.whatsnew-card {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  z-index: 1050;
+  width: 300px;
+  max-width: calc(100vw - 36px);
+  padding: var(--space-4);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  animation: update-pill-in 0.2s var(--ease);
+}
+.whatsnew-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+.whatsnew-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--accent);
+}
+.whatsnew-x {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.whatsnew-x:hover {
+  color: var(--text);
+}
+.whatsnew-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.whatsnew-list li {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.whatsnew-all {
+  display: inline-block;
+  margin-top: var(--space-3);
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.whatsnew-all:hover {
+  text-decoration: underline;
+}
+@media (prefers-reduced-motion: reduce) {
+  .whatsnew-card {
+    animation: none;
+  }
+}
+
 /* Command palette (⌘K) + shortcuts overlay (?) -------------------------------- */
 .cmd-palette {
   position: fixed;

@@ -956,6 +956,16 @@
   <!-- Toast stack: quiet, auto-dismissing notices (export finished, etc.). -->
   <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
+  <!-- "What's new" card: one-time, per-version, dismissible (corner). -->
+  <div id="whatsnew-card" class="whatsnew-card hidden" role="dialog" aria-label="What's new">
+    <div class="whatsnew-head">
+      <span id="whatsnew-title" class="whatsnew-title">What's new</span>
+      <button type="button" id="whatsnew-dismiss" class="whatsnew-x" aria-label="Dismiss">✕</button>
+    </div>
+    <ul id="whatsnew-list" class="whatsnew-list"></ul>
+    <a id="whatsnew-all" class="whatsnew-all" href="#" target="_blank" rel="noopener">See all changes</a>
+  </div>
+
   <!-- Command palette (⌘K): fuzzy search over every action; keyboard-first. -->
   <div id="cmd-palette" class="cmd-palette hidden" role="dialog" aria-label="Command palette">
     <div class="cmd-palette-box">

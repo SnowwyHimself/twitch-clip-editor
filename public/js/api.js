@@ -166,6 +166,17 @@ export async function saveAppState(patch) {
   }
 }
 
+// --- what's-new release notes ---
+export async function fetchReleaseNotes() {
+  try {
+    const res = await fetch('/api/release-notes');
+    const data = await parseJsonResponse(res, 'Failed to load release notes');
+    return { version: data.version || '', notes: Array.isArray(data.notes) ? data.notes : [] };
+  } catch {
+    return { version: '', notes: [] };
+  }
+}
+
 // --- project templates ---
 export async function fetchTemplates() {
   try {
