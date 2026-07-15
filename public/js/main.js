@@ -61,6 +61,7 @@ import {
   finishOpenWithFile,
 } from './project.js';
 import { confirmDialog, addClipDialog } from './confirm.js';
+import { initOnboarding, onSourceLoaded } from './onboarding.js';
 
 const urlInput = document.getElementById('clip-url');
 const loadUrlBtn = document.getElementById('load-url-btn');
@@ -107,6 +108,16 @@ async function loadFromUrl() {
 // browser — there restore falls back to re-picking the file, as before.
 function filePath(file) {
   return (window.electronAPI && window.electronAPI.getFilePath && window.electronAPI.getFilePath(file)) || null;
+}
+
+// Loads the bundled first-run sample through the SAME file pipeline as a
+// user-picked file — so preview and export behave identically to any other clip
+// (the sample's bytes upload on export like any file source).
+async function loadSampleClip() {
+  const res = await fetch('/assets/sample/onboarding-sample.mp4');
+  if (!res.ok) throw new Error('sample fetch failed');
+  const blob = await res.blob();
+  loadFromFile(new File([blob], 'sample-clip.mp4', { type: 'video/mp4' }));
 }
 
 function loadFromFile(file) {
@@ -579,6 +590,10 @@ async function boot() {
   refreshStartRecent();
   offerRestore();
   wireUpdatePill();
+  // First-run onboarding: reveals the "try a sample clip" option + tour on the
+  // very first launch only. Any real source load retires the offer silently.
+  on('source', () => onSourceLoaded());
+  initOnboarding({ loadSample: loadSampleClip });
 
   // Debug/scripting handle (used by automated tests; harmless in prod —
   // everything still flows through the same emit() paths).

@@ -144,6 +144,28 @@ export async function saveCaptionSettings(patch) {
   return parseJsonResponse(res, 'Failed to save caption settings');
 }
 
+// --- misc persistent app UI state (onboarding shown, last-seen version) ---
+export async function fetchAppState() {
+  try {
+    const res = await fetch('/api/app-state');
+    return await parseJsonResponse(res, 'Failed to load app state');
+  } catch {
+    return {};
+  }
+}
+export async function saveAppState(patch) {
+  try {
+    const res = await fetch('/api/app-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    return await parseJsonResponse(res, 'Failed to save app state');
+  } catch {
+    return {};
+  }
+}
+
 // --- caption model downloads ---
 export async function startModelDownload(tier) {
   const res = await fetch('/api/model/download', {

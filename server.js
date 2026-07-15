@@ -2709,6 +2709,28 @@ app.post('/api/caption-settings', (req, res) => {
   res.json({ settings: writeCaptionSettings(req.body || {}) });
 });
 
+// --- misc app UI state (global, userData) ------------------------------------
+// Tiny persistent flags that live across projects AND app updates: whether the
+// first-run onboarding has been shown, and the last app version whose "what's
+// new" card the user has already seen. One small JSON next to the other
+// userData state — deliberately schema-less so new flags need no migration.
+const APP_STATE_FILE = path.join(DATA_ROOT, 'app-state.json');
+function readAppState() {
+  try {
+    const v = JSON.parse(fs.readFileSync(APP_STATE_FILE, 'utf8'));
+    return v && typeof v === 'object' ? v : {};
+  } catch {
+    return {};
+  }
+}
+function writeAppState(patch) {
+  const merged = { ...readAppState(), ...(patch && typeof patch === 'object' ? patch : {}) };
+  fs.writeFileSync(APP_STATE_FILE, JSON.stringify(merged));
+  return merged;
+}
+app.get('/api/app-state', (req, res) => res.json(readAppState()));
+app.post('/api/app-state', (req, res) => res.json(writeAppState(req.body || {})));
+
 // --- caption model downloads (user-initiated, from Hugging Face) --------------
 // The ONLY new network activity in the app (see SECURITY.md). Streams a tier's
 // ggml model to userData/models via a .part file, verifies the exact byte size,

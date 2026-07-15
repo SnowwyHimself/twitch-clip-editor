@@ -3263,3 +3263,86 @@ img.preset-thumb {
     transform: translateY(0);
   }
 }
+
+/* First-run onboarding: sample-clip offer + coach-mark tour ------------------ */
+.try-sample-btn {
+  margin-top: var(--space-4);
+  align-self: center;
+}
+.coach-mark {
+  position: fixed;
+  z-index: 1200;
+  width: 264px;
+  max-width: calc(100vw - 16px);
+  padding: var(--space-3) var(--space-4);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  animation: coach-in 0.15s var(--ease);
+}
+.coach-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.coach-body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.coach-body b {
+  color: var(--text);
+  font-weight: 600;
+}
+.coach-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-3);
+}
+.coach-dots {
+  display: inline-flex;
+  gap: 5px;
+}
+.coach-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--border-light);
+}
+.coach-dot.on {
+  background: var(--accent);
+}
+.coach-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.coach-actions .coach-next {
+  padding: 4px 12px;
+}
+/* Anchor highlight — a soft accent ring, no full-screen dimming. */
+.coach-highlight {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px rgba(var(--accent-rgb), 0.22) !important;
+  transition: box-shadow 0.15s var(--ease);
+}
+@keyframes coach-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .coach-mark {
+    animation: none;
+  }
+  .coach-highlight {
+    transition: none;
+  }
+}
