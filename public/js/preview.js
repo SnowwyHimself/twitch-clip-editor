@@ -402,7 +402,7 @@ function updateLayerEl(layer) {
   // Cache the settled center so the per-frame entrance animation can offset
   // from it without re-measuring the box each frame.
   entry.baseCenter = { x: centerX, y: centerY };
-  if (layer.group === 'caption' && (layer.animation || 'none') !== 'none') {
+  if (layer.group === 'caption' && ((layer.animation || 'none') !== 'none' || (layer.exit || 'none') !== 'none')) {
     applyCaptionEntrance(layer, entry, fgVideo.currentTime || 0);
   } else {
     root.style.opacity = '';
@@ -428,34 +428,50 @@ function applyCaptionEntrance(layer, entry, srcT) {
   if (!base) return;
   const { width, height } = frameSize();
   const anim = layer.animation || 'none';
-  if (anim === 'none' || srcT < layer.start) {
-    entry.root.style.opacity = '';
-    entry.root.style.clipPath = '';
-    setCenterTransform(entry.root, base.x, base.y, width, height, layer.rotation || 0);
+  const exit = layer.exit || 'none';
+  const exitDur = Number.isFinite(layer.exitDuration) && layer.exitDuration > 0 ? layer.exitDuration : 0.35;
+  const root = entry.root;
+  if ((anim === 'none' && exit === 'none') || srcT < layer.start) {
+    root.style.opacity = '';
+    root.style.clipPath = '';
+    setCenterTransform(root, base.x, base.y, width, height, layer.rotation || 0);
     return;
   }
-  const p = Math.min(1, (srcT - layer.start) / CAP_ANIM_DURATION);
+  // Entrance progress p (0→1 over the first CAP_ANIM_DURATION) and exit progress
+  // q (0 until exitDur before end, →1 at end). Each contributes to opacity /
+  // position independently; the export mirrors this with alpha fades + y/x exprs.
+  const p = anim === 'none' ? 1 : Math.min(1, Math.max(0, (srcT - layer.start) / CAP_ANIM_DURATION));
+  const q = exit === 'none' ? 0 : Math.min(1, Math.max(0, (srcT - (layer.end - exitDur)) / exitDur));
+  let opacity = 1;
   let dx = 0;
   let dy = 0;
+  let clip = '';
+
+  // Entrance
   if (anim === 'wipe') {
-    // Hard left→right reveal (no opacity fade), matching the export's per-frame
-    // crop of the caption PNG. Clip the right (1-p) fraction of the box.
-    entry.root.style.opacity = '1';
-    entry.root.style.clipPath = `inset(0 ${((1 - p) * 100).toFixed(2)}% 0 0)`;
-  } else {
-    entry.root.style.opacity = p.toFixed(3);
-    entry.root.style.clipPath = '';
-    if (anim === 'slide') {
-      dy = (1 - p) * height * CAP_SLIDE_FRAC;
-    } else if (anim === 'bounce') {
-      const u = p - 1;
-      const easeOutBack = 1 + BACK_C3 * u * u * u + BACK_C1 * u * u;
-      dy = (1 - easeOutBack) * height * CAP_BOUNCE_FRAC;
-    } else if (anim === 'shake') {
-      dx = Math.sin(p * CAP_SHAKE_CYCLES * 2 * Math.PI) * (1 - p) * height * CAP_SHAKE_FRAC;
-    }
+    clip = `inset(0 ${((1 - p) * 100).toFixed(2)}% 0 0)`; // hard left→right reveal
+  } else if (anim === 'fade') {
+    opacity *= p;
+  } else if (anim === 'slide') {
+    opacity *= p;
+    dy += (1 - p) * height * CAP_SLIDE_FRAC;
+  } else if (anim === 'bounce') {
+    opacity *= p;
+    const u = p - 1;
+    const easeOutBack = 1 + BACK_C3 * u * u * u + BACK_C1 * u * u;
+    dy += (1 - easeOutBack) * height * CAP_BOUNCE_FRAC;
+  } else if (anim === 'shake') {
+    opacity *= p;
+    dx += Math.sin(p * CAP_SHAKE_CYCLES * 2 * Math.PI) * (1 - p) * height * CAP_SHAKE_FRAC;
   }
-  setCenterTransform(entry.root, base.x + dx, base.y + dy, width, height, layer.rotation || 0);
+
+  // Exit (fade out; slide adds a downward drift)
+  if (exit === 'fade' || exit === 'slide') opacity *= 1 - q;
+  if (exit === 'slide') dy += q * height * CAP_SLIDE_FRAC;
+
+  root.style.opacity = opacity.toFixed(3);
+  root.style.clipPath = clip;
+  setCenterTransform(root, base.x + dx, base.y + dy, width, height, layer.rotation || 0);
 }
 
 // Shown while the playhead is inside the layer's range, or while selected
@@ -481,7 +497,7 @@ function updateLayerVisibility() {
     const inRange = !gap && !onAppended && t >= layer.start && t < layer.end;
     const visible = !hiddenByToggle && (inRange || isSelected('layer', layer.id));
     entry.root.classList.toggle('time-hidden', !visible);
-    if (visible && layer.group === 'caption' && (layer.animation || 'none') !== 'none') {
+    if (visible && layer.group === 'caption' && ((layer.animation || 'none') !== 'none' || (layer.exit || 'none') !== 'none')) {
       applyCaptionEntrance(layer, entry, t);
     }
     if (visible && layer.karaoke) applyKaraoke(layer, entry, t);

@@ -141,10 +141,16 @@ export const state = {
     color: '#ffffff',
     dropShadow: false,
     yPercent: 75,
-    // Entrance animation for each caption: 'none' | 'fade' | 'slide' (slide-up).
-    // Rendered identically in preview (per-frame opacity/translate) and export
-    // (overlay fade-alpha + y t-expression) so they match.
+    // Entrance animation for each caption: 'none' | 'fade' | 'slide' (slide-up)
+    // | 'wipe' | 'bounce' | 'shake'. Rendered identically in preview (per-frame
+    // opacity/translate/clip) and export (overlay fade-alpha + y/x/alpha
+    // t-expressions) so they match.
     animation: 'none',
+    // Exit animation as each caption LEAVES: 'none' | 'fade' (fade out) | 'slide'
+    // (slide down). Applied over exitDuration seconds before the caption's end,
+    // matched preview↔export the same way as the entrance.
+    exit: 'none',
+    exitDuration: 0.35,
     // Nudge every caption's timing by this many seconds (whisper often
     // reports words slightly early, especially on noisy clips) — positive
     // = later. Applied relative to each caption's original whisper time
@@ -872,7 +878,9 @@ export function addTextLayer(partial = {}, { select = true } = {}) {
     xPercent: 50,
     yPercent: 25,
     wrapWidth: TEXT_WRAP_DEFAULT,
-    animation: 'none', // caption entrance animation: 'none' | 'fade' | 'slide'
+    animation: 'none', // entrance: 'none'|'fade'|'slide'|'wipe'|'bounce'|'shake'
+    exit: 'none', // exit: 'none'|'fade'|'slide'(down)
+    exitDuration: 0.35, // seconds the exit runs before `end`
     start: 0,
     end: 3,
     fullDuration: false, // when true, spans the whole project (see syncFullDurationLayers)
@@ -1303,6 +1311,8 @@ export function applyCaptionStyle() {
       karaokeColor: s.karaokeColor || '#ffe600',
       yPercent: s.yPercent,
       animation: s.animation || 'none',
+      exit: s.exit || 'none',
+      exitDuration: Number.isFinite(s.exitDuration) ? s.exitDuration : 0.35,
     });
   }
   emit('layers');
@@ -1315,11 +1325,11 @@ const TEXT_STYLE_KEYS = [
   'style', 'fontId', 'fontSize', 'color', 'dropShadow', 'strokeWidth', 'strokeColor',
   'uppercase', 'opacity', 'rotation', 'letterSpacing', 'lineHeight',
   'shadowDistance', 'shadowBlur', 'shadowOpacity', 'bgOpacity', 'bgPadding', 'bgRadius',
-  'wrapWidth', 'animation', 'karaoke', 'karaokeColor',
+  'wrapWidth', 'animation', 'exit', 'exitDuration', 'karaoke', 'karaokeColor',
 ];
 const CAPTION_STYLE_KEYS = [
   'style', 'fontId', 'fontSize', 'color', 'dropShadow', 'strokeWidth', 'strokeColor',
-  'uppercase', 'yPercent', 'animation', 'karaoke', 'karaokeColor',
+  'uppercase', 'yPercent', 'animation', 'exit', 'exitDuration', 'karaoke', 'karaokeColor',
 ];
 const CLIP_STYLE_KEYS = ['zoom', 'panX', 'panY', 'blur', 'speed', 'mirror', 'layout'];
 

@@ -1243,7 +1243,8 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     nextInputIndex += 1;
   }
   for (const cap of captionOverlays) {
-    const animated = ['fade', 'slide', 'bounce', 'shake', 'wipe'].includes(cap.animation);
+    const animated =
+      ['fade', 'slide', 'bounce', 'shake', 'wipe'].includes(cap.animation) || ['fade', 'slide'].includes(cap.exit);
     // An animated caption needs a continuous stream to ramp alpha over time, so
     // it's looped — but BOUNDED with -t (to its end + a margin) so the input
     // EOFs instead of looping forever, which otherwise wedges ffmpeg at the
@@ -1255,40 +1256,45 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     if (animated) {
       const d = CAP_ANIM_DURATION.toFixed(3);
       const st = cap.start.toFixed(3);
-      // Progress p over the entrance window (0→1), commas escaped for overlay.
+      const hasExit = cap.exit === 'fade' || cap.exit === 'slide';
+      const exitDur = Number.isFinite(cap.exitDuration) && cap.exitDuration > 0 ? cap.exitDuration : 0.35;
+      const exitStart = Math.max(cap.start, cap.end - exitDur).toFixed(3);
+      const ed = exitDur.toFixed(3);
+      // Entrance progress P (t-relative) and exit progress Q, commas escaped for
+      // the unquoted overlay x/y expressions.
       const P = `clip((t-${st})/${d}\\,0\\,1)`;
+      const Q = `clip((t-${exitStart})/${ed}\\,0\\,1)`;
+
+      // Alpha pre-chain. Wipe gates alpha per pixel with geq (a hard left→right
+      // reveal — crop can't animate width per frame). Other entrances fade the
+      // alpha in; a fade/slide exit fades it out over the tail. Chained together.
+      const label = `[capf${nextInputIndex}]`;
+      let pre;
       if (cap.animation === 'wipe') {
-        // Hard left→right reveal: gate the caption's alpha per pixel/frame so only
-        // the left X < W*p is shown. crop can't do this (its width is evaluated
-        // once at init, not per frame), but geq re-evaluates every pixel every
-        // frame with T (time). No opacity fade — matches the preview's clip-path
-        // reveal. Each geq plane expr is single-quoted, so its commas are literal.
         const Pq = `clip((T-${st})/${d},0,1)`;
-        const wiped = `[capw${nextInputIndex}]`;
-        stage.pre =
-          `${rawLabel}format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':` +
-          `a='if(lt(X,W*${Pq}),alpha(X,Y),0)'${wiped}`;
-        stage.inputLabel = wiped;
-        overlayStages.push(stage);
-        nextInputIndex += 1;
-        continue;
+        pre = `${rawLabel}format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,W*${Pq}),alpha(X,Y),0)'`;
+        if (hasExit) pre += `,fade=t=out:st=${exitStart}:d=${ed}:alpha=1`;
+      } else {
+        pre = `${rawLabel}format=yuva420p`;
+        if (['fade', 'slide', 'bounce', 'shake'].includes(cap.animation)) pre += `,fade=t=in:st=${st}:d=${d}:alpha=1`;
+        if (hasExit) pre += `,fade=t=out:st=${exitStart}:d=${ed}:alpha=1`;
       }
-      const faded = `[capf${nextInputIndex}]`;
-      // Fade the caption's alpha in over the first CAP_ANIM_DURATION after it
-      // appears (st is on the main timeline; a -loop 1 image shares that clock).
-      stage.pre = `${rawLabel}format=yuva420p,fade=t=in:st=${st}:d=${d}:alpha=1${faded}`;
-      stage.inputLabel = faded;
+      stage.pre = `${pre}${label}`;
+      stage.inputLabel = label;
+
+      // y offset: entrance (slide up / bounce spring) + exit (slide down).
+      const yTerms = [`${cap.y}`];
       if (cap.animation === 'slide') {
-        // Ease the caption up from slidePx below its resting y — matches the
-        // preview's per-frame translate.
-        stage.y = `${cap.y}+${cap.slidePx}*(1-${P})`;
+        yTerms.push(`${cap.slidePx}*(1-${P})`);
       } else if (cap.animation === 'bounce') {
-        // easeOutBack overshoot on y: starts bouncePx below, springs past 0,
-        // settles. u = p-1; 1-easeOutBack = -(C3*u^3 + C1*u^2).
         const U = `(${P}-1)`;
-        stage.y = `${cap.y}+${cap.bouncePx}*(0-(${BACK_C3}*${U}*${U}*${U}+${BACK_C1}*${U}*${U}))`;
-      } else if (cap.animation === 'shake') {
-        // Damped horizontal sine over the entrance, matching preview.
+        yTerms.push(`${cap.bouncePx}*(0-(${BACK_C3}*${U}*${U}*${U}+${BACK_C1}*${U}*${U}))`);
+      }
+      if (cap.exit === 'slide') yTerms.push(`${cap.slidePx}*${Q}`);
+      if (yTerms.length > 1) stage.y = yTerms.join('+');
+
+      // x offset: shake entrance (damped horizontal sine).
+      if (cap.animation === 'shake') {
         const omega = (CAP_SHAKE_CYCLES * 2 * Math.PI).toFixed(4);
         stage.x = `${cap.x}+${cap.shakePx}*sin(${P}*${omega})*(1-${P})`;
       }
@@ -1465,7 +1471,9 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   // can outlast the video and pad the render with a frozen tail. -shortest ends
   // the output with the (bounded) video/audio instead. Only added when such a
   // looped input exists, so nothing else changes.
-  const hasLoopedCaption = captionOverlays.some((c) => ['fade', 'slide', 'bounce', 'shake', 'wipe'].includes(c.animation));
+  const hasLoopedCaption = captionOverlays.some(
+    (c) => ['fade', 'slide', 'bounce', 'shake', 'wipe'].includes(c.animation) || ['fade', 'slide'].includes(c.exit)
+  );
   if (hasLoopedCaption) outputArgs.push('-shortest');
   args.push(
     ...outputArgs,
@@ -1554,6 +1562,8 @@ function buildCaptionOverlays(jobId, textLayers, canvasW, canvasH) {
     // move together and the coloured word stays aligned with the base.
     const animBase = {
       animation: hasRange ? layer.animation || 'none' : 'none',
+      exit: hasRange ? layer.exit || 'none' : 'none',
+      exitDuration: Number.isFinite(layer.exitDuration) ? layer.exitDuration : 0.35,
       start: hasRange ? layer.start : null,
       end: hasRange ? layer.end : null,
       slidePx: Math.round(canvasH * CAP_SLIDE_FRAC),
@@ -2266,6 +2276,8 @@ function buildTextLayers(body) {
       yPercent: clampPositionPercent(l && l.yPercent, 25),
       wrapWidth: clampWrapRatio(l && l.wrapWidth),
       animation: ['fade', 'slide', 'bounce', 'shake', 'wipe'].includes(l && l.animation) ? l.animation : 'none',
+      exit: ['fade', 'slide'].includes(l && l.exit) ? l.exit : 'none',
+      exitDuration: Math.min(3, Math.max(0.05, num(l && l.exitDuration) || 0.35)),
       start: num(l && l.start),
       end: num(l && l.end),
     }))

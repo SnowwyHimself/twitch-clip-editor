@@ -88,6 +88,8 @@ function buildTextLayersPayload() {
       yPercent: layer.yPercent,
       wrapWidth: layer.wrapWidth,
       animation: layer.animation,
+      exit: layer.exit,
+      exitDuration: layer.exitDuration,
       start,
       end,
     });

@@ -260,6 +260,9 @@ function lookupElements() {
     capStatus: byId('captions-status'),
     capStyleButtons: () => document.querySelectorAll('[data-cap-style]'),
     capAnimButtons: () => document.querySelectorAll('[data-cap-anim]'),
+    capExitButtons: () => document.querySelectorAll('[data-cap-exit]'),
+    capExitDuration: byId('cap-exit-duration'),
+    capExitDurationValue: byId('cap-exit-duration-value'),
     capFontSelect: byId('cap-font-select'),
     capColorPicker: byId('cap-color-picker'),
     capSizeSlider: byId('cap-size-slider'),
@@ -1615,6 +1618,22 @@ function wireCaptionControls() {
     });
   });
 
+  els.capExitButtons().forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.captionSettings.exit = btn.dataset.capExit;
+      els.capExitButtons().forEach((b) => b.classList.toggle('active', b === btn));
+      applyCaptionStyle();
+    });
+  });
+  if (els.capExitDuration) {
+    els.capExitDuration.addEventListener('input', () => {
+      const v = parseFloat(els.capExitDuration.value);
+      state.captionSettings.exitDuration = v;
+      if (els.capExitDurationValue) els.capExitDurationValue.textContent = `${v.toFixed(2)}s`;
+      applyCaptionStyle();
+    });
+  }
+
   els.capKaraokeToggle.addEventListener('change', () => {
     state.captionSettings.karaoke = els.capKaraokeToggle.checked;
     applyCaptionStyle();
@@ -1702,6 +1721,12 @@ function syncCaptionControls() {
   els.capPunctToggle.checked = s.punctuationCleanup !== false;
   els.capStyleButtons().forEach((b) => b.classList.toggle('active', b.dataset.capStyle === s.style));
   els.capAnimButtons().forEach((b) => b.classList.toggle('active', b.dataset.capAnim === (s.animation || 'none')));
+  els.capExitButtons().forEach((b) => b.classList.toggle('active', b.dataset.capExit === (s.exit || 'none')));
+  if (els.capExitDuration) {
+    const ed = Number.isFinite(s.exitDuration) ? s.exitDuration : 0.35;
+    els.capExitDuration.value = ed;
+    if (els.capExitDurationValue) els.capExitDurationValue.textContent = `${ed.toFixed(2)}s`;
+  }
   if (s.fontId) els.capFontSelect.value = s.fontId;
   markActiveSwatch(els.capColorPicker, s.color);
   els.capSizeSlider.value = s.fontSize;
