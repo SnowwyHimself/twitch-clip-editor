@@ -168,6 +168,38 @@ function buildFormData(opts) {
     formData.append('faceZoom', String(state.faceTrack.zoom || 1));
   }
 
+  // Face-tracked effects (blur / cover). Samples stay in SOURCE time — the
+  // server applies these to the raw source stream (before trim/reframe), so the
+  // effect bakes into the footage and rides through the reframe exactly like the
+  // preview positions it over the source. { kind, samples, start, end, + controls }.
+  if (state.faceEffects && state.faceEffects.length > 0) {
+    formData.append(
+      'faceEffects',
+      JSON.stringify(
+        state.faceEffects.map((fx) => ({
+          kind: fx.kind,
+          samples: fx.samples.map((s) => ({
+            t: Number(s.t.toFixed(3)),
+            x: Number(s.x.toFixed(4)),
+            y: Number(s.y.toFixed(4)),
+            w: Number(s.w.toFixed(4)),
+            h: Number(s.h.toFixed(4)),
+          })),
+          start: Number((fx.start || 0).toFixed(3)),
+          end: Number((fx.end || 0).toFixed(3)),
+          strength: fx.strength,
+          padding: fx.padding,
+          offsetX: fx.offsetX || 0,
+          offsetY: fx.offsetY || 0,
+          emoji: fx.emoji || null,
+          imageUrl: fx.imageUrl || null,
+          scale: fx.scale,
+          rotation: fx.rotation,
+        }))
+      )
+    );
+  }
+
   // Zoom/position keyframes, timed in OUTPUT seconds (mapped across cuts +
   // speed, same as captions) so the server's zoompan expressions line up with
   // the render's stream clock. Empty when the clip has no animation.
@@ -296,6 +328,9 @@ function buildFormData(opts) {
   if (state.source.kind === 'url') {
     endpoint = '/api/process-url';
     formData.append('url', state.source.url);
+    // Re-fetch the SAME section the preview imported (long-source range), so the
+    // export matches — and reuses the cached section download when present.
+    if (state.source.range) formData.append('range', JSON.stringify(state.source.range));
   } else {
     endpoint = '/api/process-upload';
     formData.append('video', state.source.file);

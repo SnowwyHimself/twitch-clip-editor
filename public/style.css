@@ -269,6 +269,7 @@ input[type="text"] {
 .tl-appended-clip,
 .tl-sound-bar,
 .tl-overlay-bar,
+.tl-face-bar,
 .tl-text-bar,
 .tl-kf-marker,
 .tl-transition-badge {
@@ -329,6 +330,7 @@ input[type="text"] {
 .tl-segment,
 .tl-sound-bar,
 .tl-overlay-bar,
+.tl-face-bar,
 .tl-text-bar,
 .tl-appended-clip {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
@@ -1234,6 +1236,23 @@ input[type="text"] {
 .add-menu-text small {
   color: var(--text-dim);
   font-size: var(--fs-xs);
+}
+.add-menu-caret {
+  margin-left: auto;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+/* Nested submenu (Facial tracking → reframe/blur/cover) */
+.add-submenu {
+  padding-left: 14px;
+  margin: 2px 0 2px 6px;
+  border-left: 2px solid var(--border);
+}
+.add-submenu.hidden {
+  display: none;
 }
 
 /* Inspector overflow (⋯) button */
@@ -2436,6 +2455,67 @@ img.preset-thumb {
   height: 26px;
 }
 
+/* Faces group: an expandable stack of 26px lanes in BOTH the gutter and the
+   tracks pane. Each is one flex child of its parent column, internally a
+   flex-column with the same 26px rows + 6px gaps, so the two panes stay aligned
+   row-for-row without touching the outer layout. */
+#tl-lbl-face,
+#tl-face-row {
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: none;
+}
+.tl-face-hdr,
+.tl-face-hdr-lane,
+.tl-face-sublabel,
+.tl-face-lane {
+  height: 26px;
+  box-sizing: border-box;
+}
+.tl-face-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  user-select: none;
+}
+.tl-face-chevron {
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px;
+}
+.tl-face-chevron:hover {
+  color: var(--text);
+}
+.tl-face-sublabel {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-faint, var(--text-dim));
+  opacity: 0.8;
+  user-select: none;
+}
+.tl-face-hdr-lane,
+.tl-face-lane {
+  position: relative;
+  border-radius: var(--radius-sm);
+}
+.tl-face-lane {
+  background: var(--bg);
+}
+
 .tl-empty {
   position: absolute;
   inset: 0;
@@ -2930,6 +3010,33 @@ img.preset-thumb {
   cursor: grabbing;
 }
 
+.tl-face-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: var(--radius-sm);
+  background: rgba(180, 120, 240, 0.24);
+  border: 1px solid rgba(180, 120, 240, 0.55);
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.tl-face-bar:active {
+  cursor: grabbing;
+}
+
+.tl-face-bar-reframe {
+  background: rgba(52, 199, 120, 0.24);
+  border-color: rgba(52, 199, 120, 0.55);
+}
+.tl-face-bar-cover {
+  background: rgba(240, 120, 190, 0.24);
+  border-color: rgba(240, 120, 190, 0.55);
+}
+
 .tl-text-label {
   font-size: var(--fs-xs);
   color: var(--text);
@@ -2992,7 +3099,9 @@ img.preset-thumb {
 .tl-sound-bar:hover .tl-text-edge::after,
 .tl-sound-bar.selected .tl-text-edge::after,
 .tl-overlay-bar:hover .tl-text-edge::after,
-.tl-overlay-bar.selected .tl-text-edge::after {
+.tl-overlay-bar.selected .tl-text-edge::after,
+.tl-face-bar:hover .tl-text-edge::after,
+.tl-face-bar.selected .tl-text-edge::after {
   background: rgba(255, 255, 255, 0.95);
 }
 
@@ -3473,6 +3582,89 @@ img.preset-thumb {
   }
 }
 
+/* Segmented toggle (Blur ⇄ Cover in the Facial tracking inspector) */
+.seg-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: var(--space-3);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.seg-opt {
+  flex: 1;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.seg-opt:hover {
+  color: var(--text);
+}
+.seg-opt.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Face-effect inspector: emoji picker -------------------------------------- */
+.face-fx-emoji-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+.face-fx-emoji-opt {
+  width: 36px;
+  height: 36px;
+  font-size: 20px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.face-fx-emoji-opt:hover {
+  border-color: var(--accent);
+}
+.face-fx-emoji-opt.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.35);
+}
+
+/* Face-tracked effects (blur / cover) in the preview ------------------------- */
+.face-effects {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.face-fx {
+  position: absolute;
+  transition: opacity 0.12s linear;
+}
+.face-fx-blur {
+  border-radius: 50%;
+  overflow: hidden;
+}
+.face-fx-cover {
+  display: grid;
+  place-items: center;
+}
+.face-fx-emoji {
+  line-height: 1;
+  user-select: none;
+}
+.face-fx-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 /* Send to Phone: pairing modal ------------------------------------------------ */
 .phone-qr-wrap {
   margin-top: var(--space-4);
@@ -3766,6 +3958,26 @@ img.preset-thumb {
 }
 .prompt-input {
   width: 100%;
+  margin-top: var(--space-2);
+}
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.range-input {
+  flex: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0;
+}
+.range-dash {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.range-err {
+  color: #ff6b6b;
   margin-top: var(--space-2);
 }
 

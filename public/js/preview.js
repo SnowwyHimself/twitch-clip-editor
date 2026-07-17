@@ -17,6 +17,7 @@
 
 import { icon } from './icons.js';
 import { watermarkUrl } from './api.js';
+import { renderFaceEffectsPreview } from './faceeffects.js';
 import {
   state,
   on,
@@ -2184,6 +2185,7 @@ export function initPreview() {
     syncClipAudio(); // re-apply the fade envelope at the current time
     tickSounds(outT);
     tickOverlays(outT);
+    renderFaceEffectsPreview(fgVideo.currentTime || 0); // face blur/cover follow the sampled path
     // Keep the two split-region videos locked to the foreground playhead.
     if (splitActive()) {
       const t = fgVideo.currentTime || 0;

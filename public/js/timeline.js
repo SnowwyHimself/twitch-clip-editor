@@ -66,6 +66,9 @@ import {
   setAudio,
   MIN_SEGMENT_SECONDS,
   MIN_LAYER_SECONDS,
+  selectFaceEffect,
+  selectedFaceEffect,
+  splitFaceEffectAt,
 } from './state.js';
 import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './preview.js';
 import { getPeaks, drawWaveform } from './waveform.js';
@@ -128,6 +131,10 @@ const tlBody = document.getElementById('tl-body');
 const tlScroll = document.getElementById('tl-scroll'); // the horizontal scroller
 const tlTracks = document.getElementById('tl-tracks'); // width-controlled tracks pane
 // Each track row's gutter label (they toggle .hidden together with the row).
+const faceRow = document.getElementById('tl-face-row');
+const faceGutter = document.getElementById('tl-lbl-face');
+const faceBarEls = new Map();
+let faceGroupCollapsed = false;
 const rowLabels = {
   'tl-overlay-row': document.getElementById('tl-lbl-overlay'),
   'tl-captions-row': document.getElementById('tl-lbl-captions'),
@@ -880,8 +887,16 @@ function attachSegmentEdgeDrag(edgeEl, seg, prev, next, isLeft) {
 // clip — splitting it at the playhead into two independent clips. With a
 // video segment selected (or nothing), it splits the video piece under the
 // playhead, as before.
+// Split acts ONLY on the selected item — a video piece, a layer/sound/overlay,
+// or a face effect — and does nothing when nothing splittable is selected. (The
+// video no longer splits as a silent fallback; you must select it first.)
 export function splitAtPlayhead() {
   const t = getCurrentTime();
+  if (selectedSegment()) {
+    const piece = splitSegmentAt(t);
+    if (piece) selectSegment(piece.id);
+    return;
+  }
   const layer = selectedLayer();
   if (layer) {
     const piece = splitLayerAt(layer.id, t);
@@ -900,8 +915,11 @@ export function splitAtPlayhead() {
     if (piece) selectOverlay(piece.id);
     return;
   }
-  const piece = splitSegmentAt(t);
-  if (piece) selectSegment(piece.id);
+  const fx = selectedFaceEffect();
+  if (fx) {
+    const piece = splitFaceEffectAt(fx.id, t);
+    if (piece) selectFaceEffect(piece.id);
+  }
 }
 
 // I / O: trim the SELECTED video piece's in-point (edge='in') or out-point
@@ -937,6 +955,11 @@ function refreshToolbar() {
   const canDeleteSegment = seg && state.segments.length > 1;
   const otherSelected = !!(selectedLayer() || selectedSound() || selectedOverlay() || selectedAppendedClip());
   deleteBtn.disabled = !(canDeleteSegment || otherSelected);
+  // Split acts on the selected item only (a face effect counts; reframe, which
+  // spans the whole clip, does not). Disabled when nothing splittable is picked.
+  const fx = selectedFaceEffect();
+  const canSplit = !!(seg || selectedLayer() || selectedSound() || selectedOverlay() || (fx && fx.kind !== 'reframe'));
+  splitBtn.disabled = !canSplit;
 }
 
 // --- text / caption / sound rows --------------------------------------------------
@@ -969,6 +992,15 @@ function buildClipBar(clip, className, labelText, opts) {
   if (opts.icon) label.innerHTML = icon(opts.icon, 12);
   label.append(document.createTextNode((opts.icon ? ' ' : '') + labelText));
   bar.appendChild(label);
+
+  // Locked bars (the whole-clip reframe) are selectable but not move/resizable.
+  if (opts.locked) {
+    bar.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      opts.onSelect();
+    });
+    return bar;
+  }
 
   const leftEdge = document.createElement('div');
   leftEdge.className = 'tl-text-edge tl-text-edge-left';
@@ -1132,6 +1164,104 @@ function renderOverlayRow() {
   layoutOverlayBars();
 }
 
+// The Facial-tracking items shown in the Faces group: the single reframe
+// (whole-clip) if one is tracked, then each blur/cover effect. reframe is a
+// pseudo-item with id 'reframe' spanning the clip.
+function faceItems() {
+  const items = [];
+  if (state.faceTrack && state.faceTrack.samples && state.faceTrack.samples.length > 0) {
+    items.push({ id: 'reframe', kind: 'reframe', start: 0, end: sourceDuration() });
+  }
+  for (const fx of state.faceEffects) items.push(fx);
+  return items;
+}
+
+function faceItemLabel(it) {
+  return it.kind === 'reframe' ? 'Facial tracking' : it.kind === 'blur' ? 'Blur' : 'Cover';
+}
+// Shorter form for the narrow (64px) gutter column.
+function faceItemGutterLabel(it) {
+  return it.kind === 'reframe' ? 'Tracking' : it.kind === 'blur' ? 'Blur' : 'Cover';
+}
+function faceItemIcon(it) {
+  return it.kind === 'cover' ? 'smile' : 'face';
+}
+
+function buildFaceBar(it) {
+  return buildClipBar(it, `tl-face-bar tl-face-bar-${it.kind}`, faceItemLabel(it), {
+    icon: faceItemIcon(it),
+    selected: () => isSelected('faceEffect', it.id),
+    onSelect: () => selectFaceEffect(it.id),
+    emitEvent: 'faceEffects',
+    relayout: layoutFaceBars,
+    locked: it.kind === 'reframe', // whole-clip: selectable, not resizable
+  });
+}
+
+function layoutFaceBars() {
+  for (const it of faceItems()) {
+    const el = faceBarEls.get(it.id);
+    if (el) layoutClipBar(el, it);
+  }
+}
+
+function renderFaceRow() {
+  faceRow.innerHTML = '';
+  faceGutter.innerHTML = '';
+  faceBarEls.clear();
+  const items = faceItems();
+  const show = sourceDuration() > 0 && items.length > 0;
+  faceRow.classList.toggle('hidden', !show);
+  faceGutter.classList.toggle('hidden', !show);
+  if (!show) return;
+
+  // Gutter header: "Faces" + expand/collapse chevron.
+  const hdr = document.createElement('div');
+  hdr.className = 'tl-face-hdr';
+  const chev = document.createElement('button');
+  chev.type = 'button';
+  chev.className = 'tl-face-chevron';
+  chev.textContent = faceGroupCollapsed ? '▸' : '▾';
+  chev.title = faceGroupCollapsed ? 'Expand face rows' : 'Collapse face rows';
+  chev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    faceGroupCollapsed = !faceGroupCollapsed;
+    renderFaceRow();
+  });
+  const lbl = document.createElement('span');
+  lbl.textContent = 'Faces';
+  hdr.append(lbl, chev);
+  faceGutter.appendChild(hdr);
+
+  // Tracks header lane — holds the stacked bars when collapsed; empty (a group
+  // title band) when expanded.
+  const hdrLane = document.createElement('div');
+  hdrLane.className = 'tl-face-hdr-lane';
+  faceRow.appendChild(hdrLane);
+
+  if (faceGroupCollapsed) {
+    for (const it of items) {
+      const bar = buildFaceBar(it);
+      faceBarEls.set(it.id, bar);
+      hdrLane.appendChild(bar);
+    }
+  } else {
+    for (const it of items) {
+      const sub = document.createElement('div');
+      sub.className = 'tl-face-sublabel';
+      sub.textContent = faceItemGutterLabel(it);
+      faceGutter.appendChild(sub);
+      const lane = document.createElement('div');
+      lane.className = 'tl-face-lane';
+      const bar = buildFaceBar(it);
+      faceBarEls.set(it.id, bar);
+      lane.appendChild(bar);
+      faceRow.appendChild(lane);
+    }
+  }
+  layoutFaceBars();
+}
+
 // --- playhead / scrubbing ---------------------------------------------------------
 
 function updatePlayhead() {
@@ -1172,6 +1302,7 @@ function renderAll() {
   renderOverlayRow();
   renderLayerRows();
   renderSoundRow();
+  renderFaceRow();
   refreshToolbar();
   updatePlayhead();
 }
@@ -1223,6 +1354,8 @@ export function initTimeline() {
   on('segments', renderAll);
   on('layers', renderAll);
   on('keyframes', renderKeyframeRow);
+  on('faceEffects', renderFaceRow);
+  on('facetrack', renderFaceRow);
   on('settings', () => {
     renderSoundRow();
     renderOverlayRow();
@@ -1233,6 +1366,7 @@ export function initTimeline() {
     renderLayerRows();
     renderSoundRow();
     renderOverlayRow();
+    renderFaceRow();
     refreshToolbar();
   });
   on('time', updatePlayhead);

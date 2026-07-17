@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const os = require('os');
 const https = require('https');
 const { spawn } = require('child_process');
-const { renderCaptionPng, resolveFontPath, getFontOptions, isValidFontBuffer } = require('./caption');
+const { renderCaptionPng, resolveFontPath, getFontOptions, isValidFontBuffer, getEmojiPngBase64 } = require('./caption');
 const {
   transcribeSource,
   checkWhisperSetup,
@@ -99,20 +99,26 @@ const ASPECT_RATIOS = {
   '4:3': { label: 'Classic (4:3)', width: 1440, height: 1080 },
   '16:9': { label: 'Widescreen (16:9)', width: 1920, height: 1080 },
 };
-const DEFAULT_ASPECT_RATIO = '9:16';
+const DEFAULT_ASPECT_RATIO = '9:16'; // fallback for an INVALID value only
 
+// 'original' = the source's native ratio (dimensions resolved from the clip at
+// export time, not from this table). It's the default the CLIENT selects for a
+// fresh import; a broken/absent value still falls back to a fixed ratio.
 function normalizeAspectRatio(value) {
+  if (value === 'original') return 'original';
   return ASPECT_RATIOS[value] ? value : DEFAULT_ASPECT_RATIO;
 }
 
 function getAspectRatioOptions() {
-  return Object.entries(ASPECT_RATIOS).map(([id, entry]) => ({
+  const fixed = Object.entries(ASPECT_RATIOS).map(([id, entry]) => ({
     id,
     label: entry.label,
     width: entry.width,
     height: entry.height,
-    isDefault: id === DEFAULT_ASPECT_RATIO,
+    isDefault: false,
   }));
+  // Original first, and the default — a freshly imported clip shows full-frame.
+  return [{ id: 'original', label: 'Original', width: null, height: null, isDefault: true, isOriginal: true }, ...fixed];
 }
 
 const MIN_ZOOM = 1.0;
@@ -178,11 +184,31 @@ function isValidHttpUrl(value) {
   }
 }
 
-// Only real Twitch clip/VOD hosts may reach yt-dlp. Before this, any http/https
-// URL was accepted, so yt-dlp — which supports hundreds of sites and will fetch
-// internal/SSRF targets — could be pointed anywhere. Restrict to Twitch.
-const TWITCH_HOSTS = new Set(['twitch.tv', 'www.twitch.tv', 'clips.twitch.tv', 'm.twitch.tv']);
-function isTwitchClipUrl(value) {
+// Only these EXACT hosts may reach yt-dlp. Before this guard, any http/https URL
+// was accepted, so yt-dlp — which supports hundreds of sites and will happily
+// fetch internal/SSRF targets — could be pointed anywhere.
+//
+// This is an exact-hostname allowlist on purpose: membership is tested with
+// Set.has(parsed.hostname) — never a substring/`includes('youtube')` check, which
+// "evil-youtube.com" or "youtube.com.attacker.net" would sail straight through.
+// Adding a host here is the ONLY way to widen what yt-dlp can fetch.
+const CLIP_HOSTS = new Set([
+  // Twitch
+  'twitch.tv',
+  'www.twitch.tv',
+  'clips.twitch.tv',
+  'm.twitch.tv',
+  // YouTube (incl. Shorts, which live on the same hosts)
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'youtu.be',
+  // TikTok
+  'tiktok.com',
+  'www.tiktok.com',
+  'vm.tiktok.com',
+]);
+function isAllowedClipUrl(value) {
   let parsed;
   try {
     parsed = new URL(value);
@@ -190,9 +216,9 @@ function isTwitchClipUrl(value) {
     return false;
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-  return TWITCH_HOSTS.has(parsed.hostname.toLowerCase());
+  return CLIP_HOSTS.has(parsed.hostname.toLowerCase());
 }
-const TWITCH_URL_ERROR = 'Please paste a Twitch clip or VOD link (twitch.tv / clips.twitch.tv).';
+const CLIP_URL_ERROR = 'Please paste a Twitch, YouTube, or TikTok link.';
 
 // Guarantees a resolved path stays inside baseDir — throws otherwise. Applied
 // wherever outside input contributes to a filesystem path (project/media/upload
@@ -657,6 +683,169 @@ function buildKeyframeZoompan(canvasW, canvasH, keyframes, fps) {
   const x = `clip((iw/2)*(1-1/zoom)-((${pxExpr})/100)*(iw/2)/zoom,0,iw-iw/zoom)`;
   const y = `clip((ih/2)*(1-1/zoom)-((${pyExpr})/100)*(ih/2)/zoom,0,ih-ih/zoom)`;
   return `zoompan=z='${zExpr}':x='${x}':y='${y}':d=1:s=${canvasW}x${canvasH}:fps=${fps}`;
+}
+
+// --- face-tracked effects (blur / cover) -------------------------------------
+// Parse+clamp the faceEffects payload. Samples are SOURCE-time normalized boxes;
+// applied to the RAW source stream (before trim/reframe) so they bake in and
+// ride the reframe just like the preview positions them over the source.
+function buildFaceEffects(body) {
+  let raw = body.faceEffects;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  const num = (v, d) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d);
+  return raw
+    .map((fx) => ({
+      kind: fx && fx.kind === 'cover' ? 'cover' : 'blur',
+      samples: Array.isArray(fx && fx.samples)
+        ? fx.samples
+            .map((s) => ({ t: num(s.t, 0), x: num(s.x, 0.5), y: num(s.y, 0.5), w: num(s.w, 0.1), h: num(s.h, 0.1) }))
+            .filter((s) => Number.isFinite(s.t))
+        : [],
+      start: Math.max(0, num(fx && fx.start, 0)),
+      end: Math.max(0, num(fx && fx.end, 0)),
+      strength: Math.max(0, Math.min(1, num(fx && fx.strength, 0.5))),
+      padding: Math.max(0, Math.min(1, num(fx && fx.padding, 0.2))),
+      offsetX: Math.max(-1, Math.min(1, num(fx && fx.offsetX, 0))),
+      offsetY: Math.max(-1, Math.min(1, num(fx && fx.offsetY, 0))),
+      emoji: fx && typeof fx.emoji === 'string' ? fx.emoji : null,
+      imageUrl: fx && typeof fx.imageUrl === 'string' ? fx.imageUrl : null,
+      scale: Math.max(0.2, Math.min(4, num(fx && fx.scale, 1.4))),
+      rotation: Math.max(-180, Math.min(180, num(fx && fx.rotation, 0))),
+    }))
+    .filter((fx) => fx.samples.length > 0);
+}
+
+function faceMedian(samples, key) {
+  const arr = samples.map((s) => s[key]).sort((a, b) => a - b);
+  return arr[Math.floor(arr.length / 2)] || arr[0] || 0.1;
+}
+
+// The face-api box center sits low (around the mouth), so shift the effect up by
+// this fraction of the face height to land on the eyes/nose — the perceived
+// center of the face. Kept in sync with the preview (faceeffects.js).
+const FACE_VBIAS = 0.18;
+
+// Per-frame face center along one axis, nudged by offset*perFrameFaceSize. The
+// offset scales with the face box (same as the preview) so a nudge that catches
+// the forehead stays put as the face moves nearer/farther. offset in [-1,1].
+function faceCenterExpr(samples, posKey, sizeKey, offset) {
+  const pos = buildFaceExpr(samples, posKey);
+  if (!offset) return pos;
+  const size = buildFaceExpr(samples, sizeKey);
+  return `(${pos})+(${offset})*(${size})`;
+}
+
+// One BLUR effect chained onto the source: split, crop a fixed region that
+// tracks the face (crop x/y are per-frame t-expressions), gaussian-blur it, cut
+// it to a soft ellipse (geq alpha), and overlay it back at the same moving
+// position, only within [start,end]. Returns { chain, label }.
+function buildFaceBlurStage(fx, srcW, srcH, inLabel, idx) {
+  const s = fx.samples;
+  // A CIRCLE sized to the face WIDTH (stable, face-sized) — not an ellipse of
+  // box.w×box.h, which stretches into a body-covering oval on tall frames. The
+  // size slider spans ~0.7×–2.5× face width, so it can go tight on small faces.
+  const dia = evenInt(
+    Math.max(16, Math.min(Math.min(srcW, srcH), faceMedian(s, 'w') * srcW * (0.7 + fx.padding * 1.8)))
+  );
+  const rw = dia;
+  const rh = dia;
+  // Center tracks the face, biased up to the eyes/nose, plus the user's nudge.
+  const xExpr = faceCenterExpr(s, 'x', 'w', fx.offsetX);
+  const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY - FACE_VBIAS);
+  const cx = `clip((${xExpr})*${srcW}-${rw / 2}\\,0\\,${srcW - rw})`;
+  const cy = `clip((${yExpr})*${srcH}-${rh / 2}\\,0\\,${srcH - rh})`;
+  const sigma = (2 + fx.strength * 30).toFixed(1);
+  const rx = (rw / 2 - 1).toFixed(1);
+  const ry = (rh / 2 - 1).toFixed(1);
+  const between = `between(t\\,${fx.start.toFixed(3)}\\,${fx.end.toFixed(3)})`;
+  const base = `[feb${idx}base]`;
+  const src = `[feb${idx}src]`;
+  const patch = `[feb${idx}patch]`;
+  const out = `[fe${idx}]`;
+  const alpha = `255*(1-clip((pow((X-${rw / 2})/${rx}\\,2)+pow((Y-${rh / 2})/${ry}\\,2))-0.72\\,0\\,0.28)/0.28)`;
+  const chain =
+    `${inLabel}split${base}${src};` +
+    `${src}crop=${rw}:${rh}:x='${cx}':y='${cy}':exact=1,gblur=sigma=${sigma},format=rgba,` +
+    `geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='${alpha}'${patch};` +
+    `${base}${patch}overlay=x='${cx}':y='${cy}':enable='${between}':eval=frame${out};`;
+  return { chain, label: out };
+}
+
+// One COVER effect: load the emoji/image with the `movie` source filter (no -i
+// input needed), scale it to the face size (median box * scale), optional
+// rotation, and overlay it at the moving, expression-driven face position,
+// only within [start,end]. fx._imgPath is a server-resolved file (see
+// prepareCoverImages). Returns { chain, label }.
+function buildFaceCoverStage(fx, srcW, srcH, inLabel, idx) {
+  if (!fx._imgPath) return { chain: '', label: inLabel };
+  const s = fx.samples;
+  // Size from the face WIDTH (stable) so the emoji sits face-sized, not oversized
+  // from a tall detection box.
+  const sizePx = evenInt(Math.max(16, faceMedian(s, 'w') * srcW * fx.scale));
+  const xExpr = faceCenterExpr(s, 'x', 'w', fx.offsetX);
+  const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY - FACE_VBIAS);
+  const ox = `(${xExpr})*${srcW}-${sizePx / 2}`;
+  const oy = `(${yExpr})*${srcH}-${sizePx / 2}`;
+  const between = `between(t\\,${fx.start.toFixed(3)}\\,${fx.end.toFixed(3)})`;
+  const rot = fx.rotation ? `,rotate=${((fx.rotation * Math.PI) / 180).toFixed(4)}:c=none` : '';
+  const img = `[fcoi${idx}]`;
+  const out = `[fc${idx}]`;
+  const chain =
+    `movie=${fx._imgPath},format=rgba,scale=${sizePx}:${sizePx}${rot}${img};` +
+    `${inLabel}${img}overlay=x='${ox}':y='${oy}':enable='${between}':eval=frame${out};`;
+  return { chain, label: out };
+}
+
+// Chain all face effects (blur + cover) onto the source. Returns { chain, label }
+// where label is the effected stream to use as the primary source downstream.
+function buildFaceEffectsPrefix(faceEffects, srcW, srcH, inLabel) {
+  let chain = '';
+  let label = inLabel;
+  let i = 0;
+  for (const fx of faceEffects) {
+    let st = null;
+    if (fx.kind === 'blur' && fx.samples.length) st = buildFaceBlurStage(fx, srcW, srcH, label, i);
+    else if (fx.kind === 'cover' && fx.samples.length && fx._imgPath) st = buildFaceCoverStage(fx, srcW, srcH, label, i);
+    if (st) {
+      chain += st.chain;
+      label = st.label;
+    }
+    i += 1;
+  }
+  return { chain, label };
+}
+
+// Resolve each COVER effect's emoji to a temp PNG (Twemoji, via caption.js) so
+// the `movie` filter can load it. Sets fx._imgPath. Returns temp paths to clean
+// up. (Library-image cover would need the image uploaded — emoji is v1.)
+function prepareCoverImages(faceEffects, jobId) {
+  const temp = [];
+  let i = 0;
+  for (const fx of faceEffects) {
+    if (fx.kind !== 'cover') continue;
+    if (fx.emoji) {
+      try {
+        const b64 = getEmojiPngBase64(fx.emoji);
+        if (b64) {
+          const p = path.join(DOWNLOADS_DIR, `${jobId}-cover-${i}.png`);
+          fs.writeFileSync(p, Buffer.from(b64, 'base64'));
+          fx._imgPath = p;
+          temp.push(p);
+        }
+      } catch {
+        /* leave _imgPath unset — the cover is skipped */
+      }
+    }
+    i += 1;
+  }
+  return temp;
 }
 
 // Piecewise-linear interpolation of a face-track property over output time
@@ -1143,7 +1332,7 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress, onChild) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, faceEffects, onProgress, onChild) {
   const hasAppended = Array.isArray(appended) && appended.length > 0;
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
@@ -1161,6 +1350,26 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     segments.length === 1 &&
     segments[0].outStart <= 0.01 &&
     (!transitions || transitions.length === 0);
+  // Face BLUR effects bake into the RAW source in source-time, so they need the
+  // source consumed exactly once and NOT input-side trimmed. Supported on the
+  // whole-clip render (no cuts, no appended clips, no transform-owning mode).
+  // The multi-piece concat path consumes [0:v] multiple times, so it's the
+  // constraint (see the report / SECURITY note).
+  const fxEffects = (Array.isArray(faceEffects) ? faceEffects : []).filter(
+    (f) => (f.kind === 'blur' || (f.kind === 'cover' && f._imgPath)) && f.samples && f.samples.length
+  );
+  // Whole clip (noTrim) OR a single kept range (singleRange) both keep [0:v] as a
+  // single, un-segmented consumer. singleRange input-trims via -ss, so the source
+  // time is shifted by the trim start — subtract it so the sample expressions line
+  // up with the filter clock.
+  const faceEffectsActive =
+    fxEffects.length > 0 &&
+    (noTrim || singleRange) &&
+    !hasAppended &&
+    !split &&
+    !(Array.isArray(keyframes) && keyframes.length >= 1) &&
+    !(Array.isArray(faceTrack) && faceTrack.length >= 1);
+  const fxTimeOffset = singleRange && segments[0] ? segments[0].start || 0 : 0;
   // Per-piece render (B6): when the segment-concat path runs and no global
   // transform mode is active (keyframes / face-track / split each own the whole
   // composite), composite each piece to a canvas-sized fill.
@@ -1344,7 +1553,24 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     sourceAudioLabel = built.audioLabel;
   }
 
+  // Prepend face-blur stages (source-time), repointing the primary source label
+  // at the last stage's output so the composite reads the blurred source.
+  let faceEffectPrefix = '';
+  if (faceEffectsActive) {
+    // Shift sample/segment times into the (possibly input-trimmed) filter clock.
+    const shifted = fxEffects.map((fx) => ({
+      ...fx,
+      samples: fx.samples.map((s) => ({ ...s, t: s.t - fxTimeOffset })),
+      start: Math.max(0, fx.start - fxTimeOffset),
+      end: fx.end - fxTimeOffset,
+    }));
+    const pre = buildFaceEffectsPrefix(shifted, mediaInfo.width, mediaInfo.height, sourceVideoLabel);
+    faceEffectPrefix = pre.chain;
+    sourceVideoLabel = pre.label;
+  }
+
   let filterComplex =
+    faceEffectPrefix +
     segmentPrefix +
     buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height, color, crop, perPiece);
 
@@ -1869,21 +2095,92 @@ function findFileWithPrefix(dir, prefix) {
   return match ? path.join(dir, match) : null;
 }
 
-function ytDlpArgs(url, outputTemplate) {
-  // `--` terminates option parsing so a URL that starts with '-' can never be
-  // read as a flag (arg injection). URLs are already restricted to Twitch hosts
-  // (isTwitchClipUrl) at every entry point before reaching here.
-  return ['-o', outputTemplate, '--no-playlist', '--', url];
+// Clips, not features: sources longer than this prompt for a start/end range so
+// we section-download instead of pulling an hour-long video. A requested section
+// is itself capped so nobody can ask for a giant slice either.
+const LONG_SOURCE_SECONDS = 15 * 60;
+const MAX_SECTION_SECONDS = 20 * 60;
+const MAX_IMPORT_HEIGHT = 1080; // never pull 4K into a vertical-clip editor
+
+// A validated { start, end } (seconds) or null. Clamps and caps the section.
+// Accepts either an object (JSON body) or a JSON string (multipart form field).
+function parseImportRange(raw) {
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const start = parseFloat(raw.start);
+  const end = parseFloat(raw.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  const s = Math.max(0, start);
+  if (end <= s) return null;
+  return { start: s, end: Math.min(end, s + MAX_SECTION_SECONDS) };
 }
 
-async function downloadWithYtDlp(url, jobId) {
+function ytDlpArgs(url, outputTemplate, range) {
+  const args = [
+    '-o', outputTemplate,
+    '--no-playlist',
+    // Best MP4 up to 1080p, and merge separate video+audio (how YouTube serves
+    // higher qualities) into one mp4 via the bundled ffmpeg. The fallback chain
+    // degrades gracefully; the final `/best` never lets a source fail to download
+    // just because nothing matched the height/ext preferences.
+    '-f',
+    `bestvideo[height<=${MAX_IMPORT_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${MAX_IMPORT_HEIGHT}][ext=mp4]/best[height<=${MAX_IMPORT_HEIGHT}]/best`,
+    '--merge-output-format', 'mp4',
+  ];
+  // Point yt-dlp at the bundled ffmpeg for the merge (only when we have a real
+  // path; in dev it's found on PATH).
+  if (FFMPEG_BIN && path.isAbsolute(FFMPEG_BIN)) args.push('--ffmpeg-location', FFMPEG_BIN);
+  // Long source: fetch ONLY the requested section instead of the whole video.
+  if (range) {
+    args.push('--download-sections', `*${range.start}-${range.end}`, '--force-keyframes-at-cuts');
+  }
+  // `--` terminates option parsing so a URL that starts with '-' can never be
+  // read as a flag (arg injection). URLs are already restricted to the exact-host
+  // allowlist (isAllowedClipUrl) at every entry point before reaching here.
+  args.push('--', url);
+  return args;
+}
+
+// yt-dlp metadata ONLY (no download): the source's duration in seconds, or null.
+// Used to decide whether to prompt for a section range before downloading.
+function probeSourceDuration(url) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(YTDLP_BIN, ['--no-playlist', '--no-warnings', '--print', 'duration', '--', url]);
+    } catch {
+      return resolve(null);
+    }
+    let out = '';
+    child.stdout.on('data', (c) => (out += c));
+    child.on('error', () => resolve(null));
+    child.on('close', () => {
+      const d = parseFloat(String(out).trim().split('\n')[0]);
+      resolve(Number.isFinite(d) ? d : null);
+    });
+    setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+      resolve(null);
+    }, 30000);
+  });
+}
+
+async function downloadWithYtDlp(url, jobId, range) {
   // Defense in depth: the single choke point to yt-dlp re-checks the host, so a
-  // non-Twitch URL can never reach it even if a caller forgot to validate.
-  if (!isTwitchClipUrl(url)) throw new Error(TWITCH_URL_ERROR);
+  // non-allowlisted URL can never reach it even if a caller forgot to validate.
+  if (!isAllowedClipUrl(url)) throw new Error(CLIP_URL_ERROR);
   const outputTemplate = path.join(DOWNLOADS_DIR, `${jobId}.%(ext)s`);
   await acquireHeavySlot();
   try {
-    await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
+    await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate, range));
   } finally {
     releaseHeavySlot();
   }
@@ -1894,21 +2191,24 @@ async function downloadWithYtDlp(url, jobId) {
   return filePath;
 }
 
-function previewCacheKey(url) {
-  return crypto.createHash('sha1').update(url).digest('hex');
+// The cache key includes the section range, so two different sections of the same
+// URL don't collide AND an export reuses the exact section the preview fetched.
+function previewCacheKey(url, range) {
+  const rangeKey = range ? `#${range.start}-${range.end}` : '';
+  return crypto.createHash('sha1').update(url + rangeKey).digest('hex');
 }
 
 // Downloads a clip purely for the live preview, reusing a prior download of
-// the exact same URL if one's already cached (see PREVIEW_CACHE_DIR above).
-async function fetchPreviewSource(url) {
-  if (!isTwitchClipUrl(url)) throw new Error(TWITCH_URL_ERROR);
-  const cacheKey = previewCacheKey(url);
+// the exact same URL (+ section) if one's already cached (see PREVIEW_CACHE_DIR).
+async function fetchPreviewSource(url, range) {
+  if (!isAllowedClipUrl(url)) throw new Error(CLIP_URL_ERROR);
+  const cacheKey = previewCacheKey(url, range);
   let filePath = findFileWithPrefix(PREVIEW_CACHE_DIR, cacheKey);
   if (!filePath) {
     const outputTemplate = path.join(PREVIEW_CACHE_DIR, `${cacheKey}.%(ext)s`);
     await acquireHeavySlot();
     try {
-      await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
+      await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate, range));
     } finally {
       releaseHeavySlot();
     }
@@ -1952,12 +2252,12 @@ async function resolveAppendedClips(appendedClips) {
   return out;
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, faceEffects) {
   let captionOverlays = [];
+  let coverTempFiles = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
     const outputPath = path.join(OUTPUTS_DIR, `${jobId}.mp4`);
-    const { width: canvasW, height: canvasH } = ASPECT_RATIOS[aspectRatio];
 
     // Always probed now: hasAudio has to be genuinely known (not just
     // assumed) whenever the segment-concat path might run or a sound
@@ -1966,11 +2266,26 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     // the export progress percentage.
     const mediaInfo = await probeSource(inputPath);
 
+    // Canvas dimensions. A fixed ratio comes from the table; 'original' takes the
+    // source's native dimensions (even-enforced) so the export is full-frame at
+    // the source ratio. The final targetRes step only ever DOWNscales (see
+    // runFfmpeg), so 'original' output is capped at the source size — never up.
+    let canvasW;
+    let canvasH;
+    if (aspectRatio === 'original') {
+      canvasW = evenInt(mediaInfo.width || ASPECT_RATIOS[DEFAULT_ASPECT_RATIO].width);
+      canvasH = evenInt(mediaInfo.height || ASPECT_RATIOS[DEFAULT_ASPECT_RATIO].height);
+    } else {
+      ({ width: canvasW, height: canvasH } = ASPECT_RATIOS[aspectRatio]);
+    }
+
     // Resolve appended clips (download URL clips / probe files) so they can be
     // stitched after the primary. Their total length extends the output.
     const appended = await resolveAppendedClips(appendedClips);
 
     captionOverlays = buildCaptionOverlays(jobId, textLayers, canvasW, canvasH);
+    // Emoji PNGs for any cover face-effects (loaded via the `movie` filter).
+    coverTempFiles = prepareCoverImages(Array.isArray(faceEffects) ? faceEffects : [], jobId);
 
     // Expected output length: the full output span — pieces plus any
     // free-form black gaps (max of outStart+len, not just the kept sum) —
@@ -2015,7 +2330,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       if (cancelledJobs.has(jobId)) child.kill('SIGKILL');
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress, onChild);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, faceEffects, onProgress, onChild);
     let outputBytes;
     try {
       outputBytes = fs.statSync(outputPath).size;
@@ -2044,17 +2359,21 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     for (const cap of captionOverlays) {
       fs.unlink(cap.pngPath, () => {});
     }
+    for (const p of coverTempFiles) {
+      fs.unlink(p, () => {});
+    }
   }
 }
 
-async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts) {
+async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, range, faceEffects) {
   try {
     setJob(jobId, { status: 'downloading' });
-    // If the user already fetched a live preview for this exact URL, reuse that
-    // download instead of running yt-dlp a second time.
-    const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url));
-    const inputPath = cachedPath || (await downloadWithYtDlp(url, jobId));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts);
+    // If the user already fetched a live preview for this exact URL + section,
+    // reuse that download instead of running yt-dlp a second time; otherwise
+    // download the same section so the export matches what the preview showed.
+    const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, range));
+    const inputPath = cachedPath || (await downloadWithYtDlp(url, jobId, range));
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, faceEffects);
   } catch (err) {
     if (cancelledJobs.has(jobId)) {
       setJob(jobId, { status: 'cancelled' });
@@ -2204,11 +2523,21 @@ app.use('/assets', express.static(path.join(ROOT, 'assets')));
 app.post('/api/preview-source', async (req, res) => {
   const { url } = req.body || {};
   const trimmedUrl = typeof url === 'string' ? url.trim() : '';
-  if (!isTwitchClipUrl(trimmedUrl)) {
-    return res.status(400).json({ error: TWITCH_URL_ERROR });
+  if (!isAllowedClipUrl(trimmedUrl)) {
+    return res.status(400).json({ error: CLIP_URL_ERROR });
   }
+  const range = parseImportRange(req.body && req.body.range);
   try {
-    const filePath = await fetchPreviewSource(trimmedUrl);
+    // Long-source guard: if the video is longer than the threshold and the caller
+    // hasn't chosen a section yet, probe the duration and ask for a start/end
+    // range instead of downloading the whole thing. A supplied range skips this.
+    if (!range) {
+      const duration = await probeSourceDuration(trimmedUrl);
+      if (Number.isFinite(duration) && duration > LONG_SOURCE_SECONDS) {
+        return res.json({ needsRange: true, duration });
+      }
+    }
+    const filePath = await fetchPreviewSource(trimmedUrl, range);
     res.json({ previewUrl: `/preview-cache/${path.basename(filePath)}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2293,8 +2622,8 @@ function buildTextLayers(body) {
 app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID(); next(); }, uploadFields, (req, res) => {
   const { url, zoom, blur, mirror, speed } = req.body || {};
   const trimmedUrl = typeof url === 'string' ? url.trim() : '';
-  if (!isTwitchClipUrl(trimmedUrl)) {
-    return res.status(400).json({ error: TWITCH_URL_ERROR });
+  if (!isAllowedClipUrl(trimmedUrl)) {
+    return res.status(400).json({ error: CLIP_URL_ERROR });
   }
 
   const jobId = req.jobId;
@@ -2322,7 +2651,9 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildAppendedClips(req.body || {}, req.files.appendedVideo),
     buildColor(req.body || {}),
     buildCrop(req.body || {}),
-    buildExportOpts(req.body || {})
+    buildExportOpts(req.body || {}),
+    parseImportRange(req.body && req.body.range),
+    buildFaceEffects(req.body || {})
   );
 });
 
@@ -2363,7 +2694,8 @@ app.post(
       buildAppendedClips(req.body, req.files.appendedVideo),
       buildColor(req.body),
       buildCrop(req.body),
-      buildExportOpts(req.body)
+      buildExportOpts(req.body),
+      buildFaceEffects(req.body)
     );
   }
 );
@@ -2383,7 +2715,7 @@ app.post('/api/transcribe', (req, res, next) => { req.jobId = crypto.randomUUID(
       inputPath = videoFile.path;
     } else {
       const trimmedUrl = typeof (req.body || {}).url === 'string' ? req.body.url.trim() : '';
-      if (!isTwitchClipUrl(trimmedUrl)) {
+      if (!isAllowedClipUrl(trimmedUrl)) {
         return res.status(400).json({ error: 'Provide a video file or a Twitch clip/VOD link to transcribe' });
       }
       inputPath = await fetchPreviewSource(trimmedUrl);

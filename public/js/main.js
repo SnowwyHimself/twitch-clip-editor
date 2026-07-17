@@ -64,7 +64,7 @@ import {
   onProjectChange,
   finishOpenWithFile,
 } from './project.js';
-import { confirmDialog, addClipDialog, promptDialog } from './confirm.js';
+import { confirmDialog, addClipDialog, promptDialog, rangeDialog } from './confirm.js';
 import { initOnboarding, onSourceLoaded } from './onboarding.js';
 import { initExportQueue } from './exportqueue.js';
 import { showToast } from './toast.js';
@@ -96,19 +96,38 @@ function isValidHttpUrl(value) {
 
 // --- clip ingestion -----------------------------------------------------------
 
-async function loadFromUrl() {
+async function loadFromUrl(rangeArg) {
   const url = urlInput.value.trim();
   if (!isValidHttpUrl(url)) {
     setPlaceholder('Please paste a valid clip URL (starting with http:// or https://).');
     return;
   }
+  // loadFromUrl doubles as a click listener, which would pass a DOM Event here —
+  // only treat a genuine { start, end } object as a section range.
+  const range =
+    rangeArg && typeof rangeArg === 'object' && Number.isFinite(rangeArg.start) && Number.isFinite(rangeArg.end)
+      ? { start: rangeArg.start, end: rangeArg.end }
+      : null;
   hideRestoreBanner(); // a load is underway — never leave the banner up
   setPlaceholder('Fetching clip...');
   loadUrlBtn.disabled = true;
   loadUrlBtn.textContent = 'Loading...';
   try {
-    const { previewUrl } = await fetchPreviewSource(url);
-    attachSource(previewUrl, { kind: 'url', url }, { isObjectUrl: false });
+    const resp = await fetchPreviewSource(url, range);
+    // Long source (>15 min): the server asks which section to import. Show the
+    // range picker, then re-load with the chosen start/end.
+    if (resp && resp.needsRange) {
+      loadUrlBtn.disabled = false;
+      loadUrlBtn.textContent = 'Load';
+      const picked = await rangeDialog({ duration: resp.duration });
+      if (!picked) {
+        setPlaceholder('Paste a Twitch, YouTube, or TikTok link to start');
+        return;
+      }
+      return loadFromUrl(picked);
+    }
+    // Carry the chosen section on the source so export re-fetches the same slice.
+    attachSource(resp.previewUrl, { kind: 'url', url, range: range || null }, { isObjectUrl: false });
   } catch (err) {
     setPlaceholder(`Couldn't load clip: ${err.message}`);
   } finally {
@@ -714,7 +733,13 @@ async function boot() {
     state.aspectRatios = ratios;
     state.whisper = whisper;
     const def = ratios.find((r) => r.isDefault) || ratios[0];
-    if (def) state.aspect = { id: def.id, width: def.width, height: def.height };
+    // 'Original' has no dimensions until a source loads — seed placeholder dims
+    // (a fixed ratio's) so nothing divides by null before then; the first source
+    // load replaces them with the clip's native size.
+    if (def) {
+      const seed = def.width && def.height ? def : ratios.find((r) => r.width && r.height) || { width: 1080, height: 1920 };
+      state.aspect = { id: def.id, width: seed.width, height: seed.height };
+    }
   } catch (err) {
     console.error('Failed to load editor options:', err);
   }
@@ -743,6 +768,16 @@ async function boot() {
   refreshStartTemplates();
   offerRestore();
   wireUpdatePill();
+  // "Original" aspect tracks the (first) source's native dimensions — resolve
+  // them once the clip's metadata is known, so a fresh import shows full-frame.
+  on('source', () => {
+    if (state.aspect && state.aspect.id === 'original' && state.source && state.source.width && state.source.height) {
+      if (state.aspect.width !== state.source.width || state.aspect.height !== state.source.height) {
+        state.aspect = { id: 'original', width: state.source.width, height: state.source.height };
+        emit('settings');
+      }
+    }
+  });
   // First-run onboarding: reveals the "try a sample clip" option + tour on the
   // very first launch only. Any real source load retires the offer silently.
   on('source', () => onSourceLoaded());

@@ -812,4 +812,4 @@ function isValidFontBuffer(buffer) {
   }
 }
 
-module.exports = { renderCaptionPng, resolveFontPath, getFontOptions, isValidFontBuffer };
+module.exports = { renderCaptionPng, resolveFontPath, getFontOptions, isValidFontBuffer, getEmojiPngBase64 };

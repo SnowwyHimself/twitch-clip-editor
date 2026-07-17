@@ -169,6 +169,114 @@ export function promptDialog({
   });
 }
 
+// Long-source section picker: the video is longer than the import threshold, so
+// the user chooses a start/end (mm:ss) and we section-download just that slice.
+// Resolves { start, end } in seconds, or null on cancel.
+export function rangeDialog({ duration = 0 } = {}) {
+  return new Promise((resolve) => {
+    const fmtT = (s) => {
+      s = Math.max(0, Math.round(s));
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    };
+    const parseT = (v) => {
+      const str = String(v).trim();
+      if (str.includes(':')) {
+        const [m, s] = str.split(':').map((n) => parseFloat(n));
+        return Number.isFinite(m) && Number.isFinite(s) ? m * 60 + s : null;
+      }
+      const n = parseFloat(str);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'export-modal confirm-modal';
+    const card = document.createElement('div');
+    card.className = 'export-card confirm-card';
+    const h = document.createElement('h2');
+    h.className = 'confirm-title';
+    h.textContent = 'Pick a section to import';
+    card.appendChild(h);
+    const note = document.createElement('p');
+    note.className = 'confirm-note';
+    note.textContent = `This video is ${fmtT(duration)} long — longer than 15 minutes, so choose a start and end (up to 20 min) and only that part downloads.`;
+    card.appendChild(note);
+
+    const row = document.createElement('div');
+    row.className = 'range-row';
+    const startIn = document.createElement('input');
+    startIn.type = 'text';
+    startIn.className = 'prompt-input range-input';
+    startIn.value = fmtT(0);
+    const dash = document.createElement('span');
+    dash.className = 'range-dash';
+    dash.textContent = 'to';
+    const endIn = document.createElement('input');
+    endIn.type = 'text';
+    endIn.className = 'prompt-input range-input';
+    endIn.value = fmtT(Math.min(60, duration));
+    row.append(startIn, dash, endIn);
+    card.appendChild(row);
+    const err = document.createElement('p');
+    err.className = 'confirm-note range-err hidden';
+    card.appendChild(err);
+
+    const actions = document.createElement('div');
+    actions.className = 'confirm-actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'secondary-btn';
+    cancelBtn.textContent = 'Cancel';
+    const okBtn = document.createElement('button');
+    okBtn.type = 'button';
+    okBtn.className = 'primary-btn';
+    okBtn.textContent = 'Import section';
+    actions.append(cancelBtn, okBtn);
+    card.appendChild(actions);
+    backdrop.appendChild(card);
+    document.body.appendChild(backdrop);
+
+    const close = (result) => {
+      document.removeEventListener('keydown', onKey, true);
+      backdrop.remove();
+      resolve(result);
+    };
+    const submit = () => {
+      let start = parseT(startIn.value);
+      let end = parseT(endIn.value);
+      if (start == null || end == null) {
+        err.textContent = 'Use mm:ss, e.g. 1:30.';
+        err.classList.remove('hidden');
+        return;
+      }
+      start = Math.max(0, Math.min(start, duration));
+      end = Math.min(end, duration);
+      if (end <= start) {
+        err.textContent = 'End must be after start.';
+        err.classList.remove('hidden');
+        return;
+      }
+      close({ start, end });
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close(null);
+      } else if (e.key === 'Enter') {
+        e.stopPropagation();
+        submit();
+      }
+    };
+    backdrop.addEventListener('pointerdown', (e) => {
+      if (e.target === backdrop) close(null);
+    });
+    cancelBtn.addEventListener('click', () => close(null));
+    okBtn.addEventListener('click', submit);
+    document.addEventListener('keydown', onKey, true);
+    startIn.focus();
+    startIn.select();
+  });
+}
+
 export function confirmDialog({
   title = 'Are you sure?',
   itemName = '',
