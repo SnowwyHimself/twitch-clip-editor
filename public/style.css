@@ -3768,6 +3768,26 @@ img.preset-thumb {
   width: 100%;
   margin-top: var(--space-2);
 }
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.range-input {
+  flex: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0;
+}
+.range-dash {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.range-err {
+  color: #ff6b6b;
+  margin-top: var(--space-2);
+}
 
 /* Background export: corner progress pill --------------------------------------- */
 .export-pill {

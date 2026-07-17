@@ -43,6 +43,9 @@ function serialize() {
       ? {
           kind: src.kind,
           url: src.url || null,
+          // Long-source import section (start/end seconds), so a restored URL
+          // project re-fetches the same slice it was edited from.
+          range: src.range || null,
           name: src.name || (src.file && src.file.name) || null,
           path: src.path || null,
           // Byte size of the original file — the reopen IPC matches it so a
@@ -213,9 +216,9 @@ async function attachProjectSource(data) {
   if (!src) return { ok: false, reason: 'no-source' };
   if (src.kind === 'url' && src.url) {
     setPlaceholder('Re-loading clip…');
-    const { previewUrl } = await fetchPreviewSource(src.url);
+    const { previewUrl } = await fetchPreviewSource(src.url, src.range || null);
     const ready = waitForSource();
-    attachSource(previewUrl, { kind: 'url', url: src.url }, { isObjectUrl: false });
+    attachSource(previewUrl, { kind: 'url', url: src.url, range: src.range || null }, { isObjectUrl: false });
     await ready;
     return { ok: true };
   }

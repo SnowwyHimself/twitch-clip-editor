@@ -22,11 +22,11 @@ export async function fetchWhisperStatus() {
   return parseJsonResponse(res, 'Failed to check caption support');
 }
 
-export async function fetchPreviewSource(url) {
+export async function fetchPreviewSource(url, range) {
   const res = await fetch('/api/preview-source', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(range ? { url, range } : { url }),
   });
   return parseJsonResponse(res, 'Failed to load clip');
 }

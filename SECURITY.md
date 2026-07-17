@@ -27,9 +27,16 @@ happen on your computer.
 - **No arbitrary file access.** There is no HTTP endpoint that reads a path you
   hand it. Reopening a file-based project is done by the app's own main process
   over a validated internal channel.
-- **URLs are restricted to Twitch.** `yt-dlp` is only ever pointed at
-  `twitch.tv` / `www` / `clips` / `m.twitch.tv` — never an arbitrary or internal
-  address.
+- **URLs are restricted to an exact-host allowlist.** `yt-dlp` is only ever
+  pointed at these exact hostnames — Twitch (`twitch.tv`, `www.twitch.tv`,
+  `clips.twitch.tv`, `m.twitch.tv`), YouTube (`youtube.com`, `www.youtube.com`,
+  `m.youtube.com`, `youtu.be`), and TikTok (`tiktok.com`, `www.tiktok.com`,
+  `vm.tiktok.com`) — never an arbitrary or internal address. The check is an
+  exact `Set.has(hostname)` match, **not** a substring/`includes` check, so
+  look-alikes such as `evil-youtube.com` or `youtube.com.attacker.net` are
+  rejected. The `--` argument terminator still guards against a URL being read as
+  a flag, and the download choke point re-validates the host. Adding a host to
+  the allowlist is the only way to widen what can be fetched.
 
 ## Send to Phone (optional, off by default)
 

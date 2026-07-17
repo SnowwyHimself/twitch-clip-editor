@@ -178,11 +178,31 @@ function isValidHttpUrl(value) {
   }
 }
 
-// Only real Twitch clip/VOD hosts may reach yt-dlp. Before this, any http/https
-// URL was accepted, so yt-dlp — which supports hundreds of sites and will fetch
-// internal/SSRF targets — could be pointed anywhere. Restrict to Twitch.
-const TWITCH_HOSTS = new Set(['twitch.tv', 'www.twitch.tv', 'clips.twitch.tv', 'm.twitch.tv']);
-function isTwitchClipUrl(value) {
+// Only these EXACT hosts may reach yt-dlp. Before this guard, any http/https URL
+// was accepted, so yt-dlp — which supports hundreds of sites and will happily
+// fetch internal/SSRF targets — could be pointed anywhere.
+//
+// This is an exact-hostname allowlist on purpose: membership is tested with
+// Set.has(parsed.hostname) — never a substring/`includes('youtube')` check, which
+// "evil-youtube.com" or "youtube.com.attacker.net" would sail straight through.
+// Adding a host here is the ONLY way to widen what yt-dlp can fetch.
+const CLIP_HOSTS = new Set([
+  // Twitch
+  'twitch.tv',
+  'www.twitch.tv',
+  'clips.twitch.tv',
+  'm.twitch.tv',
+  // YouTube (incl. Shorts, which live on the same hosts)
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'youtu.be',
+  // TikTok
+  'tiktok.com',
+  'www.tiktok.com',
+  'vm.tiktok.com',
+]);
+function isAllowedClipUrl(value) {
   let parsed;
   try {
     parsed = new URL(value);
@@ -190,9 +210,9 @@ function isTwitchClipUrl(value) {
     return false;
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-  return TWITCH_HOSTS.has(parsed.hostname.toLowerCase());
+  return CLIP_HOSTS.has(parsed.hostname.toLowerCase());
 }
-const TWITCH_URL_ERROR = 'Please paste a Twitch clip or VOD link (twitch.tv / clips.twitch.tv).';
+const CLIP_URL_ERROR = 'Please paste a Twitch, YouTube, or TikTok link.';
 
 // Guarantees a resolved path stays inside baseDir — throws otherwise. Applied
 // wherever outside input contributes to a filesystem path (project/media/upload
@@ -1869,21 +1889,92 @@ function findFileWithPrefix(dir, prefix) {
   return match ? path.join(dir, match) : null;
 }
 
-function ytDlpArgs(url, outputTemplate) {
-  // `--` terminates option parsing so a URL that starts with '-' can never be
-  // read as a flag (arg injection). URLs are already restricted to Twitch hosts
-  // (isTwitchClipUrl) at every entry point before reaching here.
-  return ['-o', outputTemplate, '--no-playlist', '--', url];
+// Clips, not features: sources longer than this prompt for a start/end range so
+// we section-download instead of pulling an hour-long video. A requested section
+// is itself capped so nobody can ask for a giant slice either.
+const LONG_SOURCE_SECONDS = 15 * 60;
+const MAX_SECTION_SECONDS = 20 * 60;
+const MAX_IMPORT_HEIGHT = 1080; // never pull 4K into a vertical-clip editor
+
+// A validated { start, end } (seconds) or null. Clamps and caps the section.
+// Accepts either an object (JSON body) or a JSON string (multipart form field).
+function parseImportRange(raw) {
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const start = parseFloat(raw.start);
+  const end = parseFloat(raw.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  const s = Math.max(0, start);
+  if (end <= s) return null;
+  return { start: s, end: Math.min(end, s + MAX_SECTION_SECONDS) };
 }
 
-async function downloadWithYtDlp(url, jobId) {
+function ytDlpArgs(url, outputTemplate, range) {
+  const args = [
+    '-o', outputTemplate,
+    '--no-playlist',
+    // Best MP4 up to 1080p, and merge separate video+audio (how YouTube serves
+    // higher qualities) into one mp4 via the bundled ffmpeg. The fallback chain
+    // degrades gracefully; the final `/best` never lets a source fail to download
+    // just because nothing matched the height/ext preferences.
+    '-f',
+    `bestvideo[height<=${MAX_IMPORT_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${MAX_IMPORT_HEIGHT}][ext=mp4]/best[height<=${MAX_IMPORT_HEIGHT}]/best`,
+    '--merge-output-format', 'mp4',
+  ];
+  // Point yt-dlp at the bundled ffmpeg for the merge (only when we have a real
+  // path; in dev it's found on PATH).
+  if (FFMPEG_BIN && path.isAbsolute(FFMPEG_BIN)) args.push('--ffmpeg-location', FFMPEG_BIN);
+  // Long source: fetch ONLY the requested section instead of the whole video.
+  if (range) {
+    args.push('--download-sections', `*${range.start}-${range.end}`, '--force-keyframes-at-cuts');
+  }
+  // `--` terminates option parsing so a URL that starts with '-' can never be
+  // read as a flag (arg injection). URLs are already restricted to the exact-host
+  // allowlist (isAllowedClipUrl) at every entry point before reaching here.
+  args.push('--', url);
+  return args;
+}
+
+// yt-dlp metadata ONLY (no download): the source's duration in seconds, or null.
+// Used to decide whether to prompt for a section range before downloading.
+function probeSourceDuration(url) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(YTDLP_BIN, ['--no-playlist', '--no-warnings', '--print', 'duration', '--', url]);
+    } catch {
+      return resolve(null);
+    }
+    let out = '';
+    child.stdout.on('data', (c) => (out += c));
+    child.on('error', () => resolve(null));
+    child.on('close', () => {
+      const d = parseFloat(String(out).trim().split('\n')[0]);
+      resolve(Number.isFinite(d) ? d : null);
+    });
+    setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+      resolve(null);
+    }, 30000);
+  });
+}
+
+async function downloadWithYtDlp(url, jobId, range) {
   // Defense in depth: the single choke point to yt-dlp re-checks the host, so a
-  // non-Twitch URL can never reach it even if a caller forgot to validate.
-  if (!isTwitchClipUrl(url)) throw new Error(TWITCH_URL_ERROR);
+  // non-allowlisted URL can never reach it even if a caller forgot to validate.
+  if (!isAllowedClipUrl(url)) throw new Error(CLIP_URL_ERROR);
   const outputTemplate = path.join(DOWNLOADS_DIR, `${jobId}.%(ext)s`);
   await acquireHeavySlot();
   try {
-    await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
+    await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate, range));
   } finally {
     releaseHeavySlot();
   }
@@ -1894,21 +1985,24 @@ async function downloadWithYtDlp(url, jobId) {
   return filePath;
 }
 
-function previewCacheKey(url) {
-  return crypto.createHash('sha1').update(url).digest('hex');
+// The cache key includes the section range, so two different sections of the same
+// URL don't collide AND an export reuses the exact section the preview fetched.
+function previewCacheKey(url, range) {
+  const rangeKey = range ? `#${range.start}-${range.end}` : '';
+  return crypto.createHash('sha1').update(url + rangeKey).digest('hex');
 }
 
 // Downloads a clip purely for the live preview, reusing a prior download of
-// the exact same URL if one's already cached (see PREVIEW_CACHE_DIR above).
-async function fetchPreviewSource(url) {
-  if (!isTwitchClipUrl(url)) throw new Error(TWITCH_URL_ERROR);
-  const cacheKey = previewCacheKey(url);
+// the exact same URL (+ section) if one's already cached (see PREVIEW_CACHE_DIR).
+async function fetchPreviewSource(url, range) {
+  if (!isAllowedClipUrl(url)) throw new Error(CLIP_URL_ERROR);
+  const cacheKey = previewCacheKey(url, range);
   let filePath = findFileWithPrefix(PREVIEW_CACHE_DIR, cacheKey);
   if (!filePath) {
     const outputTemplate = path.join(PREVIEW_CACHE_DIR, `${cacheKey}.%(ext)s`);
     await acquireHeavySlot();
     try {
-      await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate));
+      await runCommand(YTDLP_BIN, ytDlpArgs(url, outputTemplate, range));
     } finally {
       releaseHeavySlot();
     }
@@ -2047,13 +2141,14 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts) {
+async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, range) {
   try {
     setJob(jobId, { status: 'downloading' });
-    // If the user already fetched a live preview for this exact URL, reuse that
-    // download instead of running yt-dlp a second time.
-    const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url));
-    const inputPath = cachedPath || (await downloadWithYtDlp(url, jobId));
+    // If the user already fetched a live preview for this exact URL + section,
+    // reuse that download instead of running yt-dlp a second time; otherwise
+    // download the same section so the export matches what the preview showed.
+    const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, range));
+    const inputPath = cachedPath || (await downloadWithYtDlp(url, jobId, range));
     await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts);
   } catch (err) {
     if (cancelledJobs.has(jobId)) {
@@ -2204,11 +2299,21 @@ app.use('/assets', express.static(path.join(ROOT, 'assets')));
 app.post('/api/preview-source', async (req, res) => {
   const { url } = req.body || {};
   const trimmedUrl = typeof url === 'string' ? url.trim() : '';
-  if (!isTwitchClipUrl(trimmedUrl)) {
-    return res.status(400).json({ error: TWITCH_URL_ERROR });
+  if (!isAllowedClipUrl(trimmedUrl)) {
+    return res.status(400).json({ error: CLIP_URL_ERROR });
   }
+  const range = parseImportRange(req.body && req.body.range);
   try {
-    const filePath = await fetchPreviewSource(trimmedUrl);
+    // Long-source guard: if the video is longer than the threshold and the caller
+    // hasn't chosen a section yet, probe the duration and ask for a start/end
+    // range instead of downloading the whole thing. A supplied range skips this.
+    if (!range) {
+      const duration = await probeSourceDuration(trimmedUrl);
+      if (Number.isFinite(duration) && duration > LONG_SOURCE_SECONDS) {
+        return res.json({ needsRange: true, duration });
+      }
+    }
+    const filePath = await fetchPreviewSource(trimmedUrl, range);
     res.json({ previewUrl: `/preview-cache/${path.basename(filePath)}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2293,8 +2398,8 @@ function buildTextLayers(body) {
 app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID(); next(); }, uploadFields, (req, res) => {
   const { url, zoom, blur, mirror, speed } = req.body || {};
   const trimmedUrl = typeof url === 'string' ? url.trim() : '';
-  if (!isTwitchClipUrl(trimmedUrl)) {
-    return res.status(400).json({ error: TWITCH_URL_ERROR });
+  if (!isAllowedClipUrl(trimmedUrl)) {
+    return res.status(400).json({ error: CLIP_URL_ERROR });
   }
 
   const jobId = req.jobId;
@@ -2322,7 +2427,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildAppendedClips(req.body || {}, req.files.appendedVideo),
     buildColor(req.body || {}),
     buildCrop(req.body || {}),
-    buildExportOpts(req.body || {})
+    buildExportOpts(req.body || {}),
+    parseImportRange(req.body && req.body.range)
   );
 });
 
@@ -2383,7 +2489,7 @@ app.post('/api/transcribe', (req, res, next) => { req.jobId = crypto.randomUUID(
       inputPath = videoFile.path;
     } else {
       const trimmedUrl = typeof (req.body || {}).url === 'string' ? req.body.url.trim() : '';
-      if (!isTwitchClipUrl(trimmedUrl)) {
+      if (!isAllowedClipUrl(trimmedUrl)) {
         return res.status(400).json({ error: 'Provide a video file or a Twitch clip/VOD link to transcribe' });
       }
       inputPath = await fetchPreviewSource(trimmedUrl);

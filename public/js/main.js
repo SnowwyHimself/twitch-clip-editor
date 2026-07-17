@@ -64,7 +64,7 @@ import {
   onProjectChange,
   finishOpenWithFile,
 } from './project.js';
-import { confirmDialog, addClipDialog, promptDialog } from './confirm.js';
+import { confirmDialog, addClipDialog, promptDialog, rangeDialog } from './confirm.js';
 import { initOnboarding, onSourceLoaded } from './onboarding.js';
 import { initExportQueue } from './exportqueue.js';
 import { showToast } from './toast.js';
@@ -96,19 +96,38 @@ function isValidHttpUrl(value) {
 
 // --- clip ingestion -----------------------------------------------------------
 
-async function loadFromUrl() {
+async function loadFromUrl(rangeArg) {
   const url = urlInput.value.trim();
   if (!isValidHttpUrl(url)) {
     setPlaceholder('Please paste a valid clip URL (starting with http:// or https://).');
     return;
   }
+  // loadFromUrl doubles as a click listener, which would pass a DOM Event here —
+  // only treat a genuine { start, end } object as a section range.
+  const range =
+    rangeArg && typeof rangeArg === 'object' && Number.isFinite(rangeArg.start) && Number.isFinite(rangeArg.end)
+      ? { start: rangeArg.start, end: rangeArg.end }
+      : null;
   hideRestoreBanner(); // a load is underway — never leave the banner up
   setPlaceholder('Fetching clip...');
   loadUrlBtn.disabled = true;
   loadUrlBtn.textContent = 'Loading...';
   try {
-    const { previewUrl } = await fetchPreviewSource(url);
-    attachSource(previewUrl, { kind: 'url', url }, { isObjectUrl: false });
+    const resp = await fetchPreviewSource(url, range);
+    // Long source (>15 min): the server asks which section to import. Show the
+    // range picker, then re-load with the chosen start/end.
+    if (resp && resp.needsRange) {
+      loadUrlBtn.disabled = false;
+      loadUrlBtn.textContent = 'Load';
+      const picked = await rangeDialog({ duration: resp.duration });
+      if (!picked) {
+        setPlaceholder('Paste a Twitch, YouTube, or TikTok link to start');
+        return;
+      }
+      return loadFromUrl(picked);
+    }
+    // Carry the chosen section on the source so export re-fetches the same slice.
+    attachSource(resp.previewUrl, { kind: 'url', url, range: range || null }, { isObjectUrl: false });
   } catch (err) {
     setPlaceholder(`Couldn't load clip: ${err.message}`);
   } finally {

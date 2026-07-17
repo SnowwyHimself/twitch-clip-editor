@@ -296,6 +296,9 @@ function buildFormData(opts) {
   if (state.source.kind === 'url') {
     endpoint = '/api/process-url';
     formData.append('url', state.source.url);
+    // Re-fetch the SAME section the preview imported (long-source range), so the
+    // export matches — and reuses the cached section download when present.
+    if (state.source.range) formData.append('range', JSON.stringify(state.source.range));
   } else {
     endpoint = '/api/process-upload';
     formData.append('video', state.source.file);
