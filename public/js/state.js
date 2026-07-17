@@ -174,6 +174,15 @@ export const state = {
   //   offset, duration }
   sounds: [],
 
+  // Face-tracked effects (blur a face / cover a face with an emoji/image). Each
+  // pins to a face and follows a smoothed box path over the clip. Rendered
+  // identically in preview (CSS/canvas from the samples) and export (ffmpeg
+  // crop-blur / overlay driven by the SAME samples as piecewise-linear
+  // t-expressions). { id, kind:'blur'|'cover', samples:[{t,x,y,w,h,seen}],
+  //   start, end (SOURCE seconds), strength, padding (blur),
+  //   emoji|imageUrl|imageId, scale, rotation (cover) }
+  faceEffects: [],
+
   // Additional source clips stitched AFTER the primary clip, in order (Phase 6,
   // sequential multi-source). Each is a trimmed [start,end] range of its OWN
   // source. Kept separate from state.segments (the primary clip's pieces) so
@@ -828,6 +837,52 @@ export function selectedOverlay() {
   return state.sel && state.sel.kind === 'overlay' ? state.overlays.find((o) => o.id === state.sel.id) || null : null;
 }
 
+// --- face-tracked effects (blur / cover) -----------------------------------------
+let faceEffectCounter = 0;
+export function selectedFaceEffect() {
+  return state.sel && state.sel.kind === 'faceEffect' ? state.faceEffects.find((f) => f.id === state.sel.id) || null : null;
+}
+export function addFaceEffect(effect, { select = true } = {}) {
+  const dur = sourceDuration();
+  const fx = {
+    id: `fx-${Date.now()}-${faceEffectCounter++}`,
+    kind: effect.kind === 'cover' ? 'cover' : 'blur',
+    samples: Array.isArray(effect.samples) ? effect.samples : [],
+    start: 0,
+    end: dur > 0 ? dur : effect.end || 0,
+    // blur defaults
+    strength: 0.5, // 0..1
+    padding: 0.2, // extra region beyond the detected box, as a fraction
+    // cover defaults
+    emoji: effect.emoji || null,
+    imageUrl: effect.imageUrl || null,
+    imageId: effect.imageId || null,
+    scale: 1.4, // relative to face box
+    rotation: 0, // degrees
+    ...effect,
+  };
+  state.faceEffects.push(fx);
+  emit('faceEffects');
+  if (select) {
+    state.sel = { kind: 'faceEffect', id: fx.id };
+    emit('selection');
+  }
+  return fx;
+}
+export function updateFaceEffect(id, patch, { history = true } = {}) {
+  const fx = state.faceEffects.find((f) => f.id === id);
+  if (!fx) return;
+  Object.assign(fx, patch);
+  emit(history ? 'faceEffects' : 'faceEffects-live');
+}
+export function removeFaceEffect(id) {
+  const idx = state.faceEffects.findIndex((f) => f.id === id);
+  if (idx === -1) return;
+  state.faceEffects.splice(idx, 1);
+  if (isSelected('faceEffect', id)) clearSelection();
+  emit('faceEffects');
+}
+
 // --- text layers ------------------------------------------------------------------
 
 let layerCounter = 0;
@@ -1471,10 +1526,11 @@ export function defaultFontId() {
 // through the 'segments'/'layers' events; recording is debounced so a
 // continuous drag or a typing burst collapses into one history entry.
 
-const HISTORY_EVENTS = new Set(['segments', 'layers', 'keyframes', 'media', 'media-adjust']);
+const HISTORY_EVENTS = new Set(['segments', 'layers', 'keyframes', 'media', 'media-adjust', 'faceEffects']);
 // Structural edits (splits, deletes, adds) each deserve their own step, so
 // they record on the next tick; continuous edits (typing, dragging a slider)
-// debounce into one step per pause.
+// debounce into one step per pause. Face-effect control tweaks debounce; adds/
+// deletes come through the same 'faceEffects' event and still coalesce sanely.
 const IMMEDIATE_HISTORY = new Set(['segments', 'media']);
 const HISTORY_LIMIT = 100;
 const HISTORY_DEBOUNCE_MS = 350;
@@ -1499,6 +1555,7 @@ function historySnapshot() {
     keyframes: state.keyframes,
     sounds: state.sounds.map(stripFile),
     overlays: state.overlays.map(stripFile),
+    faceEffects: state.faceEffects,
   });
 }
 
@@ -1535,11 +1592,13 @@ function restoreSnapshot(snap) {
     const relink = (item) => ({ ...item, file: mediaFiles.get(item.id) || null });
     state.sounds = (data.sounds || []).map(relink);
     state.overlays = (data.overlays || []).map(relink);
+    state.faceEffects = data.faceEffects || [];
     state.sel = null;
     emit('selection');
     emit('segments');
     emit('layers');
     emit('keyframes');
+    emit('faceEffects');
     emit('settings'); // re-render sounds/overlays
   } finally {
     restoring = false;

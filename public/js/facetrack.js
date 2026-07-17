@@ -158,3 +158,127 @@ export async function trackSelectedFace(target, { onProgress } = {}) {
   await seekTo(video, resumeTime);
   return { ok: true, samples: out.length };
 }
+
+// --- pinned face effects (blur / cover) --------------------------------------
+// The crop-follow above only needs a horizontal path, so it throws away y and
+// height. Pinned effects need the FULL box over time, and at a denser rate than
+// the crop tune (which was smoothed for a gliding reframe). This scans the clip
+// following the picked face and returns a smoothed box path
+// [{ t, x, y, w, h }] — all normalized 0..1 (x,y = box CENTER; w,h = box size),
+// with misses HELD at the last known box so a briefly-lost face doesn't vanish.
+const PINNED_SAMPLE_STEP = 0.15; // denser than crop-follow (0.3) for pinned effects
+const PINNED_SMOOTH_RADIUS = 2;
+
+export async function trackFaceBoxes(target, { onProgress } = {}) {
+  const video = document.getElementById('preview-fg-video');
+  const duration = sourceDuration();
+  if (!video || !state.source || duration <= 0) return { ok: false, reason: 'no-clip' };
+  let faceapi;
+  try {
+    faceapi = await loadFaceApi();
+  } catch {
+    return { ok: false, reason: 'load-failed' };
+  }
+  const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 768, scoreThreshold: 0.2 });
+  pausePlayback();
+  const resumeTime = video.currentTime;
+  const srcW = state.source.width || video.videoWidth;
+  const srcH = state.source.height || video.videoHeight;
+
+  const raw = [];
+  const steps = Math.max(1, Math.floor(duration / PINNED_SAMPLE_STEP));
+  let lastX = target.x;
+  let lastY = target.y;
+  let lastW = null;
+  let lastH = null;
+  for (let i = 0; i <= steps; i++) {
+    const t = Math.min(duration - 0.01, i * PINNED_SAMPLE_STEP);
+    await seekTo(video, t);
+    const faces = await detectWithTimeout(faceapi, video, opts);
+    if (onProgress) onProgress((i + 1) / (steps + 1));
+    let best = null;
+    let bestDist = Infinity;
+    for (const f of faces) {
+      const cx = (f.box.x + f.box.width / 2) / srcW;
+      const cy = (f.box.y + f.box.height / 2) / srcH;
+      const d = (cx - lastX) ** 2 + (cy - lastY) ** 2;
+      if (d < bestDist) {
+        bestDist = d;
+        best = { x: cx, y: cy, w: f.box.width / srcW, h: f.box.height / srcH };
+      }
+    }
+    if (best) {
+      lastX = best.x;
+      lastY = best.y;
+      lastW = best.w;
+      lastH = best.h;
+      raw.push({ t, x: best.x, y: best.y, w: best.w, h: best.h, seen: true });
+    } else {
+      // Hold the last known box through a miss (the caller fades it out visually).
+      raw.push({ t, x: lastX, y: lastY, w: lastW, h: lastH, seen: false });
+    }
+  }
+
+  const seen = raw.filter((s) => s.seen && s.w != null);
+  if (seen.length === 0) {
+    await seekTo(video, resumeTime);
+    return { ok: false, reason: 'no-face' };
+  }
+  // Backfill any leading misses (before the first detection) with the first box.
+  const first = seen[0];
+  for (const s of raw) {
+    if (s.w == null) {
+      s.x = first.x;
+      s.y = first.y;
+      s.w = first.w;
+      s.h = first.h;
+    }
+  }
+
+  // Moving-average smooth each dimension so the pinned effect glides.
+  const avg = (i, key) => {
+    let sum = 0;
+    let n = 0;
+    for (let j = Math.max(0, i - PINNED_SMOOTH_RADIUS); j <= Math.min(raw.length - 1, i + PINNED_SMOOTH_RADIUS); j++) {
+      sum += raw[j][key];
+      n += 1;
+    }
+    return sum / n;
+  };
+  const samples = raw.map((s, i) => ({
+    t: s.t,
+    x: avg(i, 'x'),
+    y: avg(i, 'y'),
+    w: avg(i, 'w'),
+    h: avg(i, 'h'),
+    seen: s.seen,
+  }));
+
+  await seekTo(video, resumeTime);
+  return { ok: true, samples };
+}
+
+// Interpolate the smoothed box path at output-domain time `t` (source seconds),
+// with the SAME piecewise-linear interpolation the export expression uses, so
+// preview and render stay in lockstep. Returns { x, y, w, h, seen } or null.
+export function sampleFaceBoxAt(samples, t) {
+  if (!samples || !samples.length) return null;
+  if (t <= samples[0].t) return { ...samples[0] };
+  const last = samples[samples.length - 1];
+  if (t >= last.t) return { ...last };
+  for (let i = 0; i < samples.length - 1; i++) {
+    const a = samples[i];
+    const b = samples[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const u = (t - a.t) / (b.t - a.t || 1e-6);
+      return {
+        x: a.x + (b.x - a.x) * u,
+        y: a.y + (b.y - a.y) * u,
+        w: a.w + (b.w - a.w) * u,
+        h: a.h + (b.h - a.h) * u,
+        seen: a.seen && b.seen,
+      };
+    }
+  }
+  return { ...last };
+}

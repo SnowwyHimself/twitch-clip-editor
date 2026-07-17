@@ -3473,6 +3473,35 @@ img.preset-thumb {
   }
 }
 
+/* Face-tracked effects (blur / cover) in the preview ------------------------- */
+.face-effects {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.face-fx {
+  position: absolute;
+  transition: opacity 0.12s linear;
+}
+.face-fx-blur {
+  border-radius: 50%;
+  overflow: hidden;
+}
+.face-fx-cover {
+  display: grid;
+  place-items: center;
+}
+.face-fx-emoji {
+  line-height: 1;
+  user-select: none;
+}
+.face-fx-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 /* Send to Phone: pairing modal ------------------------------------------------ */
 .phone-qr-wrap {
   margin-top: var(--space-4);

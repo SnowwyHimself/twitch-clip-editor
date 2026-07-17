@@ -59,6 +59,10 @@ import {
   clearFaceTrack,
   restoreFaceTrack,
   faceTrackActive,
+  addFaceEffect,
+  selectedFaceEffect,
+  updateFaceEffect,
+  removeFaceEffect,
 } from './state.js';
 import {
   getCurrentTime,
@@ -68,7 +72,8 @@ import {
   cancelFaceSelect,
   isFaceSelecting,
 } from './preview.js';
-import { trackSelectedFace } from './facetrack.js';
+import { trackSelectedFace, trackFaceBoxes } from './facetrack.js';
+import { showToast } from './toast.js';
 import { confirmDialog } from './confirm.js';
 import { icon } from './icons.js';
 import { transcribe, fetchSfxPresets, fetchOverlayPresets, presetAsFile, libraryItemAsFile, libraryFileUrl, fetchLibraryUsage } from './api.js';
@@ -871,6 +876,57 @@ async function runFaceTrack() {
     // Only re-sync the toggle here — NOT the full renderFaceTrackUI — so the
     // success/error message set just above stays on screen.
     syncFaceTrackToggle();
+  }
+}
+
+// Tracked face effect (blur / cover): reuse the SAME face-selection UX as the
+// crop-follow, then scan for the full box path and create a face-effect layer.
+let facePerfWarned = false;
+async function runFaceEffect(kind) {
+  if (isFaceSelecting()) {
+    cancelFaceSelect();
+    return;
+  }
+  if (!state.source) {
+    setFaceStatus('Load a clip first.', true);
+    return;
+  }
+  if (!facePerfWarned) {
+    facePerfWarned = true;
+    showToast({ message: 'Tracked face effects add some time to each export.' });
+  }
+  const priorFaceTrack = { enabled: state.faceTrack.enabled, samples: state.faceTrack.samples.slice() };
+  clearFaceTrack(); // plain view so the tap maps cleanly to the footage
+  setFaceStatus(`Click the face to ${kind === 'blur' ? 'blur' : 'cover'} in the preview (Esc to cancel).`);
+  const target = await beginFaceSelect();
+  restoreFaceTrack(priorFaceTrack);
+  syncFaceTrackToggle();
+  if (!target) {
+    setFaceStatus('Cancelled.');
+    return;
+  }
+  setFaceStatus('Scanning the clip and locking onto that face…');
+  try {
+    const result = await trackFaceBoxes(target, {
+      onProgress: (p) => setFaceStatus(`Tracking that face… ${Math.round(p * 100)}%`),
+    });
+    if (!result.ok) {
+      setFaceStatus(
+        result.reason === 'no-face'
+          ? 'Couldn’t find a face there — try a clearer, more face-forward clip.'
+          : 'Couldn’t track that face — try again.',
+        true
+      );
+      return;
+    }
+    addFaceEffect({ kind, samples: result.samples, ...(kind === 'cover' ? { emoji: '😀' } : {}) });
+    setFaceStatus(
+      kind === 'blur'
+        ? 'Face blurred and tracking. Adjust strength/padding on the right.'
+        : 'Pinned to that face. Pick an emoji or image and adjust on the right.'
+    );
+  } catch (err) {
+    setFaceStatus(`Face tracking hit an error: ${(err && err.message) || 'unknown'}. Please try again.`, true);
   }
 }
 
@@ -2404,6 +2460,12 @@ export function runAddAction(kind) {
     case 'music':
       forceInspector('sound', 'Music');
       els.audioFile.click(); // music = bring your own audio
+      break;
+    case 'blur-face':
+      runFaceEffect('blur');
+      break;
+    case 'cover-face':
+      runFaceEffect('cover');
       break;
   }
 }
