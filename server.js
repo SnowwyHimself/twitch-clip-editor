@@ -743,8 +743,13 @@ function faceCenterExpr(samples, posKey, sizeKey, offset) {
 // position, only within [start,end]. Returns { chain, label }.
 function buildFaceBlurStage(fx, srcW, srcH, inLabel, idx) {
   const s = fx.samples;
-  const rw = evenInt(Math.max(16, Math.min(srcW, faceMedian(s, 'w') * srcW * (1 + fx.padding))));
-  const rh = evenInt(Math.max(16, Math.min(srcH, faceMedian(s, 'h') * srcH * (1 + fx.padding))));
+  // A CIRCLE sized to the face WIDTH (stable, face-sized) — not an ellipse of
+  // box.w×box.h, which stretches into a body-covering oval on tall frames.
+  const dia = evenInt(
+    Math.max(16, Math.min(Math.min(srcW, srcH), faceMedian(s, 'w') * srcW * (1.4 + fx.padding)))
+  );
+  const rw = dia;
+  const rh = dia;
   // Center tracks the face, nudged by offset*perFrameFaceSize (matches preview).
   const xExpr = faceCenterExpr(s, 'x', 'w', fx.offsetX);
   const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY);
@@ -775,7 +780,9 @@ function buildFaceBlurStage(fx, srcW, srcH, inLabel, idx) {
 function buildFaceCoverStage(fx, srcW, srcH, inLabel, idx) {
   if (!fx._imgPath) return { chain: '', label: inLabel };
   const s = fx.samples;
-  const sizePx = evenInt(Math.max(16, Math.max(faceMedian(s, 'w') * srcW, faceMedian(s, 'h') * srcH) * fx.scale));
+  // Size from the face WIDTH (stable) so the emoji sits face-sized, not oversized
+  // from a tall detection box.
+  const sizePx = evenInt(Math.max(16, faceMedian(s, 'w') * srcW * fx.scale));
   const xExpr = faceCenterExpr(s, 'x', 'w', fx.offsetX);
   const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY);
   const ox = `(${xExpr})*${srcW}-${sizePx / 2}`;

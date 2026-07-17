@@ -69,17 +69,17 @@ export function renderFaceEffectsPreview(sourceTime) {
     node.wrap.style.opacity = box.seen ? '1' : '0.55';
 
     if (fx.kind === 'blur') {
-      const w = Math.max(8, box.w * (1 + (fx.padding || 0)) * vr.width);
-      const h = Math.max(8, box.h * (1 + (fx.padding || 0)) * vr.height);
-      node.wrap.style.left = `${cx - w / 2}px`;
-      node.wrap.style.top = `${cy - h / 2}px`;
-      node.wrap.style.width = `${w}px`;
-      node.wrap.style.height = `${h}px`;
+      // Circle sized to the face WIDTH (matches export) — round, face-sized.
+      const dia = Math.max(8, box.w * (1.4 + (fx.padding || 0)) * vr.width);
+      node.wrap.style.left = `${cx - dia / 2}px`;
+      node.wrap.style.top = `${cy - dia / 2}px`;
+      node.wrap.style.width = `${dia}px`;
+      node.wrap.style.height = `${dia}px`;
       const px = 2 + (fx.strength || 0.5) * 30;
       node.wrap.style.backdropFilter = `blur(${px}px)`;
       node.wrap.style.webkitBackdropFilter = `blur(${px}px)`;
     } else {
-      const size = Math.max(box.w * vr.width, box.h * vr.height) * (fx.scale || 1.4);
+      const size = box.w * vr.width * (fx.scale || 1.4);
       node.wrap.style.left = `${cx - size / 2}px`;
       node.wrap.style.top = `${cy - size / 2}px`;
       node.wrap.style.width = `${size}px`;
