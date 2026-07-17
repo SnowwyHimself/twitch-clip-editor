@@ -115,6 +115,7 @@ function lookupElements() {
       overlay: byId('insp-overlay'),
       sound: byId('insp-sound'),
       transition: byId('insp-transition'),
+      face: byId('insp-face'),
       multi: byId('insp-multi'),
     },
     inspectorTitle: byId('inspector-title'),
@@ -401,6 +402,11 @@ function routeSelection() {
     setInspectorHeader('Transition');
     showInspector('transition');
     refreshTransitionInspector();
+  } else if (kind === 'faceEffect') {
+    const fx = selectedFaceEffect();
+    setInspectorHeader(fx && fx.kind === 'blur' ? 'Blur face' : 'Cover face');
+    showInspector('face');
+    refreshFaceEffectPanel();
   } else {
     mountPresetSlot('project');
     mountBgBlurSlot('project');
@@ -928,6 +934,66 @@ async function runFaceEffect(kind) {
   } catch (err) {
     setFaceStatus(`Face tracking hit an error: ${(err && err.message) || 'unknown'}. Please try again.`, true);
   }
+}
+
+const FACE_EMOJIS = ['😀', '😎', '🙈', '🤡', '👻', '🔥', '⭐', '❤️', '💀', '🤖', '🐸', '🎭'];
+function refreshFaceEffectPanel() {
+  const fx = selectedFaceEffect();
+  if (!fx) return;
+  const isBlur = fx.kind === 'blur';
+  document.getElementById('face-fx-blur-controls').classList.toggle('hidden', !isBlur);
+  document.getElementById('face-fx-cover-controls').classList.toggle('hidden', isBlur);
+  document.getElementById('face-fx-kind-label').textContent = isBlur ? 'Blur' : 'Cover';
+  if (isBlur) {
+    document.getElementById('face-fx-strength').value = fx.strength;
+    document.getElementById('face-fx-strength-val').textContent = `${Math.round(fx.strength * 100)}%`;
+    document.getElementById('face-fx-padding').value = fx.padding;
+    document.getElementById('face-fx-padding-val').textContent = `${Math.round(fx.padding * 100)}%`;
+  } else {
+    document.getElementById('face-fx-scale').value = fx.scale;
+    document.getElementById('face-fx-scale-val').textContent = `${(+fx.scale).toFixed(1)}×`;
+    document.getElementById('face-fx-rotation').value = fx.rotation;
+    document.getElementById('face-fx-rotation-val').textContent = `${fx.rotation}°`;
+    const row = document.getElementById('face-fx-emoji-row');
+    row.innerHTML = '';
+    for (const e of FACE_EMOJIS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `face-fx-emoji-opt${fx.emoji === e && !fx.imageUrl ? ' active' : ''}`;
+      b.textContent = e;
+      b.addEventListener('click', () => {
+        updateFaceEffect(fx.id, { emoji: e, imageUrl: null, imageId: null });
+        refreshFaceEffectPanel();
+      });
+      row.appendChild(b);
+    }
+  }
+}
+
+function wireFaceEffectControls() {
+  const bind = (id, valId, fmt, key, scale = 1) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const fx = selectedFaceEffect();
+      if (!fx) return;
+      const v = parseFloat(el.value) * scale;
+      updateFaceEffect(fx.id, { [key]: v }, { history: false });
+      if (valId) document.getElementById(valId).textContent = fmt(parseFloat(el.value));
+    });
+    el.addEventListener('change', () => {
+      const fx = selectedFaceEffect();
+      if (fx) updateFaceEffect(fx.id, { [key]: parseFloat(el.value) * scale });
+    });
+  };
+  bind('face-fx-strength', 'face-fx-strength-val', (v) => `${Math.round(v * 100)}%`, 'strength');
+  bind('face-fx-padding', 'face-fx-padding-val', (v) => `${Math.round(v * 100)}%`, 'padding');
+  bind('face-fx-scale', 'face-fx-scale-val', (v) => `${v.toFixed(1)}×`, 'scale');
+  bind('face-fx-rotation', 'face-fx-rotation-val', (v) => `${Math.round(v)}°`, 'rotation');
+  const del = document.getElementById('face-fx-delete');
+  if (del) del.addEventListener('click', () => { const fx = selectedFaceEffect(); if (fx) removeFaceEffect(fx.id); });
+  const imgBtn = document.getElementById('face-fx-image-btn');
+  if (imgBtn) imgBtn.addEventListener('click', () => els.overlayFile && els.overlayFile.click());
 }
 
 // Reflects the current face-track state in the toggle + status line. Called on
@@ -2328,6 +2394,11 @@ export function initPanel() {
 
   wireAddMenu();
   wireDisclosure();
+  wireFaceEffectControls();
+  // Keep the face-effect inspector current as its controls / selection change.
+  on('faceEffects', () => {
+    if (state.sel && state.sel.kind === 'faceEffect') refreshFaceEffectPanel();
+  });
   els.inspectorOverflow.addEventListener('click', () => {
     const r = els.inspectorOverflow.getBoundingClientRect();
     openStyleMenu(r.right, r.bottom + 4);

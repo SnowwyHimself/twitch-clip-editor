@@ -842,6 +842,11 @@ let faceEffectCounter = 0;
 export function selectedFaceEffect() {
   return state.sel && state.sel.kind === 'faceEffect' ? state.faceEffects.find((f) => f.id === state.sel.id) || null : null;
 }
+export function selectFaceEffect(id) {
+  state.sel = { kind: 'faceEffect', id };
+  state.selPieces = [];
+  emit('selection');
+}
 export function addFaceEffect(effect, { select = true } = {}) {
   const dur = sourceDuration();
   const fx = {

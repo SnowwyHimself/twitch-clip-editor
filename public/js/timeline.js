@@ -66,6 +66,7 @@ import {
   setAudio,
   MIN_SEGMENT_SECONDS,
   MIN_LAYER_SECONDS,
+  selectFaceEffect,
 } from './state.js';
 import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './preview.js';
 import { getPeaks, drawWaveform } from './waveform.js';
@@ -128,11 +129,14 @@ const tlBody = document.getElementById('tl-body');
 const tlScroll = document.getElementById('tl-scroll'); // the horizontal scroller
 const tlTracks = document.getElementById('tl-tracks'); // width-controlled tracks pane
 // Each track row's gutter label (they toggle .hidden together with the row).
+const faceRow = document.getElementById('tl-face-row');
+const faceBarEls = new Map();
 const rowLabels = {
   'tl-overlay-row': document.getElementById('tl-lbl-overlay'),
   'tl-captions-row': document.getElementById('tl-lbl-captions'),
   'tl-text-row': document.getElementById('tl-lbl-text'),
   'tl-sound-row': document.getElementById('tl-lbl-sound'),
+  'tl-face-row': document.getElementById('tl-lbl-face'),
 };
 
 // Selectable elements on the timeline — a pointerdown anywhere that ISN'T one
@@ -1132,6 +1136,33 @@ function renderOverlayRow() {
   layoutOverlayBars();
 }
 
+function layoutFaceBars() {
+  for (const fx of state.faceEffects) {
+    const el = faceBarEls.get(fx.id);
+    if (el) layoutClipBar(el, fx);
+  }
+}
+
+function renderFaceRow() {
+  faceRow.innerHTML = '';
+  faceBarEls.clear();
+  const show = sourceDuration() > 0 && state.faceEffects.length > 0;
+  setRowVisible(faceRow, show);
+  if (!show) return;
+  for (const fx of state.faceEffects) {
+    const bar = buildClipBar(fx, 'tl-face-bar', fx.kind === 'blur' ? 'Blur' : 'Cover', {
+      icon: fx.kind === 'blur' ? 'face' : 'smile',
+      selected: () => isSelected('faceEffect', fx.id),
+      onSelect: () => selectFaceEffect(fx.id),
+      emitEvent: 'faceEffects',
+      relayout: layoutFaceBars,
+    });
+    faceBarEls.set(fx.id, bar);
+    faceRow.appendChild(bar);
+  }
+  layoutFaceBars();
+}
+
 // --- playhead / scrubbing ---------------------------------------------------------
 
 function updatePlayhead() {
@@ -1172,6 +1203,7 @@ function renderAll() {
   renderOverlayRow();
   renderLayerRows();
   renderSoundRow();
+  renderFaceRow();
   refreshToolbar();
   updatePlayhead();
 }
@@ -1223,6 +1255,7 @@ export function initTimeline() {
   on('segments', renderAll);
   on('layers', renderAll);
   on('keyframes', renderKeyframeRow);
+  on('faceEffects', renderFaceRow);
   on('settings', () => {
     renderSoundRow();
     renderOverlayRow();
@@ -1233,6 +1266,7 @@ export function initTimeline() {
     renderLayerRows();
     renderSoundRow();
     renderOverlayRow();
+    renderFaceRow();
     refreshToolbar();
   });
   on('time', updatePlayhead);

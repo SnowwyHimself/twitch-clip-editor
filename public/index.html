@@ -428,6 +428,42 @@
         </div>
       </div>
 
+      <!-- ===== Face-tracked effect inspector (blur / cover) ===== -->
+      <div id="insp-face" class="inspector hidden">
+        <div class="insp-sec" id="face-fx-kind-label">Face effect</div>
+        <!-- Blur controls -->
+        <div id="face-fx-blur-controls" class="hidden">
+          <div class="field-group">
+            <label class="field-label" for="face-fx-strength">Blur strength <span id="face-fx-strength-val">50%</span></label>
+            <input id="face-fx-strength" type="range" min="0" max="1" step="0.01" value="0.5" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="face-fx-padding">Region size <span id="face-fx-padding-val">20%</span></label>
+            <input id="face-fx-padding" type="range" min="0" max="1" step="0.01" value="0.2" />
+          </div>
+        </div>
+        <!-- Cover controls -->
+        <div id="face-fx-cover-controls" class="hidden">
+          <div class="field-group">
+            <label class="field-label">Emoji</label>
+            <div id="face-fx-emoji-row" class="face-fx-emoji-row"></div>
+            <button type="button" id="face-fx-image-btn" class="link-btn">Use an image from your library instead…</button>
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="face-fx-scale">Size <span id="face-fx-scale-val">1.4×</span></label>
+            <input id="face-fx-scale" type="range" min="0.4" max="3" step="0.05" value="1.4" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="face-fx-rotation">Rotation <span id="face-fx-rotation-val">0°</span></label>
+            <input id="face-fx-rotation" type="range" min="-45" max="45" step="1" value="0" />
+          </div>
+        </div>
+        <div class="field-group">
+          <button type="button" id="face-fx-delete" class="danger-btn full-width">Remove effect</button>
+          <p class="field-hint">Tracks the face you picked and follows it. Renders the same in the preview and the export.</p>
+        </div>
+      </div>
+
       <!-- ===== Multi-select inspector (mixed-type selection) ===== -->
       <div id="insp-multi" class="inspector hidden">
         <div class="insp-sec">Selection</div>
@@ -788,6 +824,7 @@
         <div class="tl-label hidden" id="tl-lbl-captions">Captions</div>
         <div class="tl-label hidden" id="tl-lbl-text">Text</div>
         <div class="tl-label hidden" id="tl-lbl-sound">Sound</div>
+        <div class="tl-label hidden" id="tl-lbl-face">Faces</div>
       </div>
       <!-- Scrollable tracks pane: clips its own content (overflow-x), so nothing
            ever paints left of its own x=0. This pane's left edge is THE single
@@ -802,6 +839,7 @@
           <div id="tl-captions-row" class="tl-type-row hidden"></div>
           <div id="tl-text-row" class="tl-type-row hidden"></div>
           <div id="tl-sound-row" class="tl-type-row hidden"></div>
+          <div id="tl-face-row" class="tl-type-row hidden"></div>
           <div id="tl-playhead" class="tl-playhead hidden"></div>
         </div>
       </div>

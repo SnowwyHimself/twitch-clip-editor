@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const os = require('os');
 const https = require('https');
 const { spawn } = require('child_process');
-const { renderCaptionPng, resolveFontPath, getFontOptions, isValidFontBuffer } = require('./caption');
+const { renderCaptionPng, resolveFontPath, getFontOptions, isValidFontBuffer, getEmojiPngBase64 } = require('./caption');
 const {
   transcribeSource,
   checkWhisperSetup,
@@ -754,22 +754,72 @@ function buildFaceBlurStage(fx, srcW, srcH, inLabel, idx) {
   return { chain, label: out };
 }
 
-// Chain all BLUR effects onto the source (cover effects need image inputs and
-// are added in the input-setup path). Returns { chain, label } — label is the
-// stream to use as the primary source downstream.
-function buildFaceBlurPrefix(faceEffects, srcW, srcH, inLabel) {
+// One COVER effect: load the emoji/image with the `movie` source filter (no -i
+// input needed), scale it to the face size (median box * scale), optional
+// rotation, and overlay it at the moving, expression-driven face position,
+// only within [start,end]. fx._imgPath is a server-resolved file (see
+// prepareCoverImages). Returns { chain, label }.
+function buildFaceCoverStage(fx, srcW, srcH, inLabel, idx) {
+  if (!fx._imgPath) return { chain: '', label: inLabel };
+  const s = fx.samples;
+  const sizePx = evenInt(Math.max(16, Math.max(faceMedian(s, 'w') * srcW, faceMedian(s, 'h') * srcH) * fx.scale));
+  const xExpr = buildFaceExpr(s, 'x');
+  const yExpr = buildFaceExpr(s, 'y');
+  const ox = `(${xExpr})*${srcW}-${sizePx / 2}`;
+  const oy = `(${yExpr})*${srcH}-${sizePx / 2}`;
+  const between = `between(t\\,${fx.start.toFixed(3)}\\,${fx.end.toFixed(3)})`;
+  const rot = fx.rotation ? `,rotate=${((fx.rotation * Math.PI) / 180).toFixed(4)}:c=none` : '';
+  const img = `[fcoi${idx}]`;
+  const out = `[fc${idx}]`;
+  const chain =
+    `movie=${fx._imgPath},format=rgba,scale=${sizePx}:${sizePx}${rot}${img};` +
+    `${inLabel}${img}overlay=x='${ox}':y='${oy}':enable='${between}':eval=frame${out};`;
+  return { chain, label: out };
+}
+
+// Chain all face effects (blur + cover) onto the source. Returns { chain, label }
+// where label is the effected stream to use as the primary source downstream.
+function buildFaceEffectsPrefix(faceEffects, srcW, srcH, inLabel) {
   let chain = '';
   let label = inLabel;
   let i = 0;
   for (const fx of faceEffects) {
-    if (fx.kind === 'blur' && fx.samples.length) {
-      const st = buildFaceBlurStage(fx, srcW, srcH, label, i);
+    let st = null;
+    if (fx.kind === 'blur' && fx.samples.length) st = buildFaceBlurStage(fx, srcW, srcH, label, i);
+    else if (fx.kind === 'cover' && fx.samples.length && fx._imgPath) st = buildFaceCoverStage(fx, srcW, srcH, label, i);
+    if (st) {
       chain += st.chain;
       label = st.label;
     }
     i += 1;
   }
   return { chain, label };
+}
+
+// Resolve each COVER effect's emoji to a temp PNG (Twemoji, via caption.js) so
+// the `movie` filter can load it. Sets fx._imgPath. Returns temp paths to clean
+// up. (Library-image cover would need the image uploaded — emoji is v1.)
+function prepareCoverImages(faceEffects, jobId) {
+  const temp = [];
+  let i = 0;
+  for (const fx of faceEffects) {
+    if (fx.kind !== 'cover') continue;
+    if (fx.emoji) {
+      try {
+        const b64 = getEmojiPngBase64(fx.emoji);
+        if (b64) {
+          const p = path.join(DOWNLOADS_DIR, `${jobId}-cover-${i}.png`);
+          fs.writeFileSync(p, Buffer.from(b64, 'base64'));
+          fx._imgPath = p;
+          temp.push(p);
+        }
+      } catch {
+        /* leave _imgPath unset — the cover is skipped */
+      }
+    }
+    i += 1;
+  }
+  return temp;
 }
 
 // Piecewise-linear interpolation of a face-track property over output time
@@ -1279,13 +1329,15 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   // whole-clip render (no cuts, no appended clips, no transform-owning mode).
   // The multi-piece concat path consumes [0:v] multiple times, so it's the
   // constraint (see the report / SECURITY note).
-  const blurEffects = (Array.isArray(faceEffects) ? faceEffects : []).filter((f) => f.kind === 'blur' && f.samples && f.samples.length);
+  const fxEffects = (Array.isArray(faceEffects) ? faceEffects : []).filter(
+    (f) => (f.kind === 'blur' || (f.kind === 'cover' && f._imgPath)) && f.samples && f.samples.length
+  );
   // Whole clip (noTrim) OR a single kept range (singleRange) both keep [0:v] as a
   // single, un-segmented consumer. singleRange input-trims via -ss, so the source
   // time is shifted by the trim start — subtract it so the sample expressions line
   // up with the filter clock.
   const faceEffectsActive =
-    blurEffects.length > 0 &&
+    fxEffects.length > 0 &&
     (noTrim || singleRange) &&
     !hasAppended &&
     !split &&
@@ -1480,13 +1532,13 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
   let faceEffectPrefix = '';
   if (faceEffectsActive) {
     // Shift sample/segment times into the (possibly input-trimmed) filter clock.
-    const shifted = blurEffects.map((fx) => ({
+    const shifted = fxEffects.map((fx) => ({
       ...fx,
       samples: fx.samples.map((s) => ({ ...s, t: s.t - fxTimeOffset })),
       start: Math.max(0, fx.start - fxTimeOffset),
       end: fx.end - fxTimeOffset,
     }));
-    const pre = buildFaceBlurPrefix(shifted, mediaInfo.width, mediaInfo.height, sourceVideoLabel);
+    const pre = buildFaceEffectsPrefix(shifted, mediaInfo.width, mediaInfo.height, sourceVideoLabel);
     faceEffectPrefix = pre.chain;
     sourceVideoLabel = pre.label;
   }
@@ -2176,6 +2228,7 @@ async function resolveAppendedClips(appendedClips) {
 
 async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, faceEffects) {
   let captionOverlays = [];
+  let coverTempFiles = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
     const outputPath = path.join(OUTPUTS_DIR, `${jobId}.mp4`);
@@ -2205,6 +2258,8 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     const appended = await resolveAppendedClips(appendedClips);
 
     captionOverlays = buildCaptionOverlays(jobId, textLayers, canvasW, canvasH);
+    // Emoji PNGs for any cover face-effects (loaded via the `movie` filter).
+    coverTempFiles = prepareCoverImages(Array.isArray(faceEffects) ? faceEffects : [], jobId);
 
     // Expected output length: the full output span — pieces plus any
     // free-form black gaps (max of outStart+len, not just the kept sum) —
@@ -2277,6 +2332,9 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     // in README.md).
     for (const cap of captionOverlays) {
       fs.unlink(cap.pngPath, () => {});
+    }
+    for (const p of coverTempFiles) {
+      fs.unlink(p, () => {});
     }
   }
 }
