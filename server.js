@@ -685,6 +685,93 @@ function buildKeyframeZoompan(canvasW, canvasH, keyframes, fps) {
   return `zoompan=z='${zExpr}':x='${x}':y='${y}':d=1:s=${canvasW}x${canvasH}:fps=${fps}`;
 }
 
+// --- face-tracked effects (blur / cover) -------------------------------------
+// Parse+clamp the faceEffects payload. Samples are SOURCE-time normalized boxes;
+// applied to the RAW source stream (before trim/reframe) so they bake in and
+// ride the reframe just like the preview positions them over the source.
+function buildFaceEffects(body) {
+  let raw = body.faceEffects;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  const num = (v, d) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d);
+  return raw
+    .map((fx) => ({
+      kind: fx && fx.kind === 'cover' ? 'cover' : 'blur',
+      samples: Array.isArray(fx && fx.samples)
+        ? fx.samples
+            .map((s) => ({ t: num(s.t, 0), x: num(s.x, 0.5), y: num(s.y, 0.5), w: num(s.w, 0.1), h: num(s.h, 0.1) }))
+            .filter((s) => Number.isFinite(s.t))
+        : [],
+      start: Math.max(0, num(fx && fx.start, 0)),
+      end: Math.max(0, num(fx && fx.end, 0)),
+      strength: Math.max(0, Math.min(1, num(fx && fx.strength, 0.5))),
+      padding: Math.max(0, Math.min(1, num(fx && fx.padding, 0.2))),
+      emoji: fx && typeof fx.emoji === 'string' ? fx.emoji : null,
+      imageUrl: fx && typeof fx.imageUrl === 'string' ? fx.imageUrl : null,
+      scale: Math.max(0.2, Math.min(4, num(fx && fx.scale, 1.4))),
+      rotation: Math.max(-180, Math.min(180, num(fx && fx.rotation, 0))),
+    }))
+    .filter((fx) => fx.samples.length > 0);
+}
+
+function faceMedian(samples, key) {
+  const arr = samples.map((s) => s[key]).sort((a, b) => a - b);
+  return arr[Math.floor(arr.length / 2)] || arr[0] || 0.1;
+}
+
+// One BLUR effect chained onto the source: split, crop a fixed region that
+// tracks the face (crop x/y are per-frame t-expressions), gaussian-blur it, cut
+// it to a soft ellipse (geq alpha), and overlay it back at the same moving
+// position, only within [start,end]. Returns { chain, label }.
+function buildFaceBlurStage(fx, srcW, srcH, inLabel, idx) {
+  const s = fx.samples;
+  const rw = evenInt(Math.max(16, Math.min(srcW, faceMedian(s, 'w') * srcW * (1 + fx.padding))));
+  const rh = evenInt(Math.max(16, Math.min(srcH, faceMedian(s, 'h') * srcH * (1 + fx.padding))));
+  const xExpr = buildFaceExpr(s, 'x');
+  const yExpr = buildFaceExpr(s, 'y');
+  const cx = `clip((${xExpr})*${srcW}-${rw / 2}\\,0\\,${srcW - rw})`;
+  const cy = `clip((${yExpr})*${srcH}-${rh / 2}\\,0\\,${srcH - rh})`;
+  const sigma = (2 + fx.strength * 30).toFixed(1);
+  const rx = (rw / 2 - 1).toFixed(1);
+  const ry = (rh / 2 - 1).toFixed(1);
+  const between = `between(t\\,${fx.start.toFixed(3)}\\,${fx.end.toFixed(3)})`;
+  const base = `[feb${idx}base]`;
+  const src = `[feb${idx}src]`;
+  const patch = `[feb${idx}patch]`;
+  const out = `[fe${idx}]`;
+  const alpha = `255*(1-clip((pow((X-${rw / 2})/${rx}\\,2)+pow((Y-${rh / 2})/${ry}\\,2))-0.72\\,0\\,0.28)/0.28)`;
+  const chain =
+    `${inLabel}split${base}${src};` +
+    `${src}crop=${rw}:${rh}:x='${cx}':y='${cy}':exact=1,gblur=sigma=${sigma},format=rgba,` +
+    `geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='${alpha}'${patch};` +
+    `${base}${patch}overlay=x='${cx}':y='${cy}':enable='${between}':eval=frame${out};`;
+  return { chain, label: out };
+}
+
+// Chain all BLUR effects onto the source (cover effects need image inputs and
+// are added in the input-setup path). Returns { chain, label } — label is the
+// stream to use as the primary source downstream.
+function buildFaceBlurPrefix(faceEffects, srcW, srcH, inLabel) {
+  let chain = '';
+  let label = inLabel;
+  let i = 0;
+  for (const fx of faceEffects) {
+    if (fx.kind === 'blur' && fx.samples.length) {
+      const st = buildFaceBlurStage(fx, srcW, srcH, label, i);
+      chain += st.chain;
+      label = st.label;
+    }
+    i += 1;
+  }
+  return { chain, label };
+}
+
 // Piecewise-linear interpolation of a face-track property over output time
 // (crop's x expression is evaluated per frame with variable `t`).
 function buildFaceExpr(samples, prop) {
@@ -1169,7 +1256,7 @@ function buildStitchedFilter(segments, transitions, hasAudio, W, H, fps, appende
   return { chain, videoLabel: '[segv]', audioLabel: hasAudio ? '[sega]' : null };
 }
 
-async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress, onChild) {
+async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, faceEffects, onProgress, onChild) {
   const hasAppended = Array.isArray(appended) && appended.length > 0;
   // No trim info at all (null — no preview was ever loaded, so nothing
   // was sent) behaves exactly like this feature never existed: no -ss/-t,
@@ -1187,6 +1274,24 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     segments.length === 1 &&
     segments[0].outStart <= 0.01 &&
     (!transitions || transitions.length === 0);
+  // Face BLUR effects bake into the RAW source in source-time, so they need the
+  // source consumed exactly once and NOT input-side trimmed. Supported on the
+  // whole-clip render (no cuts, no appended clips, no transform-owning mode).
+  // The multi-piece concat path consumes [0:v] multiple times, so it's the
+  // constraint (see the report / SECURITY note).
+  const blurEffects = (Array.isArray(faceEffects) ? faceEffects : []).filter((f) => f.kind === 'blur' && f.samples && f.samples.length);
+  // Whole clip (noTrim) OR a single kept range (singleRange) both keep [0:v] as a
+  // single, un-segmented consumer. singleRange input-trims via -ss, so the source
+  // time is shifted by the trim start — subtract it so the sample expressions line
+  // up with the filter clock.
+  const faceEffectsActive =
+    blurEffects.length > 0 &&
+    (noTrim || singleRange) &&
+    !hasAppended &&
+    !split &&
+    !(Array.isArray(keyframes) && keyframes.length >= 1) &&
+    !(Array.isArray(faceTrack) && faceTrack.length >= 1);
+  const fxTimeOffset = singleRange && segments[0] ? segments[0].start || 0 : 0;
   // Per-piece render (B6): when the segment-concat path runs and no global
   // transform mode is active (keyframes / face-track / split each own the whole
   // composite), composite each piece to a canvas-sized fill.
@@ -1370,7 +1475,24 @@ async function runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, pa
     sourceAudioLabel = built.audioLabel;
   }
 
+  // Prepend face-blur stages (source-time), repointing the primary source label
+  // at the last stage's output so the composite reads the blurred source.
+  let faceEffectPrefix = '';
+  if (faceEffectsActive) {
+    // Shift sample/segment times into the (possibly input-trimmed) filter clock.
+    const shifted = blurEffects.map((fx) => ({
+      ...fx,
+      samples: fx.samples.map((s) => ({ ...s, t: s.t - fxTimeOffset })),
+      start: Math.max(0, fx.start - fxTimeOffset),
+      end: fx.end - fxTimeOffset,
+    }));
+    const pre = buildFaceBlurPrefix(shifted, mediaInfo.width, mediaInfo.height, sourceVideoLabel);
+    faceEffectPrefix = pre.chain;
+    sourceVideoLabel = pre.label;
+  }
+
   let filterComplex =
+    faceEffectPrefix +
     segmentPrefix +
     buildFilterComplex(canvasW, canvasH, zoom, blur, panX, panY, overlayStages, mirror, speed, sourceVideoLabel, keyframes, Math.max(1, (mediaInfo.fps || 30) * speed), faceTrack, split, mediaInfo.width, mediaInfo.height, color, crop, perPiece);
 
@@ -2052,7 +2174,7 @@ async function resolveAppendedClips(appendedClips) {
   return out;
 }
 
-async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts) {
+async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, faceEffects) {
   let captionOverlays = [];
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
@@ -2127,7 +2249,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
       if (cancelledJobs.has(jobId)) child.kill('SIGKILL');
     };
 
-    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, onProgress, onChild);
+    await runFfmpeg(inputPath, outputPath, canvasW, canvasH, zoom, blur, panX, panY, captionOverlays, mediaOverlays, audioOverlays, mirror, speed, mediaInfo.hasAudio, segments, transitions, mediaInfo, keyframes, faceTrack, split, mainAudio, appended, color, crop, exportOpts, faceEffects, onProgress, onChild);
     let outputBytes;
     try {
       outputBytes = fs.statSync(outputPath).size;
@@ -2159,7 +2281,7 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   }
 }
 
-async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, range) {
+async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, range, faceEffects) {
   try {
     setJob(jobId, { status: 'downloading' });
     // If the user already fetched a live preview for this exact URL + section,
@@ -2167,7 +2289,7 @@ async function downloadAndProcess(jobId, url, aspectRatio, zoom, blur, panX, pan
     // download the same section so the export matches what the preview showed.
     const cachedPath = findFileWithPrefix(PREVIEW_CACHE_DIR, previewCacheKey(url, range));
     const inputPath = cachedPath || (await downloadWithYtDlp(url, jobId, range));
-    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts);
+    await processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY, textLayers, mirror, speed, segments, transitions, mediaOverlays, audioOverlays, keyframes, faceTrack, split, mainAudio, appendedClips, color, crop, exportOpts, faceEffects);
   } catch (err) {
     if (cancelledJobs.has(jobId)) {
       setJob(jobId, { status: 'cancelled' });
@@ -2446,7 +2568,8 @@ app.post('/api/process-url', (req, res, next) => { req.jobId = crypto.randomUUID
     buildColor(req.body || {}),
     buildCrop(req.body || {}),
     buildExportOpts(req.body || {}),
-    parseImportRange(req.body && req.body.range)
+    parseImportRange(req.body && req.body.range),
+    buildFaceEffects(req.body || {})
   );
 });
 
@@ -2487,7 +2610,8 @@ app.post(
       buildAppendedClips(req.body, req.files.appendedVideo),
       buildColor(req.body),
       buildCrop(req.body),
-      buildExportOpts(req.body)
+      buildExportOpts(req.body),
+      buildFaceEffects(req.body)
     );
   }
 );
