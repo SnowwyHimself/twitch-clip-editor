@@ -712,6 +712,8 @@ function buildFaceEffects(body) {
       end: Math.max(0, num(fx && fx.end, 0)),
       strength: Math.max(0, Math.min(1, num(fx && fx.strength, 0.5))),
       padding: Math.max(0, Math.min(1, num(fx && fx.padding, 0.2))),
+      offsetX: Math.max(-1, Math.min(1, num(fx && fx.offsetX, 0))),
+      offsetY: Math.max(-1, Math.min(1, num(fx && fx.offsetY, 0))),
       emoji: fx && typeof fx.emoji === 'string' ? fx.emoji : null,
       imageUrl: fx && typeof fx.imageUrl === 'string' ? fx.imageUrl : null,
       scale: Math.max(0.2, Math.min(4, num(fx && fx.scale, 1.4))),
@@ -725,6 +727,16 @@ function faceMedian(samples, key) {
   return arr[Math.floor(arr.length / 2)] || arr[0] || 0.1;
 }
 
+// Per-frame face center along one axis, nudged by offset*perFrameFaceSize. The
+// offset scales with the face box (same as the preview) so a nudge that catches
+// the forehead stays put as the face moves nearer/farther. offset in [-1,1].
+function faceCenterExpr(samples, posKey, sizeKey, offset) {
+  const pos = buildFaceExpr(samples, posKey);
+  if (!offset) return pos;
+  const size = buildFaceExpr(samples, sizeKey);
+  return `(${pos})+(${offset})*(${size})`;
+}
+
 // One BLUR effect chained onto the source: split, crop a fixed region that
 // tracks the face (crop x/y are per-frame t-expressions), gaussian-blur it, cut
 // it to a soft ellipse (geq alpha), and overlay it back at the same moving
@@ -733,8 +745,9 @@ function buildFaceBlurStage(fx, srcW, srcH, inLabel, idx) {
   const s = fx.samples;
   const rw = evenInt(Math.max(16, Math.min(srcW, faceMedian(s, 'w') * srcW * (1 + fx.padding))));
   const rh = evenInt(Math.max(16, Math.min(srcH, faceMedian(s, 'h') * srcH * (1 + fx.padding))));
-  const xExpr = buildFaceExpr(s, 'x');
-  const yExpr = buildFaceExpr(s, 'y');
+  // Center tracks the face, nudged by offset*perFrameFaceSize (matches preview).
+  const xExpr = faceCenterExpr(s, 'x', 'w', fx.offsetX);
+  const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY);
   const cx = `clip((${xExpr})*${srcW}-${rw / 2}\\,0\\,${srcW - rw})`;
   const cy = `clip((${yExpr})*${srcH}-${rh / 2}\\,0\\,${srcH - rh})`;
   const sigma = (2 + fx.strength * 30).toFixed(1);
@@ -763,8 +776,8 @@ function buildFaceCoverStage(fx, srcW, srcH, inLabel, idx) {
   if (!fx._imgPath) return { chain: '', label: inLabel };
   const s = fx.samples;
   const sizePx = evenInt(Math.max(16, Math.max(faceMedian(s, 'w') * srcW, faceMedian(s, 'h') * srcH) * fx.scale));
-  const xExpr = buildFaceExpr(s, 'x');
-  const yExpr = buildFaceExpr(s, 'y');
+  const xExpr = faceCenterExpr(s, 'x', 'w', fx.offsetX);
+  const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY);
   const ox = `(${xExpr})*${srcW}-${sizePx / 2}`;
   const oy = `(${yExpr})*${srcH}-${sizePx / 2}`;
   const between = `between(t\\,${fx.start.toFixed(3)}\\,${fx.end.toFixed(3)})`;

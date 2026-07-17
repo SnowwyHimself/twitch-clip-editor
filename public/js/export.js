@@ -189,6 +189,8 @@ function buildFormData(opts) {
           end: Number((fx.end || 0).toFixed(3)),
           strength: fx.strength,
           padding: fx.padding,
+          offsetX: fx.offsetX || 0,
+          offsetY: fx.offsetY || 0,
           emoji: fx.emoji || null,
           imageUrl: fx.imageUrl || null,
           scale: fx.scale,

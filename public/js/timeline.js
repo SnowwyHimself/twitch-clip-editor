@@ -130,13 +130,14 @@ const tlScroll = document.getElementById('tl-scroll'); // the horizontal scrolle
 const tlTracks = document.getElementById('tl-tracks'); // width-controlled tracks pane
 // Each track row's gutter label (they toggle .hidden together with the row).
 const faceRow = document.getElementById('tl-face-row');
+const faceGutter = document.getElementById('tl-lbl-face');
 const faceBarEls = new Map();
+let faceGroupCollapsed = false;
 const rowLabels = {
   'tl-overlay-row': document.getElementById('tl-lbl-overlay'),
   'tl-captions-row': document.getElementById('tl-lbl-captions'),
   'tl-text-row': document.getElementById('tl-lbl-text'),
   'tl-sound-row': document.getElementById('tl-lbl-sound'),
-  'tl-face-row': document.getElementById('tl-lbl-face'),
 };
 
 // Selectable elements on the timeline — a pointerdown anywhere that ISN'T one
@@ -1136,29 +1137,95 @@ function renderOverlayRow() {
   layoutOverlayBars();
 }
 
+// The Facial-tracking items shown in the Faces group: the single reframe
+// (whole-clip) if one is tracked, then each blur/cover effect. reframe is a
+// pseudo-item with id 'reframe' spanning the clip.
+function faceItems() {
+  const items = [];
+  if (state.faceTrack && state.faceTrack.samples && state.faceTrack.samples.length > 0) {
+    items.push({ id: 'reframe', kind: 'reframe', start: 0, end: sourceDuration() });
+  }
+  for (const fx of state.faceEffects) items.push(fx);
+  return items;
+}
+
+function faceItemLabel(it) {
+  return it.kind === 'reframe' ? 'Reframe' : it.kind === 'blur' ? 'Blur' : 'Cover';
+}
+function faceItemIcon(it) {
+  return it.kind === 'cover' ? 'smile' : 'face';
+}
+
+function buildFaceBar(it) {
+  return buildClipBar(it, `tl-face-bar tl-face-bar-${it.kind}`, faceItemLabel(it), {
+    icon: faceItemIcon(it),
+    selected: () => isSelected('faceEffect', it.id),
+    onSelect: () => selectFaceEffect(it.id),
+    emitEvent: it.kind === 'reframe' ? 'facetrack' : 'faceEffects',
+    relayout: layoutFaceBars,
+  });
+}
+
 function layoutFaceBars() {
-  for (const fx of state.faceEffects) {
-    const el = faceBarEls.get(fx.id);
-    if (el) layoutClipBar(el, fx);
+  for (const it of faceItems()) {
+    const el = faceBarEls.get(it.id);
+    if (el) layoutClipBar(el, it);
   }
 }
 
 function renderFaceRow() {
   faceRow.innerHTML = '';
+  faceGutter.innerHTML = '';
   faceBarEls.clear();
-  const show = sourceDuration() > 0 && state.faceEffects.length > 0;
-  setRowVisible(faceRow, show);
+  const items = faceItems();
+  const show = sourceDuration() > 0 && items.length > 0;
+  faceRow.classList.toggle('hidden', !show);
+  faceGutter.classList.toggle('hidden', !show);
   if (!show) return;
-  for (const fx of state.faceEffects) {
-    const bar = buildClipBar(fx, 'tl-face-bar', fx.kind === 'blur' ? 'Blur' : 'Cover', {
-      icon: fx.kind === 'blur' ? 'face' : 'smile',
-      selected: () => isSelected('faceEffect', fx.id),
-      onSelect: () => selectFaceEffect(fx.id),
-      emitEvent: 'faceEffects',
-      relayout: layoutFaceBars,
-    });
-    faceBarEls.set(fx.id, bar);
-    faceRow.appendChild(bar);
+
+  // Gutter header: "Faces" + expand/collapse chevron.
+  const hdr = document.createElement('div');
+  hdr.className = 'tl-face-hdr';
+  const chev = document.createElement('button');
+  chev.type = 'button';
+  chev.className = 'tl-face-chevron';
+  chev.textContent = faceGroupCollapsed ? '▸' : '▾';
+  chev.title = faceGroupCollapsed ? 'Expand face rows' : 'Collapse face rows';
+  chev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    faceGroupCollapsed = !faceGroupCollapsed;
+    renderFaceRow();
+  });
+  const lbl = document.createElement('span');
+  lbl.textContent = 'Faces';
+  hdr.append(lbl, chev);
+  faceGutter.appendChild(hdr);
+
+  // Tracks header lane — holds the stacked bars when collapsed; empty (a group
+  // title band) when expanded.
+  const hdrLane = document.createElement('div');
+  hdrLane.className = 'tl-face-hdr-lane';
+  faceRow.appendChild(hdrLane);
+
+  if (faceGroupCollapsed) {
+    for (const it of items) {
+      const bar = buildFaceBar(it);
+      faceBarEls.set(it.id, bar);
+      hdrLane.appendChild(bar);
+    }
+  } else {
+    for (const it of items) {
+      const sub = document.createElement('div');
+      sub.className = 'tl-face-sublabel';
+      sub.textContent = faceItemLabel(it);
+      faceGutter.appendChild(sub);
+      const lane = document.createElement('div');
+      lane.className = 'tl-face-lane';
+      const bar = buildFaceBar(it);
+      faceBarEls.set(it.id, bar);
+      lane.appendChild(bar);
+      faceRow.appendChild(lane);
+    }
   }
   layoutFaceBars();
 }
@@ -1256,6 +1323,7 @@ export function initTimeline() {
   on('layers', renderAll);
   on('keyframes', renderKeyframeRow);
   on('faceEffects', renderFaceRow);
+  on('facetrack', renderFaceRow);
   on('settings', () => {
     renderSoundRow();
     renderOverlayRow();

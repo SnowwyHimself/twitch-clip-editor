@@ -61,6 +61,7 @@ import {
   faceTrackActive,
   addFaceEffect,
   selectedFaceEffect,
+  selectFaceEffect,
   updateFaceEffect,
   removeFaceEffect,
 } from './state.js';
@@ -866,6 +867,7 @@ async function runFaceTrack() {
       onProgress: (p) => setFaceStatus(`Following that face… ${Math.round(p * 100)}%`),
     });
     if (result.ok) {
+      selectFaceEffect('reframe'); // open the unified Facial tracking inspector
       setFaceStatus('Tracking that face — the clip follows it left/right. Turn off to revert.');
     } else if (result.reason === 'no-face') {
       setFaceStatus('Couldn’t find a face to follow — try a clearer, more face-forward clip.', true);
@@ -937,13 +939,40 @@ async function runFaceEffect(kind) {
 }
 
 const FACE_EMOJIS = ['😀', '😎', '🙈', '🤡', '👻', '🔥', '⭐', '❤️', '💀', '🤖', '🐸', '🎭'];
+
+// True when the current selection is the (single) reframe pseudo-item.
+function isReframeSelected() {
+  return !!(state.sel && state.sel.kind === 'faceEffect' && state.sel.id === 'reframe');
+}
+
 function refreshFaceEffectPanel() {
-  const fx = selectedFaceEffect();
-  if (!fx) return;
-  const isBlur = fx.kind === 'blur';
-  document.getElementById('face-fx-blur-controls').classList.toggle('hidden', !isBlur);
-  document.getElementById('face-fx-cover-controls').classList.toggle('hidden', isBlur);
-  document.getElementById('face-fx-kind-label').textContent = isBlur ? 'Blur' : 'Cover';
+  const reframe = isReframeSelected();
+  const fx = reframe ? null : selectedFaceEffect();
+  if (!reframe && !fx) return;
+  const kind = reframe ? 'reframe' : fx.kind;
+  const isBlur = kind === 'blur';
+  const isCover = kind === 'cover';
+  const g = (id) => document.getElementById(id);
+  g('face-fx-reframe-controls').classList.toggle('hidden', !reframe);
+  g('face-fx-blur-controls').classList.toggle('hidden', !isBlur);
+  g('face-fx-cover-controls').classList.toggle('hidden', !isCover);
+  g('face-fx-move').classList.toggle('hidden', reframe); // nudge is blur/cover only
+  g('face-fx-typebar').classList.toggle('hidden', reframe); // Blur⇄Cover only
+  g('face-fx-kind-label').textContent = reframe ? 'Reframe' : 'Facial tracking';
+  g('face-fx-delete').textContent = reframe ? 'Remove reframe' : 'Remove';
+  // Type toggle reflects the current effect.
+  g('face-fx-typebar')
+    .querySelectorAll('[data-fxtype]')
+    .forEach((b) => b.classList.toggle('active', b.dataset.fxtype === kind));
+  if (reframe) {
+    renderFaceTrackUI();
+    return;
+  }
+  // Shared Move (offset) sliders.
+  g('face-fx-offx').value = fx.offsetX || 0;
+  g('face-fx-offx-val').textContent = `${Math.round((fx.offsetX || 0) * 100)}%`;
+  g('face-fx-offy').value = fx.offsetY || 0;
+  g('face-fx-offy-val').textContent = `${Math.round((fx.offsetY || 0) * 100)}%`;
   if (isBlur) {
     document.getElementById('face-fx-strength').value = fx.strength;
     document.getElementById('face-fx-strength-val').textContent = `${Math.round(fx.strength * 100)}%`;
@@ -990,8 +1019,33 @@ function wireFaceEffectControls() {
   bind('face-fx-padding', 'face-fx-padding-val', (v) => `${Math.round(v * 100)}%`, 'padding');
   bind('face-fx-scale', 'face-fx-scale-val', (v) => `${v.toFixed(1)}×`, 'scale');
   bind('face-fx-rotation', 'face-fx-rotation-val', (v) => `${Math.round(v)}°`, 'rotation');
+  bind('face-fx-offx', 'face-fx-offx-val', (v) => `${Math.round(v * 100)}%`, 'offsetX');
+  bind('face-fx-offy', 'face-fx-offy-val', (v) => `${Math.round(v * 100)}%`, 'offsetY');
+  // Blur ⇄ Cover type toggle — converts the selected effect in place, keeping
+  // its tracked path and offset. Switching to cover seeds a default emoji.
+  document
+    .querySelectorAll('#face-fx-typebar [data-fxtype]')
+    .forEach((b) =>
+      b.addEventListener('click', () => {
+        const fx = selectedFaceEffect();
+        if (!fx) return;
+        const next = b.dataset.fxtype;
+        if (next === fx.kind) return;
+        updateFaceEffect(fx.id, { kind: next, ...(next === 'cover' && !fx.emoji ? { emoji: '😀' } : {}) });
+        refreshFaceEffectPanel();
+      })
+    );
   const del = document.getElementById('face-fx-delete');
-  if (del) del.addEventListener('click', () => { const fx = selectedFaceEffect(); if (fx) removeFaceEffect(fx.id); });
+  if (del)
+    del.addEventListener('click', () => {
+      if (isReframeSelected()) {
+        clearFaceTrack();
+        clearSelection();
+        return;
+      }
+      const fx = selectedFaceEffect();
+      if (fx) removeFaceEffect(fx.id);
+    });
   const imgBtn = document.getElementById('face-fx-image-btn');
   if (imgBtn) imgBtn.addEventListener('click', () => els.overlayFile && els.overlayFile.click());
 }
@@ -2475,6 +2529,10 @@ function wireAddMenu() {
   const closeMenu = () => {
     els.addMenu.classList.add('hidden');
     els.addMenuBtn.setAttribute('aria-expanded', 'false');
+    const sub = document.getElementById('add-face-submenu');
+    const parent = document.getElementById('add-face-parent');
+    if (sub) sub.classList.add('hidden');
+    if (parent) parent.setAttribute('aria-expanded', 'false');
   };
   const openMenu = () => {
     els.addMenu.classList.remove('hidden');
@@ -2496,6 +2554,16 @@ function wireAddMenu() {
       runAddAction(item.dataset.add);
     });
   });
+  // Facial-tracking parent opens a nested submenu instead of adding directly.
+  const faceParent = document.getElementById('add-face-parent');
+  const faceSub = document.getElementById('add-face-submenu');
+  if (faceParent && faceSub) {
+    faceParent.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = faceSub.classList.toggle('hidden');
+      faceParent.setAttribute('aria-expanded', String(!open));
+    });
+  }
 }
 
 // Each add action creates (or reveals the source for) a thing at the playhead
@@ -2531,6 +2599,9 @@ export function runAddAction(kind) {
     case 'music':
       forceInspector('sound', 'Music');
       els.audioFile.click(); // music = bring your own audio
+      break;
+    case 'reframe-face':
+      runFaceTrack();
       break;
     case 'blur-face':
       runFaceEffect('blur');

@@ -60,9 +60,11 @@ export function renderFaceEffectsPreview(sourceTime) {
       continue;
     }
     node.wrap.style.display = 'block';
-    // Source-normalized center → preview-frame pixels via the live video rect.
-    const cx = vr.left - fr.left + box.x * vr.width;
-    const cy = vr.top - fr.top + box.y * vr.height;
+    // Source-normalized center → preview-frame pixels via the live video rect,
+    // nudged by the user's offset (a fraction of the face box, so it scales
+    // with the face as it moves toward/away from camera).
+    const cx = vr.left - fr.left + (box.x + (fx.offsetX || 0) * box.w) * vr.width;
+    const cy = vr.top - fr.top + (box.y + (fx.offsetY || 0) * box.h) * vr.height;
     // Briefly-lost faces hold their last box and fade rather than snapping away.
     node.wrap.style.opacity = box.seen ? '1' : '0.55';
 

@@ -97,8 +97,14 @@
             <button type="button" class="add-menu-item" data-add="overlay" role="menuitem"><span class="add-menu-ico" data-icon="image"></span><span class="add-menu-text">Add overlay</span></button>
             <button type="button" class="add-menu-item" data-add="sound" role="menuitem"><span class="add-menu-ico" data-icon="music"></span><span class="add-menu-text">Add sound<small>Sound effect or your own file</small></span></button>
             <button type="button" class="add-menu-item" data-add="music" role="menuitem"><span class="add-menu-ico" data-icon="music"></span><span class="add-menu-text">Add music<small>Use your own audio file</small></span></button>
-            <button type="button" class="add-menu-item" data-add="blur-face" role="menuitem"><span class="add-menu-ico" data-icon="face"></span><span class="add-menu-text">Blur a face<small>Pick a face — it stays blurred as it moves</small></span></button>
-            <button type="button" class="add-menu-item" data-add="cover-face" role="menuitem"><span class="add-menu-ico" data-icon="smile"></span><span class="add-menu-text">Cover a face<small>Emoji or image that follows a face</small></span></button>
+            <div class="add-submenu-wrap">
+              <button type="button" class="add-menu-item" id="add-face-parent" aria-haspopup="true" aria-expanded="false" role="menuitem"><span class="add-menu-ico" data-icon="face"></span><span class="add-menu-text">Facial tracking<small>Reframe, blur, or cover a face</small></span><span class="add-menu-caret" aria-hidden="true">›</span></button>
+              <div id="add-face-submenu" class="add-submenu hidden" role="menu">
+                <button type="button" class="add-menu-item" data-add="reframe-face" role="menuitem"><span class="add-menu-ico" data-icon="face"></span><span class="add-menu-text">Reframe to a face<small>Follow a face, keep the frame filled</small></span></button>
+                <button type="button" class="add-menu-item" data-add="blur-face" role="menuitem"><span class="add-menu-ico" data-icon="face"></span><span class="add-menu-text">Blur a face<small>Pick a face — it stays blurred as it moves</small></span></button>
+                <button type="button" class="add-menu-item" data-add="cover-face" role="menuitem"><span class="add-menu-ico" data-icon="smile"></span><span class="add-menu-text">Cover a face<small>Emoji or image that follows a face</small></span></button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -226,22 +232,6 @@
           <p class="field-hint" id="kf-status">No keyframes — the clip holds still. Drop one here, move the playhead, change zoom or position to animate a punch-in.</p>
           <button type="button" id="kf-punch-btn" class="secondary-btn full-width icon-text-btn"><span data-icon="zap"></span> Punch in at playhead</button>
           <button type="button" id="kf-clear-btn" class="link-btn hidden">Clear keyframes</button>
-        </div>
-
-        <div class="field-group fill-only" id="facetrack-group">
-          <button type="button" id="face-track-btn" class="secondary-btn kf-track-btn icon-text-btn"><span data-icon="face"></span> Select a face to track</button>
-          <label class="switch-row hidden" id="facetrack-toggle-row" for="facetrack-toggle">
-            <span class="field-label switch-label">Face tracking</span>
-            <span class="switch">
-              <input type="checkbox" id="facetrack-toggle" />
-              <span class="switch-track"></span>
-            </span>
-          </label>
-          <div class="hidden" id="facetrack-zoom-row">
-            <label class="field-label" for="facetrack-zoom">Tracked zoom <span id="facetrack-zoom-value">1.0x</span></label>
-            <input id="facetrack-zoom" type="range" min="1" max="3" value="1" step="0.05" />
-          </div>
-          <p class="field-hint" id="facetrack-status">Auto-reframe: follows a chosen face left/right, keeping the frame filled. Works best on face-forward clips.</p>
         </div>
 
         <div class="insp-sec">Playback</div>
@@ -430,7 +420,31 @@
 
       <!-- ===== Face-tracked effect inspector (blur / cover) ===== -->
       <div id="insp-face" class="inspector hidden">
-        <div class="insp-sec" id="face-fx-kind-label">Face effect</div>
+        <div class="insp-sec" id="face-fx-kind-label">Facial tracking</div>
+        <!-- Blur ⇄ Cover type toggle (converts the selected effect in place,
+             keeping the tracked face). Hidden for the reframe item. -->
+        <div id="face-fx-typebar" class="seg-toggle hidden">
+          <button type="button" class="seg-opt" data-fxtype="blur">Blur</button>
+          <button type="button" class="seg-opt" data-fxtype="cover">Cover</button>
+        </div>
+        <!-- Reframe controls (moved here from the Clip inspector) -->
+        <div id="face-fx-reframe-controls" class="hidden">
+          <label class="switch-row" id="facetrack-toggle-row" for="facetrack-toggle">
+            <span class="field-label switch-label">Follow this face</span>
+            <span class="switch">
+              <input type="checkbox" id="facetrack-toggle" />
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <div class="field-group" id="facetrack-zoom-row">
+            <label class="field-label" for="facetrack-zoom">Tracked zoom <span id="facetrack-zoom-value">1.0x</span></label>
+            <input id="facetrack-zoom" type="range" min="1" max="3" value="1" step="0.05" />
+          </div>
+          <div class="field-group">
+            <button type="button" id="face-track-btn" class="secondary-btn icon-text-btn"><span data-icon="face"></span> Pick a different face</button>
+          </div>
+          <p class="field-hint" id="facetrack-status">Auto-reframe: follows the chosen face left/right, keeping the frame filled. Works best on face-forward clips.</p>
+        </div>
         <!-- Blur controls -->
         <div id="face-fx-blur-controls" class="hidden">
           <div class="field-group">
@@ -458,8 +472,20 @@
             <input id="face-fx-rotation" type="range" min="-45" max="45" step="1" value="0" />
           </div>
         </div>
+        <!-- Move (offset) — nudge the region off the face center to catch the
+             forehead/hair etc. Shared by blur + cover. -->
+        <div id="face-fx-move" class="hidden">
+          <div class="field-group">
+            <label class="field-label" for="face-fx-offx">Move sideways <span id="face-fx-offx-val">0%</span></label>
+            <input id="face-fx-offx" type="range" min="-1" max="1" step="0.02" value="0" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="face-fx-offy">Move up / down <span id="face-fx-offy-val">0%</span></label>
+            <input id="face-fx-offy" type="range" min="-1" max="1" step="0.02" value="0" />
+          </div>
+        </div>
         <div class="field-group">
-          <button type="button" id="face-fx-delete" class="danger-btn full-width">Remove effect</button>
+          <button type="button" id="face-fx-delete" class="danger-btn full-width">Remove</button>
           <p class="field-hint">Tracks the face you picked and follows it. Renders the same in the preview and the export.</p>
         </div>
       </div>
@@ -824,7 +850,7 @@
         <div class="tl-label hidden" id="tl-lbl-captions">Captions</div>
         <div class="tl-label hidden" id="tl-lbl-text">Text</div>
         <div class="tl-label hidden" id="tl-lbl-sound">Sound</div>
-        <div class="tl-label hidden" id="tl-lbl-face">Faces</div>
+        <div class="tl-face-group hidden" id="tl-lbl-face"></div>
       </div>
       <!-- Scrollable tracks pane: clips its own content (overflow-x), so nothing
            ever paints left of its own x=0. This pane's left edge is THE single
@@ -839,7 +865,7 @@
           <div id="tl-captions-row" class="tl-type-row hidden"></div>
           <div id="tl-text-row" class="tl-type-row hidden"></div>
           <div id="tl-sound-row" class="tl-type-row hidden"></div>
-          <div id="tl-face-row" class="tl-type-row hidden"></div>
+          <div id="tl-face-row" class="tl-face-group-lanes hidden"></div>
           <div id="tl-playhead" class="tl-playhead hidden"></div>
         </div>
       </div>
