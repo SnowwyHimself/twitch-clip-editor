@@ -733,7 +733,13 @@ async function boot() {
     state.aspectRatios = ratios;
     state.whisper = whisper;
     const def = ratios.find((r) => r.isDefault) || ratios[0];
-    if (def) state.aspect = { id: def.id, width: def.width, height: def.height };
+    // 'Original' has no dimensions until a source loads — seed placeholder dims
+    // (a fixed ratio's) so nothing divides by null before then; the first source
+    // load replaces them with the clip's native size.
+    if (def) {
+      const seed = def.width && def.height ? def : ratios.find((r) => r.width && r.height) || { width: 1080, height: 1920 };
+      state.aspect = { id: def.id, width: seed.width, height: seed.height };
+    }
   } catch (err) {
     console.error('Failed to load editor options:', err);
   }
@@ -762,6 +768,16 @@ async function boot() {
   refreshStartTemplates();
   offerRestore();
   wireUpdatePill();
+  // "Original" aspect tracks the (first) source's native dimensions — resolve
+  // them once the clip's metadata is known, so a fresh import shows full-frame.
+  on('source', () => {
+    if (state.aspect && state.aspect.id === 'original' && state.source && state.source.width && state.source.height) {
+      if (state.aspect.width !== state.source.width || state.aspect.height !== state.source.height) {
+        state.aspect = { id: 'original', width: state.source.width, height: state.source.height };
+        emit('settings');
+      }
+    }
+  });
   // First-run onboarding: reveals the "try a sample clip" option + tour on the
   // very first launch only. Any real source load retires the offer silently.
   on('source', () => onSourceLoaded());

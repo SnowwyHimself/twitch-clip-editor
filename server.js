@@ -99,20 +99,26 @@ const ASPECT_RATIOS = {
   '4:3': { label: 'Classic (4:3)', width: 1440, height: 1080 },
   '16:9': { label: 'Widescreen (16:9)', width: 1920, height: 1080 },
 };
-const DEFAULT_ASPECT_RATIO = '9:16';
+const DEFAULT_ASPECT_RATIO = '9:16'; // fallback for an INVALID value only
 
+// 'original' = the source's native ratio (dimensions resolved from the clip at
+// export time, not from this table). It's the default the CLIENT selects for a
+// fresh import; a broken/absent value still falls back to a fixed ratio.
 function normalizeAspectRatio(value) {
+  if (value === 'original') return 'original';
   return ASPECT_RATIOS[value] ? value : DEFAULT_ASPECT_RATIO;
 }
 
 function getAspectRatioOptions() {
-  return Object.entries(ASPECT_RATIOS).map(([id, entry]) => ({
+  const fixed = Object.entries(ASPECT_RATIOS).map(([id, entry]) => ({
     id,
     label: entry.label,
     width: entry.width,
     height: entry.height,
-    isDefault: id === DEFAULT_ASPECT_RATIO,
+    isDefault: false,
   }));
+  // Original first, and the default — a freshly imported clip shows full-frame.
+  return [{ id: 'original', label: 'Original', width: null, height: null, isDefault: true, isOriginal: true }, ...fixed];
 }
 
 const MIN_ZOOM = 1.0;
@@ -2051,7 +2057,6 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
   try {
     setJob(jobId, { status: 'processing', progress: 0 });
     const outputPath = path.join(OUTPUTS_DIR, `${jobId}.mp4`);
-    const { width: canvasW, height: canvasH } = ASPECT_RATIOS[aspectRatio];
 
     // Always probed now: hasAudio has to be genuinely known (not just
     // assumed) whenever the segment-concat path might run or a sound
@@ -2059,6 +2064,19 @@ async function processJob(jobId, inputPath, aspectRatio, zoom, blur, panX, panY,
     // source dimensions size the black gap fillers, and duration feeds
     // the export progress percentage.
     const mediaInfo = await probeSource(inputPath);
+
+    // Canvas dimensions. A fixed ratio comes from the table; 'original' takes the
+    // source's native dimensions (even-enforced) so the export is full-frame at
+    // the source ratio. The final targetRes step only ever DOWNscales (see
+    // runFfmpeg), so 'original' output is capped at the source size — never up.
+    let canvasW;
+    let canvasH;
+    if (aspectRatio === 'original') {
+      canvasW = evenInt(mediaInfo.width || ASPECT_RATIOS[DEFAULT_ASPECT_RATIO].width);
+      canvasH = evenInt(mediaInfo.height || ASPECT_RATIOS[DEFAULT_ASPECT_RATIO].height);
+    } else {
+      ({ width: canvasW, height: canvasH } = ASPECT_RATIOS[aspectRatio]);
+    }
 
     // Resolve appended clips (download URL clips / probe files) so they can be
     // stitched after the primary. Their total length extends the output.

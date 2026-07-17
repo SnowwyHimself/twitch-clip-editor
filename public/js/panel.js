@@ -574,11 +574,18 @@ function buildAspectButtons() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'toggle-btn';
-    btn.textContent = ratio.id;
+    btn.textContent = ratio.id === 'original' ? 'Original' : ratio.id;
     btn.title = ratio.label;
     btn.classList.toggle('active', ratio.id === state.aspect.id);
     btn.addEventListener('click', () => {
-      state.aspect = { id: ratio.id, width: ratio.width, height: ratio.height };
+      if (ratio.id === 'original') {
+        // Original takes the current source's native dimensions.
+        const w = (state.source && state.source.width) || state.aspect.width;
+        const h = (state.source && state.source.height) || state.aspect.height;
+        state.aspect = { id: 'original', width: w, height: h };
+      } else {
+        state.aspect = { id: ratio.id, width: ratio.width, height: ratio.height };
+      }
       els.aspectGroup.querySelectorAll('.toggle-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       emit('settings');
