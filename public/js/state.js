@@ -857,7 +857,7 @@ export function addFaceEffect(effect, { select = true } = {}) {
     end: dur > 0 ? dur : effect.end || 0,
     // blur defaults
     strength: 0.5, // 0..1
-    padding: 0.2, // extra region beyond the detected box, as a fraction
+    padding: 0.5, // "Region size" slider 0..1 → circle 0.7×..2.5× face width
     // nudge the region relative to the face box (fraction of face size);
     // e.g. offsetY < 0 lifts it up to catch the forehead/hair.
     offsetX: 0,

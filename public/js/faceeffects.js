@@ -7,6 +7,10 @@
 import { state } from './state.js';
 import { sampleFaceBoxAt } from './facetrack.js';
 
+// The face-api box center sits low (~mouth); shift effects up by this fraction
+// of face height to land on the eyes/nose. Kept in sync with server.js.
+const FACE_VBIAS = 0.18;
+
 const nodes = new Map(); // fx.id -> { wrap, kind, img }
 
 function makeNode(fx) {
@@ -61,16 +65,18 @@ export function renderFaceEffectsPreview(sourceTime) {
     }
     node.wrap.style.display = 'block';
     // Source-normalized center → preview-frame pixels via the live video rect,
-    // nudged by the user's offset (a fraction of the face box, so it scales
-    // with the face as it moves toward/away from camera).
+    // biased up to the eyes/nose (the face-api box center sits ~mouth level),
+    // plus the user's nudge (a fraction of the face box, so it scales with the
+    // face as it moves toward/away from camera). FACE_VBIAS matches the server.
     const cx = vr.left - fr.left + (box.x + (fx.offsetX || 0) * box.w) * vr.width;
-    const cy = vr.top - fr.top + (box.y + (fx.offsetY || 0) * box.h) * vr.height;
+    const cy = vr.top - fr.top + (box.y + ((fx.offsetY || 0) - FACE_VBIAS) * box.h) * vr.height;
     // Briefly-lost faces hold their last box and fade rather than snapping away.
     node.wrap.style.opacity = box.seen ? '1' : '0.55';
 
     if (fx.kind === 'blur') {
       // Circle sized to the face WIDTH (matches export) — round, face-sized.
-      const dia = Math.max(8, box.w * (1.4 + (fx.padding || 0)) * vr.width);
+      // Size slider spans ~0.7×–2.5× so it can go tight on small faces.
+      const dia = Math.max(8, box.w * (0.7 + (fx.padding || 0) * 1.8) * vr.width);
       node.wrap.style.left = `${cx - dia / 2}px`;
       node.wrap.style.top = `${cy - dia / 2}px`;
       node.wrap.style.width = `${dia}px`;

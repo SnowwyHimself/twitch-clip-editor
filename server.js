@@ -727,6 +727,11 @@ function faceMedian(samples, key) {
   return arr[Math.floor(arr.length / 2)] || arr[0] || 0.1;
 }
 
+// The face-api box center sits low (around the mouth), so shift the effect up by
+// this fraction of the face height to land on the eyes/nose — the perceived
+// center of the face. Kept in sync with the preview (faceeffects.js).
+const FACE_VBIAS = 0.18;
+
 // Per-frame face center along one axis, nudged by offset*perFrameFaceSize. The
 // offset scales with the face box (same as the preview) so a nudge that catches
 // the forehead stays put as the face moves nearer/farther. offset in [-1,1].
@@ -744,15 +749,16 @@ function faceCenterExpr(samples, posKey, sizeKey, offset) {
 function buildFaceBlurStage(fx, srcW, srcH, inLabel, idx) {
   const s = fx.samples;
   // A CIRCLE sized to the face WIDTH (stable, face-sized) — not an ellipse of
-  // box.w×box.h, which stretches into a body-covering oval on tall frames.
+  // box.w×box.h, which stretches into a body-covering oval on tall frames. The
+  // size slider spans ~0.7×–2.5× face width, so it can go tight on small faces.
   const dia = evenInt(
-    Math.max(16, Math.min(Math.min(srcW, srcH), faceMedian(s, 'w') * srcW * (1.4 + fx.padding)))
+    Math.max(16, Math.min(Math.min(srcW, srcH), faceMedian(s, 'w') * srcW * (0.7 + fx.padding * 1.8)))
   );
   const rw = dia;
   const rh = dia;
-  // Center tracks the face, nudged by offset*perFrameFaceSize (matches preview).
+  // Center tracks the face, biased up to the eyes/nose, plus the user's nudge.
   const xExpr = faceCenterExpr(s, 'x', 'w', fx.offsetX);
-  const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY);
+  const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY - FACE_VBIAS);
   const cx = `clip((${xExpr})*${srcW}-${rw / 2}\\,0\\,${srcW - rw})`;
   const cy = `clip((${yExpr})*${srcH}-${rh / 2}\\,0\\,${srcH - rh})`;
   const sigma = (2 + fx.strength * 30).toFixed(1);
@@ -784,7 +790,7 @@ function buildFaceCoverStage(fx, srcW, srcH, inLabel, idx) {
   // from a tall detection box.
   const sizePx = evenInt(Math.max(16, faceMedian(s, 'w') * srcW * fx.scale));
   const xExpr = faceCenterExpr(s, 'x', 'w', fx.offsetX);
-  const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY);
+  const yExpr = faceCenterExpr(s, 'y', 'h', fx.offsetY - FACE_VBIAS);
   const ox = `(${xExpr})*${srcW}-${sizePx / 2}`;
   const oy = `(${yExpr})*${srcH}-${sizePx / 2}`;
   const between = `between(t\\,${fx.start.toFixed(3)}\\,${fx.end.toFixed(3)})`;
