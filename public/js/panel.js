@@ -958,8 +958,8 @@ function refreshFaceEffectPanel() {
   g('face-fx-cover-controls').classList.toggle('hidden', !isCover);
   g('face-fx-move').classList.toggle('hidden', reframe); // nudge is blur/cover only
   g('face-fx-typebar').classList.toggle('hidden', reframe); // Blur⇄Cover only
-  g('face-fx-kind-label').textContent = reframe ? 'Reframe' : 'Facial tracking';
-  g('face-fx-delete').textContent = reframe ? 'Remove reframe' : 'Remove';
+  g('face-fx-kind-label').textContent = reframe ? 'Facial tracking' : 'Face effect';
+  g('face-fx-delete').textContent = reframe ? 'Remove facial tracking' : 'Remove';
   // Type toggle reflects the current effect.
   g('face-fx-typebar')
     .querySelectorAll('[data-fxtype]')

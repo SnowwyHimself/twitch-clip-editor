@@ -1239,8 +1239,9 @@ input[type="text"] {
 }
 .add-menu-caret {
   margin-left: auto;
-  color: var(--text-dim);
-  font-size: 16px;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 700;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -2487,9 +2488,9 @@ img.preset-thumb {
 .tl-face-chevron {
   background: none;
   border: 0;
-  color: var(--text-dim);
+  color: var(--text);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 14px;
   line-height: 1;
   padding: 2px;
 }

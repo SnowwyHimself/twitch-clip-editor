@@ -891,6 +891,21 @@ export function removeFaceEffect(id) {
   if (isSelected('faceEffect', id)) clearSelection();
   emit('faceEffects');
 }
+// Split a face effect at source time t into two independent effects that share
+// the same tracked path (only their active [start,end] windows differ), so each
+// half can be tuned separately. Returns the new (second) effect, or null.
+export function splitFaceEffectAt(id, t) {
+  const idx = state.faceEffects.findIndex((f) => f.id === id);
+  if (idx === -1) return null;
+  const fx = state.faceEffects[idx];
+  const MIN = MIN_LAYER_SECONDS / 2;
+  if (t <= fx.start + MIN || t >= fx.end - MIN) return null;
+  const clone = { ...fx, id: `fx-${Date.now()}-${faceEffectCounter++}`, start: t, samples: fx.samples.slice() };
+  fx.end = t;
+  state.faceEffects.splice(idx + 1, 0, clone);
+  emit('faceEffects');
+  return clone;
+}
 
 // --- text layers ------------------------------------------------------------------
 

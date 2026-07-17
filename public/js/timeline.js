@@ -67,6 +67,8 @@ import {
   MIN_SEGMENT_SECONDS,
   MIN_LAYER_SECONDS,
   selectFaceEffect,
+  selectedFaceEffect,
+  splitFaceEffectAt,
 } from './state.js';
 import { seek, seekOutput, getCurrentTime, getCurrentOutputTime } from './preview.js';
 import { getPeaks, drawWaveform } from './waveform.js';
@@ -885,8 +887,16 @@ function attachSegmentEdgeDrag(edgeEl, seg, prev, next, isLeft) {
 // clip — splitting it at the playhead into two independent clips. With a
 // video segment selected (or nothing), it splits the video piece under the
 // playhead, as before.
+// Split acts ONLY on the selected item — a video piece, a layer/sound/overlay,
+// or a face effect — and does nothing when nothing splittable is selected. (The
+// video no longer splits as a silent fallback; you must select it first.)
 export function splitAtPlayhead() {
   const t = getCurrentTime();
+  if (selectedSegment()) {
+    const piece = splitSegmentAt(t);
+    if (piece) selectSegment(piece.id);
+    return;
+  }
   const layer = selectedLayer();
   if (layer) {
     const piece = splitLayerAt(layer.id, t);
@@ -905,8 +915,11 @@ export function splitAtPlayhead() {
     if (piece) selectOverlay(piece.id);
     return;
   }
-  const piece = splitSegmentAt(t);
-  if (piece) selectSegment(piece.id);
+  const fx = selectedFaceEffect();
+  if (fx) {
+    const piece = splitFaceEffectAt(fx.id, t);
+    if (piece) selectFaceEffect(piece.id);
+  }
 }
 
 // I / O: trim the SELECTED video piece's in-point (edge='in') or out-point
@@ -942,6 +955,11 @@ function refreshToolbar() {
   const canDeleteSegment = seg && state.segments.length > 1;
   const otherSelected = !!(selectedLayer() || selectedSound() || selectedOverlay() || selectedAppendedClip());
   deleteBtn.disabled = !(canDeleteSegment || otherSelected);
+  // Split acts on the selected item only (a face effect counts; reframe, which
+  // spans the whole clip, does not). Disabled when nothing splittable is picked.
+  const fx = selectedFaceEffect();
+  const canSplit = !!(seg || selectedLayer() || selectedSound() || selectedOverlay() || (fx && fx.kind !== 'reframe'));
+  splitBtn.disabled = !canSplit;
 }
 
 // --- text / caption / sound rows --------------------------------------------------
@@ -974,6 +992,15 @@ function buildClipBar(clip, className, labelText, opts) {
   if (opts.icon) label.innerHTML = icon(opts.icon, 12);
   label.append(document.createTextNode((opts.icon ? ' ' : '') + labelText));
   bar.appendChild(label);
+
+  // Locked bars (the whole-clip reframe) are selectable but not move/resizable.
+  if (opts.locked) {
+    bar.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      opts.onSelect();
+    });
+    return bar;
+  }
 
   const leftEdge = document.createElement('div');
   leftEdge.className = 'tl-text-edge tl-text-edge-left';
@@ -1150,7 +1177,11 @@ function faceItems() {
 }
 
 function faceItemLabel(it) {
-  return it.kind === 'reframe' ? 'Reframe' : it.kind === 'blur' ? 'Blur' : 'Cover';
+  return it.kind === 'reframe' ? 'Facial tracking' : it.kind === 'blur' ? 'Blur' : 'Cover';
+}
+// Shorter form for the narrow (64px) gutter column.
+function faceItemGutterLabel(it) {
+  return it.kind === 'reframe' ? 'Tracking' : it.kind === 'blur' ? 'Blur' : 'Cover';
 }
 function faceItemIcon(it) {
   return it.kind === 'cover' ? 'smile' : 'face';
@@ -1161,8 +1192,9 @@ function buildFaceBar(it) {
     icon: faceItemIcon(it),
     selected: () => isSelected('faceEffect', it.id),
     onSelect: () => selectFaceEffect(it.id),
-    emitEvent: it.kind === 'reframe' ? 'facetrack' : 'faceEffects',
+    emitEvent: 'faceEffects',
     relayout: layoutFaceBars,
+    locked: it.kind === 'reframe', // whole-clip: selectable, not resizable
   });
 }
 
@@ -1217,7 +1249,7 @@ function renderFaceRow() {
     for (const it of items) {
       const sub = document.createElement('div');
       sub.className = 'tl-face-sublabel';
-      sub.textContent = faceItemLabel(it);
+      sub.textContent = faceItemGutterLabel(it);
       faceGutter.appendChild(sub);
       const lane = document.createElement('div');
       lane.className = 'tl-face-lane';
